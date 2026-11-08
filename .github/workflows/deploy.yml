@@ -1,0 +1,83 @@
+name: Deploy test version (GitHub Pages)
+
+# Тестовое размещение: статическая сборка публикуется в ветку gh-pages
+# и раздаётся GitHub Pages по HTTPS. Никакие серверы не затрагиваются.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: touch dist/.nojekyll
+      - uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          force_orphan: true
+          commit_message: 'Публикация тестовой версии'
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    env:
+      SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Ожидание публикации
+        run: |
+          URL="$(echo "$SITE_URL" | tr '[:upper:]' '[:lower:]')"
+          echo "SITE_URL=$URL" >> "$GITHUB_ENV"
+          SHA_SHORT="${GITHUB_SHA::7}"
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /tmp/index.html -w '%{http_code}' "$URL?nocache=$i" || true)
+            echo "attempt $i: HTTP $code"
+            if [ "$code" = "200" ] && grep -q 'AI Car Expert' /tmp/index.html; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Сайт $URL не стал доступен. Проверьте Settings → Pages: источник — ветка gh-pages."
+          exit 1
+      - name: Проверка ресурсов
+        run: |
+          for p in manifest.webmanifest sw.js icons/apple-touch-icon.png icons/icon-512.png; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "${SITE_URL}${p}")
+            echo "$p → $code"; [ "$code" = "200" ]
+          done
+          echo "Радиопотоки:"
+          for s in https://stream.radioparadise.com/aac-128 https://ice1.somafm.com/groovesalad-128-mp3; do
+            code=$(curl -s -o /dev/null -r 0-1000 --max-time 10 -w '%{http_code}' "$s" || true); echo "$s → $code"
+          done
+      - name: Smoke test опубликованной версии
+        run: |
+          npm i --no-save playwright@1.49.1
+          npx playwright install --with-deps chromium
+          node scripts/smoke.mjs "$SITE_URL" smoke-live
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-live
+          path: smoke-live
+          if-no-files-found: ignore
