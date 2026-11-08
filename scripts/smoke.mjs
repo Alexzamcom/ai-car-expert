@@ -89,7 +89,7 @@ try {
   await page.click('.dock [aria-label="Мультимедиа"]');
   await page.locator('.station-main').first().click();
   await page.waitForFunction(() => document.querySelector('.np-info .eyebrow')?.textContent === 'Сейчас играет', null, { timeout: 15000 }).catch(() => {});
-  const playing = await page.locator('.np-info .eyebrow').innerText();
+  const playing = (await page.locator('.np-info .eyebrow').textContent())?.trim() ?? '';
   check('Радио играет', playing === 'Сейчас играет', playing);
   await page.screenshot({ path: `${out}/03-media.png` });
 
