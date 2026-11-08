@@ -18,14 +18,15 @@ export interface Track {
   kind: 'radio' | 'file';
 }
 
+// MP3-потоки: воспроизводятся в Safari/iPadOS и во всех браузерах.
 export const DEFAULT_STATIONS: Station[] = [
-  { id: 'rp-main', name: 'Radio Paradise', genre: 'Эклектика', url: 'https://stream.radioparadise.com/aac-128' },
-  { id: 'rp-mellow', name: 'Radio Paradise Mellow', genre: 'Спокойная', url: 'https://stream.radioparadise.com/mellow-128' },
+  { id: 'rp-main', name: 'Radio Paradise', genre: 'Эклектика', url: 'https://stream.radioparadise.com/mp3-128' },
   { id: 'soma-groove', name: 'SomaFM Groove Salad', genre: 'Эмбиент', url: 'https://ice1.somafm.com/groovesalad-128-mp3' },
   { id: 'soma-indie', name: 'SomaFM Indie Pop Rocks', genre: 'Инди', url: 'https://ice1.somafm.com/indiepop-128-mp3' },
+  { id: 'soma-agent', name: 'SomaFM Secret Agent', genre: 'Лаунж', url: 'https://ice1.somafm.com/secretagent-128-mp3' },
 ];
 
-export const stationsStore = createStore<Station[]>(DEFAULT_STATIONS, 'stations');
+export const stationsStore = createStore<Station[]>(DEFAULT_STATIONS, 'stations-v2');
 
 export interface PlayerState {
   current: Track | null;

@@ -88,9 +88,9 @@ try {
 
   await page.click('.dock [aria-label="Мультимедиа"]');
   await page.locator('.station-main').first().click();
-  await page.waitForTimeout(5000);
+  await page.waitForFunction(() => document.querySelector('.np-info .eyebrow')?.textContent === 'Сейчас играет', null, { timeout: 15000 }).catch(() => {});
   const playing = await page.locator('.np-info .eyebrow').innerText();
-  check('Радио запускается', /Сейчас играет|Подключение/.test(playing), playing);
+  check('Радио играет', playing === 'Сейчас играет', playing);
   await page.screenshot({ path: `${out}/03-media.png` });
 
   await page.setViewportSize({ width: 1366, height: 1024 });
@@ -108,7 +108,7 @@ try {
 
 fs.writeFileSync(`${out}/results.json`, JSON.stringify(results, null, 2));
 // Тайлы и радио зависят от внешних сервисов — их сбой не валит проверку, но виден в отчёте.
-const soft = new Set(['Карта и тайлы', 'Радио запускается']);
+const soft = new Set(['Карта и тайлы', 'Радио играет']);
 const failed = results.filter((r) => !r.ok && !soft.has(r.name));
 console.log(`\nПройдено ${results.filter((r) => r.ok).length}/${results.length}, обязательных провалов: ${failed.length}`);
 process.exit(failed.length ? 1 : 0);

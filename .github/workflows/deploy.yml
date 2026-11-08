@@ -67,7 +67,7 @@ jobs:
             echo "$p → $code"; [ "$code" = "200" ]
           done
           echo "Радиопотоки:"
-          for s in https://stream.radioparadise.com/aac-128 https://ice1.somafm.com/groovesalad-128-mp3; do
+          for s in https://stream.radioparadise.com/mp3-128 https://ice1.somafm.com/groovesalad-128-mp3; do
             code=$(curl -s -o /dev/null -r 0-1000 --max-time 10 -w '%{http_code}' "$s" || true); echo "$s → $code"
           done
       - name: Smoke test опубликованной версии
