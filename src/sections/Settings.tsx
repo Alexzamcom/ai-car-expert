@@ -5,6 +5,7 @@ import { settingsStore, toast, type Settings as SettingsT, type VehicleProfile }
 import { wakeLockSupported } from '../lib/wakeLock';
 import { speechRecognitionSupported, listVoices, speak } from '../lib/speech';
 import { chatgptPrefsStore } from '../lib/chatgpt';
+import { themeStore, setThemeMode, THEME_MODE_LABEL, type ThemeMode } from '../lib/theme';
 
 const FUELS: Record<VehicleProfile['fuel'], string> = {
   petrol: 'Бензин',
@@ -145,6 +146,8 @@ export function Settings() {
         </div>
       </form>
 
+      <ThemeSettings />
+
       <ChatGptSettings />
 
       <div className="card">
@@ -240,6 +243,35 @@ export function Settings() {
         <ResetButton />
         <p className="muted small">AI Car Expert · версия {__APP_VERSION__}</p>
       </div>
+    </div>
+  );
+}
+
+function ThemeSettings() {
+  const t = useStore(themeStore);
+  const time = (ms: number) => new Date(ms).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  const status =
+    t.reason === 'manual'
+      ? `Включена ${t.active === 'day' ? 'дневная' : 'ночная'} тема.`
+      : t.reason === 'sun'
+        ? `Сейчас ${t.active === 'day' ? 'день' : 'ночь'} по положению солнца.${t.next ? ` ${t.next.to === 'night' ? 'Закат' : 'Восход'} в ${time(t.next.at)} — тема сменится сама.` : ' Полярный день или ночь.'}`
+        : `Координат пока нет — тема как в системе устройства (${t.active === 'day' ? 'светлая' : 'тёмная'}). После определения геопозиции — по восходу и закату.`;
+  return (
+    <div className="card">
+      <h3 className="section-title">
+        <Icon name="sun" /> Оформление
+      </h3>
+      <div className="seg theme-seg" role="radiogroup" aria-label="Тема оформления">
+        {(['auto', 'day', 'night'] as ThemeMode[]).map((m) => (
+          <button key={m} role="radio" aria-checked={t.mode === m} className={`chip ${t.mode === m ? 'is-active' : ''}`} onClick={() => setThemeMode(m)}>
+            <Icon name={m === 'auto' ? 'autoTheme' : m === 'day' ? 'sun' : 'moon'} /> {THEME_MODE_LABEL[m]}
+          </button>
+        ))}
+      </div>
+      <p className="muted" id="theme-status">
+        {status}
+      </p>
+      <p className="muted small">Быстрое переключение — кнопка с солнцем или луной в верхней строке. Выбор сохраняется.</p>
     </div>
   );
 }

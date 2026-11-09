@@ -68,6 +68,13 @@ export function parseCommand(raw: string): Command {
     return { kind: 'tool', name: 'media_control', args: { action: 'play' } };
   }
 
+  // Тема: «ночной режим», «включи дневную тему», «тема авто», «нічна тема»
+  if (/(тем[ауы]|режим|оформлен)/.test(t) || /^(день|ночь|ніч)$/.test(t)) {
+    if (/(авто|автомат)/.test(t)) return { kind: 'tool', name: 'set_theme', args: { mode: 'auto' } };
+    if (/(ночн|нічн|ночь|ніч|темн)/.test(t)) return { kind: 'tool', name: 'set_theme', args: { mode: 'night' } };
+    if (/(дневн|денн|день|светл|світл)/.test(t)) return { kind: 'tool', name: 'set_theme', args: { mode: 'day' } };
+  }
+
   // ChatGPT: «открой ChatGPT», «чат джипити», «відкрий чатджіпіті»
   if (/(chat ?gpt|чат ?(джи ?пи ?ти|gpt|жпт|гпт)|чатджипити|чатджіпіті|чат джіпіті)/.test(t)) {
     return { kind: 'tool', name: 'open_app', args: { app: 'chatgpt' } };
@@ -97,7 +104,7 @@ export async function handleVoiceCommand(raw: string) {
   toast(res.text, res.ok ? 'ok' : 'warn');
   const s = settingsStore.get();
   // Озвучиваем результат для навигации и поиска, где важна обратная связь без взгляда на экран.
-  if ((s.speakReplies || cmd.say) && ['navigate_to', 'find_along_route', 'set_voice_replies', 'set_navigation_voice', 'play_radio'].includes(cmd.name)) {
+  if ((s.speakReplies || cmd.say) && ['navigate_to', 'find_along_route', 'set_voice_replies', 'set_navigation_voice', 'play_radio', 'set_theme'].includes(cmd.name)) {
     speak(res.text, s.speechLang);
   }
 }

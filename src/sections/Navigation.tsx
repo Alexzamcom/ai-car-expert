@@ -30,8 +30,12 @@ import {
 import { stepText, stepIcon, fmtDistance, fmtDuration, haversine } from '../lib/routing';
 import { POI_CATEGORIES, type PoiCategory, type Poi } from '../lib/poi';
 import { toast } from '../lib/state';
+import { themeStore, THEMES } from '../lib/theme';
 
 const DEFAULT_CENTER: L.LatLngTuple = [55.7539, 37.6208];
+
+export const OSM_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+export const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">Участники OpenStreetMap</a>';
 
 const meIcon = L.divIcon({ className: 'map-me', html: '<div class="map-me-dot"><div class="map-me-cone"></div></div>', iconSize: [28, 28], iconAnchor: [14, 14] });
 const destIcon = L.divIcon({ className: 'map-dest', html: '<div class="map-dest-pin"></div>', iconSize: [36, 46], iconAnchor: [18, 44] });
@@ -47,6 +51,7 @@ function eta(sec: number) {
 
 export function Navigation() {
   const mapEl = useRef<HTMLDivElement>(null);
+  const themeOnly = useRef(false);
   const map = useRef<L.Map | null>(null);
   const layers = useRef<{ me?: L.Marker; dest?: L.Marker; via?: L.Marker; route?: L.LayerGroup; poi?: L.LayerGroup }>({});
   const geo = useStore(geoStore);
@@ -55,6 +60,7 @@ export function Navigation() {
   const navQuery = useStore(navQueryStore);
   const favorites = useStore(favoritesStore);
   const recents = useStore(recentsStore);
+  const theme = useStore(themeStore);
 
   const [follow, setFollow] = useState(true);
   const [query, setQuery] = useState('');
@@ -71,11 +77,10 @@ export function Navigation() {
   useEffect(() => {
     if (!mapEl.current || map.current) return;
     const m = L.map(mapEl.current, { zoomControl: false, attributionControl: true }).setView(DEFAULT_CENTER, 13);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      attribution: '© OpenStreetMap, © CARTO',
-    }).addTo(m);
+    // Стандартный слой OpenStreetMap: без ключа, по правилам tile.openstreetmap.org
+    // (атрибуция со ссылкой, браузер передаёт Referer). Ночью тайлы затемняются CSS-фильтром.
+    // Прежний слой CARTO без договора и ключа отдавал тайлы с надписью «API KEY REQUIRED».
+    L.tileLayer(OSM_TILES, { maxZoom: 19, attribution: OSM_ATTRIBUTION }).addTo(m);
     m.on('dragstart', () => setFollow(false));
     map.current = m;
     const ro = new ResizeObserver(() => m.invalidateSize());
@@ -118,10 +123,10 @@ export function Navigation() {
     if (nav.route) {
       const pts = nav.route.coords.map((c) => [c.lat, c.lon] as L.LatLngTuple);
       l.route = L.layerGroup([
-        L.polyline(pts, { color: '#06080b', weight: 11, opacity: 0.9, interactive: false }),
-        L.polyline(pts, { color: '#36d1ff', weight: 7, opacity: 0.95, interactive: false }),
+        L.polyline(pts, { color: THEMES[theme.active]['route-casing'], weight: 11, opacity: 0.9, interactive: false }),
+        L.polyline(pts, { color: THEMES[theme.active].route, weight: 7, opacity: 0.95, interactive: false }),
       ]).addTo(m);
-      if (nav.status === 'preview') {
+      if (nav.status === 'preview' && !themeOnly.current) {
         setFollow(false);
         m.fitBounds(L.latLngBounds(pts), { padding: [60, 60], maxZoom: 16 });
       }
@@ -129,7 +134,15 @@ export function Navigation() {
       setFollow(false);
       m.setView([nav.dest.lat, nav.dest.lon], 15);
     }
-  }, [nav.route, nav.dest, nav.via, nav.status]);
+    themeOnly.current = false;
+  }, [nav.route, nav.dest, nav.via, nav.status, theme.active]);
+
+  // Смена темы перерисовывает линию маршрута, но не двигает камеру.
+  const prevTheme = useRef(theme.active);
+  if (prevTheme.current !== theme.active) {
+    prevTheme.current = theme.active;
+    themeOnly.current = true;
+  }
 
   // Начало ведения — камера следует за машиной
   useEffect(() => {
@@ -193,7 +206,7 @@ export function Navigation() {
     <div className="navigation">
       <div ref={mapEl} className="map" />
 
-      <div className={`map-ui ${nav.dest && !guiding ? 'has-dest' : ''}`}>
+      <div className={`map-ui ${nav.dest && !guiding ? 'has-dest' : ''} ${nav.dest || poi.category ? 'has-card' : ''}`}>
         {/* Верх: поиск или манёвр */}
         <div className="map-top">
           {guiding && step && nav.progress ? (
