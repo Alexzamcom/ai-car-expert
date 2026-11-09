@@ -18,14 +18,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Unit-тесты
+        run: npm test
       - run: npm run build
-      - name: Smoke test (локальная сборка)
+      - name: Smoke test (локальная сборка, сервисы подменены тестовыми данными)
         run: |
           npm i --no-save playwright@1.49.1
           npx playwright install --with-deps chromium
           npx vite preview --port 4173 --strictPort &
           npx --yes wait-on@8.0.1 -t 30000 http://localhost:4173/
-          node scripts/smoke.mjs http://localhost:4173/ smoke-local
+          node scripts/smoke.mjs http://localhost:4173/ smoke-local --mock
       - uses: actions/upload-artifact@v4
         if: always()
         with:

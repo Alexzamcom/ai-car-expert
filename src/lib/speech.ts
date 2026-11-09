@@ -84,16 +84,37 @@ export function listen(lang: string, h: ListenHandlers): () => void {
 }
 
 /* ---------- Синтез речи ---------- */
+// Звук синтеза идёт на текущий аудиовыход устройства — в машине это Bluetooth автомобиля,
+// если iPad подключён к нему как к аудиоустройству.
 
-export function speak(text: string, lang: string) {
-  if (!('speechSynthesis' in window)) return;
+let preferredVoiceURI = '';
+export function setPreferredVoice(uri: string) {
+  preferredVoiceURI = uri;
+}
+
+export function listVoices(lang: string): SpeechSynthesisVoice[] {
+  if (!('speechSynthesis' in window)) return [];
+  const prefix = lang.slice(0, 2);
+  return window.speechSynthesis.getVoices().filter((v) => v.lang.replace('_', '-').toLowerCase().startsWith(prefix));
+}
+
+export function speak(text: string, lang: string, opts: { onEnd?: () => void } = {}) {
+  if (!('speechSynthesis' in window)) {
+    opts.onEnd?.();
+    return;
+  }
   window.speechSynthesis.cancel();
-  const clean = text.replace(/[*_#`>]/g, '').slice(0, 1200);
+  const clean = text.replace(/[*_#`>]/g, '').replace(/\n+/g, '. ').slice(0, 1200);
   const u = new SpeechSynthesisUtterance(clean);
   u.lang = lang;
-  const voice = window.speechSynthesis.getVoices().find((v) => v.lang.replace('_', '-').startsWith(lang.slice(0, 2)));
+  const voices = listVoices(lang);
+  const voice = voices.find((v) => v.voiceURI === preferredVoiceURI) ?? voices.find((v) => v.lang.replace('_', '-') === lang) ?? voices[0];
   if (voice) u.voice = voice;
   u.rate = 1.02;
+  if (opts.onEnd) {
+    u.onend = () => opts.onEnd?.();
+    u.onerror = () => opts.onEnd?.();
+  }
   window.speechSynthesis.speak(u);
 }
 

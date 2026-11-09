@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { Icon } from './Icon';
 import { useStore } from '../lib/store';
 import { settingsStore, vehicleName, openSection, toast } from '../lib/state';
-import { geoStore } from '../lib/nav';
+import { geoStore, navStore, navLang } from '../lib/nav';
+import { fmtDistance } from '../lib/routing';
 import { playerStore, togglePlay } from '../lib/player';
+import { isRemoteConfigured } from '../lib/assistant';
 
 function useClock() {
   const [now, setNow] = useState(() => new Date());
@@ -34,18 +36,20 @@ export function StatusBar() {
   const online = useOnline();
   const settings = useStore(settingsStore);
   const geo = useStore(geoStore);
+  const nav = useStore(navStore);
   const player = useStore(playerStore);
   const name = vehicleName(settings.vehicle);
+  const routeLeft = nav.route && nav.progress ? nav.route.duration * (nav.progress.remainingM / Math.max(1, nav.route.distance)) : null;
 
   return (
     <header className="statusbar">
-      <button className="sb-vehicle" onClick={() => openSection('vehicle')}>
+      <button className="sb-vehicle" onClick={() => openSection('vehicle')} aria-label="Мой автомобиль">
         <span className="sb-logo">
           <Icon name="spark" size="1.1em" stroke={2} />
         </span>
         <span className="sb-vehicle-text">
           <strong>{name || 'AI Car Expert'}</strong>
-          <small>{name ? 'AI Car Expert' : 'Укажите автомобиль в настройках'}</small>
+          <small>{settings.vehicle.engine || 'AI Car Expert'}</small>
         </span>
       </button>
 
@@ -55,6 +59,14 @@ export function StatusBar() {
       </div>
 
       <div className="sb-right">
+        {nav.status === 'guiding' && nav.progress && routeLeft != null && (
+          <button className="sb-chip sb-route" onClick={() => openSection('navigation')}>
+            <Icon name="flag" size="1em" />
+            <span>
+              {new Date(Date.now() + routeLeft * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} · {fmtDistance(nav.progress.remainingM, navLang())}
+            </span>
+          </button>
+        )}
         {player.current && (
           <button className="sb-chip sb-now" onClick={togglePlay} aria-label={player.playing ? 'Пауза' : 'Воспроизвести'}>
             <Icon name={player.playing ? 'pause' : 'play'} size="1em" filled stroke={0} />
@@ -62,20 +74,24 @@ export function StatusBar() {
           </button>
         )}
         <button
-          className="sb-chip sb-chip-muted"
-          onClick={() => toast('Автомобиль не подключён. Интеграция с автомобилем и OBD-модуль — в разработке.', 'warn')}
+          className={`sb-icon ${isRemoteConfigured() ? 'is-ok' : 'is-off'}`}
+          onClick={() => toast(isRemoteConfigured() ? 'Grok подключён через ваш сервер.' : 'Grok не подключён — помощник работает на встроенной базе. Подключение: Настройки → Помощник.', 'info')}
+          aria-label="Состояние Grok"
         >
-          <Icon name="plug" size="1.1em" />
-          <span>Авто не подключено</span>
+          <Icon name="spark" size="1.25em" />
         </button>
-        <span className={`sb-icon ${geo.status === 'watching' ? 'is-ok' : 'is-off'}`} title="GPS">
+        <button
+          className={`sb-icon ${geo.status === 'watching' ? 'is-ok' : geo.status === 'denied' ? 'is-warn' : 'is-off'}`}
+          onClick={() => toast(geo.status === 'watching' ? `GPS: точность ±${Math.round(geo.accuracy ?? 0)} м` : 'Геопозиция недоступна', 'info')}
+          aria-label="GPS"
+        >
           <Icon name="gps" size="1.25em" />
-        </span>
-        <span className={`sb-icon ${online ? 'is-ok' : 'is-warn'}`} title={online ? 'Сеть доступна' : 'Нет сети'}>
+        </button>
+        <span className={`sb-icon ${online ? 'is-ok' : 'is-warn'}`} title={online ? 'Сеть доступна' : 'Нет сети'} aria-label={online ? 'Сеть доступна' : 'Нет сети'}>
           <Icon name={online ? 'wifi' : 'wifiOff'} size="1.25em" />
         </span>
         <button className="sb-icon-btn" onClick={() => openSection('settings')} aria-label="Настройки">
-          <Icon name="gear" size="1.4em" />
+          <Icon name="gear" size="1.35em" />
         </button>
       </div>
     </header>

@@ -28,6 +28,16 @@ export const DEFAULT_STATIONS: Station[] = [
 
 export const stationsStore = createStore<Station[]>(DEFAULT_STATIONS, 'stations-v2');
 
+/** Последняя станция и громкость — для восстановления после перезапуска. */
+export const lastPlayedStore = createStore<{ station: Station | null; volume: number }>({ station: null, volume: 0.9 }, 'player-last');
+
+/** На iOS/iPadOS громкость элемента audio задаётся только кнопками устройства. */
+export const volumeControllable = (() => {
+  if (typeof navigator === 'undefined') return true;
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  return !ios;
+})();
+
 export interface PlayerState {
   current: Track | null;
   queue: Track[];
@@ -84,8 +94,106 @@ export function stationTrack(st: Station): Track {
   return { id: st.id, title: st.name, subtitle: st.genre ? `Радио · ${st.genre}` : 'Интернет-радио', url: st.url, kind: 'radio' };
 }
 
-export function playStation(st: Station) {
-  playTrack(stationTrack(st), stationsStore.get().map(stationTrack));
+export function playStation(st: Station, queue?: Station[]) {
+  const list = queue ?? stationsStore.get();
+  const inList = list.some((x) => x.id === st.id);
+  playTrack(stationTrack(st), (inList ? list : [st, ...list]).map(stationTrack));
+  lastPlayedStore.set((l) => ({ ...l, station: st }));
+}
+
+/** Показываем последнюю станцию после перезапуска (автозапуск звука браузер не разрешит). */
+export function restorePlayer() {
+  const { station, volume } = lastPlayedStore.get();
+  playerStore.set((s) => ({
+    ...s,
+    volume,
+    current: s.current ?? (station ? stationTrack(station) : null),
+    queue: s.queue.length ? s.queue : stationsStore.get().map(stationTrack),
+  }));
+}
+
+/** Найти станцию по названию: сначала в своих, потом в каталоге Radio Browser. */
+export async function playByQuery(query: string): Promise<{ ok: boolean; text: string }> {
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    resume();
+    return { ok: true, text: 'Включаю радио.' };
+  }
+  const own = stationsStore.get().find((s) => s.name.toLowerCase().includes(q));
+  if (own) {
+    playStation(own);
+    return { ok: true, text: `Включаю ${own.name}.` };
+  }
+  try {
+    const found = await searchStations({ name: query });
+    if (!found.length) return { ok: false, text: `Станция «${query}» не найдена.` };
+    playStation(found[0], found);
+    return { ok: true, text: `Включаю ${found[0].name}.` };
+  } catch {
+    return { ok: false, text: 'Каталог радиостанций недоступен.' };
+  }
+}
+
+/* ---------- Каталог Radio Browser (radio-browser.info) ---------- */
+
+interface RbStation {
+  stationuuid: string;
+  name: string;
+  url_resolved: string;
+  codec: string;
+  bitrate: number;
+  countrycode: string;
+  tags: string;
+  hls: number;
+  lastcheckok: number;
+}
+
+const RB_HOSTS = ['https://de1.api.radio-browser.info', 'https://de2.api.radio-browser.info', 'https://fi1.api.radio-browser.info'];
+
+/** Только потоки, которые реально воспроизведёт страница по HTTPS (без смешанного контента). */
+export function filterPlayable(list: RbStation[]): Station[] {
+  const seen = new Set<string>();
+  return list
+    .filter((r) => r.lastcheckok === 1 && r.url_resolved.startsWith('https://') && /^(MP3|AAC|AAC\+)$/i.test(r.codec || 'MP3'))
+    .filter((r) => {
+      const key = r.name.trim().toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((r) => ({
+      id: `rb-${r.stationuuid}`,
+      name: r.name.trim(),
+      url: r.url_resolved,
+      genre: [r.countrycode, r.tags.split(',')[0], r.bitrate ? `${r.bitrate} кбит/с` : ''].filter(Boolean).join(' · '),
+    }));
+}
+
+export async function searchStations(params: { name?: string; countrycode?: string; tag?: string }, signal?: AbortSignal): Promise<Station[]> {
+  const qs = new URLSearchParams({ hidebroken: 'true', order: 'clickcount', reverse: 'true', limit: '40', is_https: 'true' });
+  if (params.name) qs.set('name', params.name);
+  if (params.countrycode) qs.set('countrycode', params.countrycode);
+  if (params.tag) qs.set('tag', params.tag);
+  let lastErr: unknown;
+  for (const host of RB_HOSTS) {
+    try {
+      const res = await fetch(`${host}/json/stations/search?${qs}`, { signal });
+      if (!res.ok) throw new Error(String(res.status));
+      return filterPlayable((await res.json()) as RbStation[]);
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') throw e;
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('Каталог недоступен');
+}
+
+export function isSaved(id: string) {
+  return stationsStore.get().some((s) => s.id === id);
+}
+
+export function saveStation(st: Station) {
+  if (!isSaved(st.id)) stationsStore.set((l) => [...l, { ...st, custom: true }]);
 }
 
 export function pause() {
@@ -134,6 +242,7 @@ export function stop() {
 export function setVolume(v: number) {
   if (audio) audio.volume = v;
   playerStore.set((s) => ({ ...s, volume: v }));
+  lastPlayedStore.set((l) => ({ ...l, volume: v }));
 }
 
 export function addStation(name: string, url: string) {

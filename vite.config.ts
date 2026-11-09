@@ -33,14 +33,23 @@ function serviceWorker(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   base: './',
   define: {
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.1.0'),
   },
-  plugins: [react(), serviceWorker()],
+  // mode=artifact — однофайловая сборка без service worker (scripts/build-artifact.mjs).
+  plugins: mode === 'artifact' ? [react()] : [react(), serviceWorker()],
   build: {
     target: 'safari16',
     chunkSizeWarningLimit: 800,
+    ...(mode === 'artifact'
+      ? {
+          outDir: 'dist-artifact',
+          cssCodeSplit: false,
+          assetsInlineLimit: 100_000_000,
+          rollupOptions: { output: { inlineDynamicImports: true } },
+        }
+      : {}),
   },
-});
+}));

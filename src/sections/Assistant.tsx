@@ -7,12 +7,12 @@ import { listen, speechRecognitionSupported, stopSpeaking, speak } from '../lib/
 import { openArticle } from '../lib/manualNav';
 
 const SUGGESTIONS = [
-  'Горит Check Engine — что делать?',
-  'Что значит код P0171?',
+  'Маршрут до ближайшей заправки',
+  'Как работает режим AUTO климата?',
+  'Включи радио',
+  'Какое масло нужно для моего мотора?',
   'Когда следующее ТО?',
-  'Как проверить давление в шинах?',
-  'Как прикурить автомобиль?',
-  'Двигатель перегрелся',
+  'Что значит код P0171?',
 ];
 
 export function Assistant() {
@@ -63,7 +63,7 @@ export function Assistant() {
     <div className="section assistant">
       <div className={`mode-line ${remote ? 'is-online' : 'is-offline'}`}>
         <span className="dot" />
-        {remote ? 'AI-сервис подключён' : 'AI-сервис не подключён — ответы из встроенной базы'}
+        {remote ? 'Grok подключён через ваш сервер' : 'Grok не подключён — работают команды и встроенная база'}
         <span className="spacer" />
         <button
           className="icon-btn"
@@ -91,7 +91,7 @@ export function Assistant() {
               <Icon name="spark" size="3rem" />
             </div>
             <h2>Чем помочь в дороге?</h2>
-            <p className="muted">Спросите голосом или выберите вопрос.</p>
+            <p className="muted">Скажите или напишите: маршрут, музыка, вопрос о вашем автомобиле.</p>
             <div className="chips">
               {SUGGESTIONS.map((s) => (
                 <button key={s} className="chip" onClick={() => submit(s)}>
@@ -106,9 +106,18 @@ export function Assistant() {
             <div className="msg-bubble">
               {m.text.split('\n').map((line, i) => (line ? <p key={i}>{line}</p> : <br key={i} />))}
             </div>
+            {m.actions && m.actions.length > 0 && (
+              <div className="msg-actions">
+                {m.actions.map((a, i) => (
+                  <span key={i} className="badge badge-info">
+                    <Icon name="check" size="1em" /> {a}
+                  </span>
+                ))}
+              </div>
+            )}
             {m.role === 'assistant' && (
               <div className="msg-meta">
-                <span>{m.source === 'ai' ? 'AI' : 'Встроенная база'}</span>
+                <span>{m.source === 'ai' ? 'Grok' : 'Встроенная база'}</span>
                 <button className="link-btn" onClick={() => speak(m.text, settings.speechLang)}>
                   <Icon name="speaker" size="1.1em" /> Озвучить
                 </button>
@@ -147,7 +156,7 @@ export function Assistant() {
           className="input input-xl"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={listening ? 'Слушаю…' : 'Вопрос об автомобиле'}
+          placeholder={listening ? 'Слушаю…' : 'Спросите Grok'}
           enterKeyHint="send"
           autoComplete="off"
         />

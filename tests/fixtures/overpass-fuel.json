@@ -1,0 +1,38 @@
+{
+ "elements": [
+  {
+   "type": "node",
+   "id": 1,
+   "lat": 55.7655,
+   "lon": 37.605,
+   "tags": {
+    "amenity": "fuel",
+    "brand": "Лукойл",
+    "name": "Лукойл",
+    "opening_hours": "24/7"
+   }
+  },
+  {
+   "type": "node",
+   "id": 2,
+   "lat": 55.7735,
+   "lon": 37.6095,
+   "tags": {
+    "amenity": "fuel",
+    "brand": "Роснефть"
+   }
+  },
+  {
+   "type": "way",
+   "id": 3,
+   "center": {
+    "lat": 55.758,
+    "lon": 37.614
+   },
+   "tags": {
+    "amenity": "fuel",
+    "name": "Газпромнефть"
+   }
+  }
+ ]
+}

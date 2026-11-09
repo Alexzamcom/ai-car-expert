@@ -1,46 +1,43 @@
 import { createStore, uid } from './store';
-import type { SectionId } from './sections';
+import { isPanel, type SectionId, type PanelId, type PageId } from './sections';
 
-/* ---------- Раскладка экрана (две панели, как у центрального дисплея) ---------- */
+/* ---------- Раскладка экрана ----------
+   Главный экран «Вождение»: карта всегда на экране + нижняя (в горизонтали — боковая)
+   панель с вкладками. Остальные разделы открываются полноэкранными страницами поверх. */
 
 export interface LayoutState {
-  primary: SectionId;
-  secondary: SectionId | null;
-  maximized: 'primary' | 'secondary' | null;
+  panel: PanelId;
+  panelMode: 'collapsed' | 'normal' | 'expanded';
+  order: 'map-first' | 'panel-first';
+  page: PageId | null;
 }
 
+// На телефоне по умолчанию панель свёрнута — главное место у карты.
+const narrow = typeof window !== 'undefined' && Math.min(window.innerWidth, window.innerHeight) < 600;
+
 export const layoutStore = createStore<LayoutState>(
-  { primary: 'navigation', secondary: 'vehicle', maximized: null },
-  'layout',
+  { panel: 'media', panelMode: narrow ? 'collapsed' : 'normal', order: 'map-first', page: null },
+  'layout-v2',
 );
 
-/** Открыть раздел в основной (верхней) панели. */
 export function openSection(id: SectionId) {
   layoutStore.set((s) => {
-    if (s.primary === id) return { ...s, maximized: s.maximized === 'secondary' ? null : s.maximized };
-    if (s.secondary === id) return { primary: id, secondary: s.primary, maximized: null };
-    return { ...s, primary: id, maximized: s.maximized === 'secondary' ? null : s.maximized };
+    if (id === 'navigation') return { ...s, page: null, panelMode: s.panelMode === 'expanded' ? 'normal' : s.panelMode };
+    if (isPanel(id)) return { ...s, page: null, panel: id, panelMode: s.panelMode === 'collapsed' ? 'normal' : s.panelMode };
+    return { ...s, page: id };
   });
 }
 
-export function swapPanes() {
-  layoutStore.set((s) =>
-    s.secondary ? { primary: s.secondary, secondary: s.primary, maximized: null } : s,
-  );
+export function closePage() {
+  layoutStore.set((s) => ({ ...s, page: null }));
 }
 
-export function toggleMaximize(pane: 'primary' | 'secondary') {
-  layoutStore.set((s) => ({ ...s, maximized: s.maximized === pane ? null : pane }));
+export function setPanelMode(mode: LayoutState['panelMode']) {
+  layoutStore.set((s) => ({ ...s, panelMode: mode }));
 }
 
-export function closeSecondary() {
-  layoutStore.set((s) => ({ ...s, secondary: null, maximized: null }));
-}
-
-export function openInSecondary(id: SectionId) {
-  layoutStore.set((s) =>
-    s.primary === id ? s : { primary: s.primary, secondary: id, maximized: null },
-  );
+export function swapOrder() {
+  layoutStore.set((s) => ({ ...s, order: s.order === 'map-first' ? 'panel-first' : 'map-first' }));
 }
 
 /* ---------- Настройки ---------- */
@@ -49,6 +46,7 @@ export interface VehicleProfile {
   make: string;
   model: string;
   year: string;
+  engine: string;
   vin: string;
   fuel: 'petrol' | 'diesel' | 'hybrid' | 'electric' | 'gas';
   odometerKm: number | null;
@@ -63,6 +61,14 @@ export interface Settings {
   aiToken: string;
   speechLang: string;
   speakReplies: boolean;
+  /** Голосовые подсказки навигации. */
+  speakNavigation: boolean;
+  /** Ненавязчивые подсказки о функциях автомобиля. */
+  featureTips: boolean;
+  /** После ответа помощник снова слушает (без нажатия кнопки). */
+  conversationMode: boolean;
+  /** Выбранный голос синтеза речи (voiceURI), пусто — автоматически. */
+  voiceURI: string;
   textScale: 'normal' | 'large' | 'xlarge';
   keepAwake: boolean;
 }
@@ -70,9 +76,11 @@ export interface Settings {
 export const settingsStore = createStore<Settings>(
   {
     vehicle: {
-      make: '',
-      model: '',
-      year: '',
+      // Первый тестовый автомобиль. Владелец может изменить в настройках.
+      make: 'Peugeot',
+      model: '3008',
+      year: '2010',
+      engine: '1.6 THP (бензин, турбо)',
       vin: '',
       fuel: 'petrol',
       odometerKm: null,
@@ -84,11 +92,20 @@ export const settingsStore = createStore<Settings>(
     aiToken: '',
     speechLang: 'ru-RU',
     speakReplies: true,
+    speakNavigation: true,
+    featureTips: true,
+    conversationMode: false,
+    voiceURI: '',
     textScale: 'normal',
     keepAwake: true,
   },
   'settings',
 );
+
+// Миграция: в первой версии профиль был пустым — заполняем данными тестового автомобиля.
+if (!settingsStore.get().vehicle.make) {
+  settingsStore.set((s) => ({ ...s, vehicle: { ...s.vehicle, make: 'Peugeot', model: '3008', year: s.vehicle.year || '2010', engine: s.vehicle.engine || '1.6 THP (бензин, турбо)' } }));
+}
 
 export function vehicleName(v: VehicleProfile): string {
   const name = [v.make, v.model].filter(Boolean).join(' ').trim();

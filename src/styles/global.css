@@ -187,24 +187,62 @@ h1, h2, h3, p { margin: 0; }
 }
 .sb-icon-btn:active { background: var(--panel-2); }
 
-/* ---- Панели ---- */
+/* ---- Главный экран «Вождение» ----
+   Вертикально: карта сверху, панель снизу. Горизонтально: карта слева, панель справа.
+   Панель: свёрнута (полоса), обычная, развёрнута. Порядок карты и панели меняется. */
 
-.panes {
+.drive {
+  position: relative;
   display: grid;
-  gap: 12px;
-  padding: 0 12px;
+  gap: 10px;
+  padding: 0 10px;
   min-height: 0;
+  min-width: 0;
+  grid-template-areas: 'map' 'panel';
+  grid-template-rows: minmax(0, 58fr) minmax(0, 42fr);
+  grid-template-columns: minmax(0, 1fr);
+}
+.drive.order-panel-first { grid-template-areas: 'panel' 'map'; grid-template-rows: minmax(0, 42fr) minmax(0, 58fr); }
+.drive.panel-expanded { grid-template-rows: minmax(0, 32fr) minmax(0, 68fr); }
+.drive.order-panel-first.panel-expanded { grid-template-rows: minmax(0, 68fr) minmax(0, 32fr); }
+.drive.panel-collapsed { grid-template-rows: minmax(0, 1fr) auto; }
+.drive.order-panel-first.panel-collapsed { grid-template-rows: auto minmax(0, 1fr); }
+
+@media (orientation: landscape) and (min-width: 900px) {
+  .drive,
+  .drive.panel-expanded,
+  .drive.panel-collapsed { grid-template-areas: 'map panel'; grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 60fr) minmax(0, 40fr); }
+  .drive.order-panel-first,
+  .drive.order-panel-first.panel-expanded,
+  .drive.order-panel-first.panel-collapsed { grid-template-areas: 'panel map'; grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 40fr) minmax(0, 60fr); }
+  .drive.panel-expanded { grid-template-columns: minmax(0, 42fr) minmax(0, 58fr); }
+  .drive.order-panel-first.panel-expanded { grid-template-columns: minmax(0, 58fr) minmax(0, 42fr); }
+  .drive.panel-collapsed { grid-template-columns: minmax(0, 1fr) auto; }
+  .drive.order-panel-first.panel-collapsed { grid-template-columns: auto minmax(0, 1fr); }
+  .panel-collapsed .panel-head { flex-direction: column; height: 100%; width: 96px; padding: 8px; }
+  .panel-collapsed .panel-tabs { flex-direction: column; }
+  .panel-collapsed .panel-tab-label,
+  .panel-collapsed .mini-player { display: none; }
+  .panel-collapsed .panel-actions { margin-top: auto; flex-direction: column; }
 }
 
-.panes.is-single { grid-template-rows: minmax(0, 1fr); }
-/* Вертикально: две панели одна над другой (основная — сверху, крупнее). */
-.panes.is-split { grid-template-rows: minmax(0, 57fr) minmax(0, 43fr); }
-
-@media (orientation: landscape) {
-  .panes.is-split { grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 58fr) minmax(0, 42fr); }
+.drive-map {
+  grid-area: map;
+  position: relative;
+  /* Собственный контекст наложения: z-index Leaflet (400–1000) не выходит за пределы карты
+     и не перекрывает разделы, меню и голосовой экран. */
+  isolation: isolate;
+  z-index: 0;
+  min-height: 0;
+  min-width: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #0d1116;
 }
 
-.pane {
+.panel {
+  grid-area: panel;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -213,36 +251,44 @@ h1, h2, h3, p { margin: 0; }
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
-  container-type: inline-size;
-  container-name: pane;
 }
 
-.pane-head {
+.panel-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px 6px 20px;
-  min-height: 64px;
+  gap: 6px;
+  padding: 6px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel);
   flex: none;
+  min-width: 0;
 }
+.panel-collapsed .panel-head { border-bottom: 0; }
 
-.pane-title {
+.panel-tabs { display: flex; gap: 4px; min-width: 0; flex: 1; }
+.panel-tab {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 1.05rem;
-  font-weight: 600;
-  flex: 1;
-  min-width: 0;
+  justify-content: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 0 14px;
+  border-radius: 14px;
+  color: var(--text-2);
+  font-weight: 550;
+  font-size: 0.85rem;
   white-space: nowrap;
+  min-width: 56px;
 }
-.pane-title svg { color: var(--accent); }
+.panel-tab.is-active { background: var(--panel-3); color: var(--accent); }
+.panel-collapsed .panel-tab.is-active { background: none; color: var(--text-2); }
+.panel-collapsed .panel-tabs { flex: 0 1 auto; }
 
-.pane-actions { display: flex; gap: 4px; }
+.mini-player { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; padding-left: 8px; border-left: 1px solid var(--line); }
+.mini-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--accent); font-weight: 550; }
 
-.pane-body {
+.panel-actions { display: flex; gap: 2px; flex: none; }
+
+.panel-body {
   flex: 1;
   min-height: 0;
   position: relative;
@@ -250,18 +296,68 @@ h1, h2, h3, p { margin: 0; }
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  container-type: inline-size;
+  container-name: pane;
 }
 
 .pane-loading { display: grid; place-items: center; height: 100%; color: var(--muted); }
+
+/* ---- Дополнительный раздел поверх главного экрана ---- */
+
+.page-sheet {
+  position: absolute;
+  inset: 0 10px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  animation: sheet-in 0.18s ease-out;
+}
+@keyframes sheet-in { from { opacity: 0; transform: translateY(12px); } }
+.page-head { display: flex; align-items: center; gap: 14px; padding: 8px 12px; border-bottom: 1px solid var(--line); flex: none; min-width: 0; }
+.page-title { display: flex; align-items: center; gap: 10px; font-size: 1.1rem; font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.page-title svg { color: var(--accent); flex: none; }
+.page-back { flex: none; }
+.page-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  container-type: inline-size;
+  container-name: pane;
+}
+
+/* ---- Меню «Ещё» ---- */
+
+.more-menu { position: fixed; inset: 0; z-index: 30; background: rgba(4, 6, 9, 0.6); display: flex; align-items: flex-end; justify-content: flex-end; padding: 0 12px calc(120px + var(--safe-b)); }
+.more-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  width: min(520px, 100%);
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.more-item { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 110px; padding: 10px; border-radius: 16px; background: var(--panel-3); text-align: center; font-weight: 550; }
+.more-item svg { color: var(--accent); }
 
 /* ---- Док ---- */
 
 .dock {
   display: grid;
-  grid-template-columns: repeat(4, 1fr) 1.2fr repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.2fr) repeat(3, minmax(0, 1fr));
   align-items: center;
   gap: 6px;
-  padding: 10px 14px calc(10px + var(--safe-b));
+  padding: 8px 12px calc(8px + var(--safe-b));
 }
 
 .dock-btn {
@@ -270,10 +366,12 @@ h1, h2, h3, p { margin: 0; }
   align-items: center;
   justify-content: center;
   gap: 4px;
-  height: 88px;
+  height: 84px;
+  min-width: 0;
   border-radius: var(--radius-sm);
   color: var(--text-2);
   font-size: 0.75rem;
+  white-space: nowrap;
   font-weight: 500;
   transition: background 0.15s, color 0.15s;
 }
@@ -628,85 +726,97 @@ textarea.input { padding: 14px 16px; resize: none; }
 
 .composer { display: flex; align-items: center; gap: 10px; padding: 12px; border-top: 1px solid var(--line); background: var(--panel); flex: none; }
 
-/* ============ Навигация ============ */
+/* ============ Навигация ============
+   Элементы поверх карты разложены сеткой (верх / правая колонка / низ),
+   поэтому не перекрывают друг друга при любом размере карты. */
 
-.navigation { position: absolute; inset: 0; padding: 0; gap: 0; }
+.navigation { position: absolute; inset: 0; container-type: size; container-name: map; }
 .map { position: absolute; inset: 0; background: #0d1116; }
 .map.leaflet-container { background: #0d1116; font: inherit; }
 .leaflet-control-attribution { background: rgba(6, 8, 11, 0.7) !important; color: var(--muted) !important; font-size: 10px; }
 .leaflet-control-attribution a { color: var(--text-2) !important; }
 
-.map-search {
+.map-ui {
   position: absolute;
-  top: 16px;
-  left: 16px;
-  right: 104px;
-  max-width: 640px;
+  inset: 0;
   z-index: 500;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'top ctl' 'mid ctl' 'bottom bottom';
+  gap: 10px;
+  padding: 12px 12px 22px;
+  pointer-events: none;
+}
+.map-ui > * { pointer-events: none; }
+.map-ui button, .map-ui a, .map-ui input, .map-ui form, .map-ui .card-float, .map-ui .map-panel, .map-ui .maneuver, .map-ui .map-speed { pointer-events: auto; }
+
+.map-top { grid-area: top; display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 680px; min-height: 0; }
+
+.map-search {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 8px 0 20px;
-  height: 72px;
-  border-radius: 20px;
+  gap: 10px;
+  padding: 0 6px 0 18px;
+  height: 64px;
+  border-radius: 18px;
   background: rgba(17, 21, 27, 0.95);
   border: 1px solid var(--line-2);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   color: var(--muted);
 }
-.map-search-input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; outline: none; font-size: 1.15rem; color: var(--text); }
+.map-search-input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; outline: none; font-size: 1.1rem; color: var(--text); }
 
 .map-panel {
-  position: absolute;
-  top: 98px;
-  left: 16px;
-  right: 104px;
-  max-width: 640px;
-  max-height: calc(100% - 120px);
+  max-height: min(60cqh, 520px);
   overflow-y: auto;
-  z-index: 500;
-  border-radius: 20px;
+  border-radius: 18px;
   background: rgba(17, 21, 27, 0.97);
   border: 1px solid var(--line-2);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   padding: 6px 0;
 }
+.poi-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+.poi-chips .chip { min-height: 48px; gap: 8px; }
 
-.place-row {
+.maneuver {
   display: flex;
   align-items: center;
   gap: 16px;
-  width: 100%;
-  min-height: 72px;
-  padding: 10px 18px;
-  text-align: left;
-}
-.place-row:active, .place-row.is-current { background: var(--panel-3); }
-.place-row svg { color: var(--accent); flex: none; }
-.place-row span { display: flex; flex-direction: column; min-width: 0; }
-.place-row small { color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-.map-controls { position: absolute; top: 16px; right: 16px; z-index: 500; display: flex; flex-direction: column; gap: 10px; }
-.map-ctl {
-  width: 72px;
-  height: 72px;
+  padding: 14px 18px;
   border-radius: 20px;
+  background: linear-gradient(135deg, #0f6b8a, #0c5571);
+  color: #fff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.maneuver-icon { width: 72px; height: 72px; flex: none; display: grid; place-items: center; border-radius: 18px; background: rgba(255, 255, 255, 0.14); }
+.maneuver-text { flex: 1; min-width: 0; }
+.maneuver-dist { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.maneuver-instr { font-size: 1.1rem; font-weight: 550; overflow-wrap: anywhere; }
+.maneuver-next { font-size: 0.8rem; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.map-controls { grid-area: ctl; display: flex; flex-direction: column; gap: 8px; }
+.map-ctl {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
   display: grid;
   place-items: center;
   background: rgba(17, 21, 27, 0.95);
   border: 1px solid var(--line-2);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
 }
+.map-ctl { flex: none; }
 .map-ctl.is-active { color: var(--accent); }
 .map-minus { width: 22px; height: 2.5px; border-radius: 2px; background: currentColor; }
 
+.map-bottom { grid-area: bottom; display: flex; align-items: flex-end; gap: 10px; min-width: 0; min-height: 0; }
+.map-cards { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+
 .map-speed {
-  position: absolute;
-  left: 16px;
-  bottom: 28px;
-  z-index: 500;
-  width: 112px;
-  height: 112px;
+  flex: none;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
   display: flex;
   flex-direction: column;
@@ -715,48 +825,99 @@ textarea.input { padding: 14px 16px; resize: none; }
   background: rgba(17, 21, 27, 0.95);
   border: 2px solid var(--line-2);
 }
-.map-speed-value { font-size: 2.2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+.map-speed-value { font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
 .map-speed-unit { font-size: 0.6rem; color: var(--muted); }
 
-.map-banner {
-  position: absolute;
-  left: 140px;
-  right: 16px;
-  bottom: 28px;
-  z-index: 500;
-  display: flex;
-  gap: 12px;
+.geo-chip {
+  align-self: flex-start;
+  display: inline-flex;
   align-items: center;
-  padding: 14px 18px;
-  border-radius: 16px;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 16px;
+  border-radius: 999px;
   background: rgba(17, 21, 27, 0.95);
-  border: 1px solid rgba(255, 176, 32, 0.4);
+  border: 1px solid rgba(255, 176, 32, 0.45);
   font-size: 0.85rem;
+  max-width: 100%;
 }
-.map-banner svg { color: var(--warn); flex: none; }
+.geo-chip svg { color: var(--warn); flex: none; }
 
-.dest-card {
-  position: absolute;
-  left: 140px;
-  right: 16px;
-  bottom: 20px;
-  z-index: 600;
-  padding: 18px;
+.card-float {
+  padding: 14px 16px;
   border-radius: var(--radius);
-  background: rgba(17, 21, 27, 0.98);
+  background: rgba(17, 21, 27, 0.97);
   border: 1px solid var(--line-2);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  max-height: min(70cqh, 560px);
+  overflow-y: auto;
 }
-@container pane (max-width: 640px) { .dest-card { left: 16px; bottom: 150px; } }
-.dest-head { display: flex; align-items: flex-start; gap: 6px; }
-.dest-head > div { flex: 1; min-width: 0; }
-.dest-name { font-size: 1.3rem; font-weight: 650; }
-.dest-head .muted { font-size: 0.85rem; }
-.dest-note { font-size: 0.8rem; color: var(--muted); }
-.dest-actions { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.card-float > * { flex-shrink: 0; }
+.route-head { display: flex; align-items: flex-start; gap: 4px; }
+.route-title { flex: 1; min-width: 0; }
+.dest-name { font-size: 1.25rem; font-weight: 650; overflow-wrap: anywhere; }
+.via-line { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--accent-2); }
+.route-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.route-actions .btn { flex: 1 1 auto; }
+.route-guiding { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; }
+.route-stat { display: flex; flex-direction: column; }
+.route-stat strong { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.route-stat small { color: var(--muted); font-size: 0.7rem; }
+.ext-links { display: flex; flex-direction: column; gap: 8px; }
+.ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.steps-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.steps-list li { display: flex; align-items: center; gap: 12px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+.steps-list li span { flex: 1; min-width: 0; }
+.steps-list li small { color: var(--muted); white-space: nowrap; }
+.steps-list svg { color: var(--accent); flex: none; }
+.place-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 68px;
+  padding: 8px 16px;
+  text-align: left;
+}
+.place-row:active, .place-row.is-current { background: var(--panel-3); }
+.place-row svg { color: var(--accent); flex: none; }
+.place-row span { display: flex; flex-direction: column; min-width: 0; }
+.place-row strong { overflow-wrap: anywhere; }
+.place-row small { color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.poi-head { display: flex; align-items: center; gap: 8px; }
+.poi-list { display: flex; flex-direction: column; margin: 0 -16px; }
+
+/* Маленькая карта (телефон в горизонтали, развёрнутая панель): убираем второстепенное. */
+@container map (max-height: 430px) {
+  .map-controls .map-ctl:not(:last-child) { display: none; }
+  .map-speed { width: 72px; height: 72px; }
+  .map-speed-value { font-size: 1.5rem; }
+  .card-float { max-height: 55cqh; }
+  .map-search { height: 56px; }
+  .maneuver { padding: 10px 14px; }
+  .maneuver-icon { width: 54px; height: 54px; }
+  .maneuver-dist { font-size: 1.5rem; }
+  /* Низкая карта: маршрут важнее поиска; кнопки — одной прокручиваемой строкой. */
+  .map-ui.has-dest .map-top { display: none; }
+  .route-actions { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .route-actions::-webkit-scrollbar { display: none; }
+  .route-actions .btn { flex: none; min-height: 48px; }
+  .dest-name { font-size: 1.05rem; }
+  .card-float { padding: 10px 12px; gap: 8px; }
+}
+@container map (max-width: 520px) {
+  .map-speed { width: 64px; height: 64px; }
+  .map-speed-value { font-size: 1.35rem; }
+  .map-ctl { width: 56px; height: 56px; }
+  .route-actions .btn { min-height: 52px; padding: 0 14px; font-size: 0.9rem; }
+}
+@container map (max-height: 300px) {
+  .map-speed { display: none; }
+  .map-controls { display: none; }
+}
 
 .map-me-dot {
   position: relative;
@@ -789,6 +950,11 @@ textarea.input { padding: 14px 16px; resize: none; }
   border: 4px solid #fff;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
+.map-dest-pin.is-via { width: 30px; height: 30px; background: var(--warn); }
+.map-poi-dot { width: 22px; height: 22px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); background: var(--warn); }
+.map-poi-dot.poi-food { background: #ff8a5c; }
+.map-poi-dot.poi-parking { background: #5c9dff; }
+.map-poi-dot.poi-rest { background: var(--accent-2); }
 
 /* ============ Мультимедиа ============ */
 
@@ -804,9 +970,9 @@ textarea.input { padding: 14px 16px; resize: none; }
 }
 .np-art {
   grid-area: art;
-  width: 120px;
-  height: 120px;
-  border-radius: 24px;
+  width: 96px;
+  height: 96px;
+  border-radius: 22px;
   display: grid;
   place-items: center;
   position: relative;
@@ -825,7 +991,8 @@ textarea.input { padding: 14px 16px; resize: none; }
 @keyframes eq { 0%, 100% { height: 25%; } 50% { height: 100%; } }
 
 .np-info { grid-area: info; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.np-title { font-size: 1.6rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-title { font-size: 1.45rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .np-error { font-size: 0.85rem; }
 .np-controls { grid-area: ctl; display: flex; align-items: center; justify-content: center; gap: 18px; }
 .np-volume { grid-area: vol; display: flex; align-items: center; gap: 14px; color: var(--muted); }
@@ -838,14 +1005,14 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 56px; border-radius: 14px; color: var(--text-2); font-weight: 550; }
 .tab.is-active { background: var(--panel-3); color: var(--text); }
 
-.station-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
-.station { display: flex; align-items: center; border-radius: var(--radius); background: var(--panel-2); border: 1px solid var(--line); min-height: 84px; padding-right: 6px; }
+.station-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 10px; }
+.station { display: flex; align-items: center; border-radius: var(--radius); background: var(--panel-2); border: 1px solid var(--line); min-height: 76px; padding-right: 6px; min-width: 0; }
 .station.is-current { border-color: var(--accent); background: rgba(54, 209, 255, 0.07); }
-.station-main { flex: 1; display: flex; align-items: center; gap: 16px; padding: 14px 18px; text-align: left; min-width: 0; min-height: 84px; }
+.station-main { flex: 1; display: flex; align-items: center; gap: 14px; padding: 12px 16px; text-align: left; min-width: 0; min-height: 76px; }
 .station-main svg { color: var(--accent); flex: none; }
 .station-main span { display: flex; flex-direction: column; min-width: 0; }
 .station-main strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.station-main small { color: var(--muted); font-size: 0.8rem; }
+.station-main small { color: var(--muted); font-size: 0.8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .station-add { justify-content: center; gap: 12px; color: var(--muted); border-style: dashed; padding: 0 18px; }
 .form-row { flex-direction: row; flex-wrap: wrap; }
 .form-row .input { flex: 1 1 220px; }
@@ -949,24 +1116,123 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .setting-row small { color: var(--muted); font-size: 0.8rem; }
 .settings .card > .btn { align-self: flex-start; }
 
+/* ============ Приложения ============ */
+
+.app-group { display: flex; flex-direction: column; gap: 10px; }
+.app-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); gap: 10px; }
+.app-tile { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; min-height: 104px; padding: 10px; border-radius: 18px; background: var(--panel-2); border: 1px solid var(--line); text-align: center; }
+.app-tile:active { background: var(--panel-3); }
+.app-icon { width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center; background: rgba(54, 209, 255, 0.12); color: var(--accent); }
+.app-name { font-size: 0.85rem; font-weight: 550; line-height: 1.2; }
+
+/* ============ Поездка ============ */
+
+.trip-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@container pane (max-width: 480px) { .trip-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.stat { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; border-radius: 18px; background: var(--panel-2); border: 1px solid var(--line); min-width: 0; }
+.stat small { color: var(--muted); font-size: 0.75rem; }
+.stat strong { font-size: 1.7rem; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat span { color: var(--muted); font-size: 0.75rem; }
+.trip-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px; }
+.info-card { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 18px; background: var(--panel-2); border: 1px solid var(--line); text-align: left; min-width: 0; }
+.info-card > svg { color: var(--accent); flex: none; }
+.info-card div { display: flex; flex-direction: column; min-width: 0; }
+.info-card strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.info-card small { color: var(--muted); font-size: 0.8rem; }
+.tip-card { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 18px; background: rgba(47, 230, 176, 0.06); border: 1px solid rgba(47, 230, 176, 0.3); }
+.tip-head { display: flex; align-items: center; gap: 10px; }
+.tip-head > svg { color: var(--accent-2); flex: none; }
+.tip-card p { font-size: 1.05rem; }
+
+/* ============ База знаний и модули ============ */
+
+.kb-list { display: flex; flex-direction: column; gap: 10px; }
+.kb-fact { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 18px; background: var(--panel-2); border: 1px solid var(--line); }
+.kb-fact.status-owner, .kb-fact.status-documented { border-color: rgba(61, 220, 132, 0.35); }
+.kb-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.kb-fact p { color: var(--text-2); }
+.kb-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.badge-ok { background: rgba(61, 220, 132, 0.15); color: var(--ok); }
+.module-list { display: flex; flex-direction: column; gap: 10px; }
+.module-row { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 18px; background: var(--panel-2); border: 1px solid var(--line); }
+.module-row > svg { color: var(--accent); flex: none; }
+.module-row div { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.module-row small { color: var(--muted); font-size: 0.8rem; }
+.msg-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.msg-actions .badge { text-transform: none; letter-spacing: 0; font-size: 0.75rem; white-space: normal; }
+.select { min-height: 52px; padding: 0 14px; max-width: 260px; }
+
 /* ============ Горизонтальная ориентация ============ */
 
 @media (orientation: landscape) {
-  .statusbar { min-height: 64px; padding: 6px 20px; }
-  .sb-time { font-size: 1.7rem; }
-  .dock-btn { height: 76px; }
-  .dock-mic { width: 84px; height: 84px; }
+  .statusbar { min-height: 60px; padding: 4px 18px; }
+  .sb-time { font-size: 1.6rem; }
+  .dock-btn { height: 70px; }
+  .dock-mic { width: 80px; height: 80px; }
 }
 
-/* Узкие экраны (iPad mini / Split View) */
+/* ============ Телефоны и узкие экраны ============ */
+
 @media (max-width: 900px) {
-  .sb-chip-muted span { display: none; }
-  .sb-now { max-width: 140px; }
+  .sb-now { max-width: 150px; }
+  .sb-route { max-width: 170px; }
 }
+
 @media (max-width: 700px) {
-  :root { font-size: 17px; }
+  :root { font-size: 17px; --tap: 56px; }
+  .statusbar { grid-template-columns: auto 1fr auto; gap: 8px; padding: 6px 10px; min-height: 56px; }
+  .sb-vehicle-text, .sb-date, .sb-now { display: none; }
+  .sb-logo { width: 38px; height: 38px; border-radius: 12px; }
+  .sb-clock { align-items: flex-start; }
+  .sb-time { font-size: 1.5rem; }
+  .sb-right { gap: 2px; }
+  .sb-icon { width: 34px; }
+  .sb-icon-btn { width: 46px; height: 46px; }
+  .drive { padding: 0 6px; gap: 6px; }
+  .drive-map, .panel, .page-sheet { border-radius: 18px; }
+  .page-sheet { inset: 0 6px; }
+  .panel-tab { padding: 0 10px; min-width: 48px; }
+  .panel-tab-label { display: none; }
+  .dock { padding: 6px 6px calc(6px + var(--safe-b)); gap: 2px; }
+  .dock-btn { height: 62px; font-size: 0.65rem; }
+  .dock-btn svg { width: 1.6rem; height: 1.6rem; }
+  .dock-mic { width: 64px; height: 64px; box-shadow: 0 0 0 4px var(--bg), 0 6px 24px rgba(54, 209, 255, 0.35); }
+  .dock-mic svg { width: 1.9rem; height: 1.9rem; }
+  .section { padding: 14px; gap: 14px; }
+  .now-playing { gap: 12px 14px; }
+  .np-art { width: 72px; height: 72px; border-radius: 18px; }
+  .np-title { font-size: 1.15rem; }
+  .np-controls { gap: 12px; }
+  .btn-round-xl { width: 72px; height: 72px; }
+  .tab span { display: none; }
+  .more-menu { padding-bottom: calc(86px + var(--safe-b)); }
+  .page-back { padding: 0 12px; }
+  .toasts { bottom: calc(96px + var(--safe-b)); }
+  .voice-orb { width: 160px; height: 160px; }
+  .voice-transcript { font-size: 1.5rem; }
+}
+
+/* Телефон горизонтально: низкий экран — компактный док и статус-бар. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .statusbar { min-height: 44px; padding: 2px 12px; }
+  .sb-time { font-size: 1.25rem; }
+  .sb-date, .sb-vehicle-text { display: none; }
+  .sb-logo { width: 34px; height: 34px; }
+  .dock { padding: 2px 8px calc(2px + var(--safe-b)); }
+  .dock-btn { height: 52px; flex-direction: row; gap: 6px; }
   .dock-btn span { display: none; }
-  .sb-date { display: none; }
+  .dock-mic { width: 52px; height: 52px; box-shadow: 0 0 0 3px var(--bg); }
+  .drive { grid-template-areas: 'map panel'; grid-template-rows: minmax(0, 1fr) !important; grid-template-columns: minmax(0, 55fr) minmax(0, 45fr) !important; }
+  .drive.order-panel-first { grid-template-areas: 'panel map'; grid-template-columns: minmax(0, 45fr) minmax(0, 55fr) !important; }
+  .drive.panel-collapsed { grid-template-columns: minmax(0, 1fr) auto !important; }
+  .drive.order-panel-first.panel-collapsed { grid-template-columns: auto minmax(0, 1fr) !important; }
+  .panel-collapsed .panel-head { flex-direction: column; height: 100%; width: 72px; padding: 4px; }
+  .panel-collapsed .panel-tabs { flex-direction: column; }
+  .panel-collapsed .mini-player { display: none; }
+  .panel-collapsed .panel-actions { margin-top: auto; flex-direction: column; }
+  .panel-tab-label { display: none; }
+  .panel-tab { min-height: 48px; padding: 0 8px; }
+  .more-menu { padding-bottom: calc(64px + var(--safe-b)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

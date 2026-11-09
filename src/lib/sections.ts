@@ -1,33 +1,34 @@
 import type { IconName } from '../components/Icon';
 
-export type SectionId =
-  | 'vehicle'
-  | 'navigation'
-  | 'media'
-  | 'assistant'
-  | 'manual'
-  | 'service'
-  | 'diagnostics'
-  | 'settings';
+/** Вкладки панели главного экрана (рядом с картой). */
+export type PanelId = 'media' | 'assistant' | 'apps' | 'trip';
+/** Дополнительные разделы — полноэкранные страницы поверх главного экрана. */
+export type PageId = 'vehicle' | 'manual' | 'service' | 'diagnostics' | 'settings';
+export type SectionId = 'navigation' | PanelId | PageId;
 
 export interface SectionMeta {
   id: SectionId;
   title: string;
   short: string;
   icon: IconName;
-  inDock: boolean;
 }
 
 export const SECTIONS: Record<SectionId, SectionMeta> = {
-  vehicle: { id: 'vehicle', title: 'Автомобиль', short: 'Авто', icon: 'car', inDock: true },
-  navigation: { id: 'navigation', title: 'Навигация', short: 'Карта', icon: 'map', inDock: true },
-  media: { id: 'media', title: 'Мультимедиа', short: 'Медиа', icon: 'music', inDock: true },
-  assistant: { id: 'assistant', title: 'AI-помощник', short: 'AI', icon: 'spark', inDock: true },
-  manual: { id: 'manual', title: 'Руководство', short: 'Справка', icon: 'book', inDock: true },
-  service: { id: 'service', title: 'История обслуживания', short: 'Сервис', icon: 'wrench', inDock: true },
-  diagnostics: { id: 'diagnostics', title: 'OBD-диагностика', short: 'OBD', icon: 'gauge', inDock: true },
-  settings: { id: 'settings', title: 'Настройки', short: 'Настройки', icon: 'gear', inDock: false },
+  navigation: { id: 'navigation', title: 'Навигация', short: 'Карта', icon: 'map' },
+  media: { id: 'media', title: 'Музыка и радио', short: 'Музыка', icon: 'music' },
+  assistant: { id: 'assistant', title: 'Помощник Grok', short: 'Grok', icon: 'spark' },
+  apps: { id: 'apps', title: 'Приложения', short: 'Прил.', icon: 'grid' },
+  trip: { id: 'trip', title: 'Поездка', short: 'Поездка', icon: 'gauge' },
+  vehicle: { id: 'vehicle', title: 'Мой автомобиль', short: 'Авто', icon: 'car' },
+  manual: { id: 'manual', title: 'Справочник', short: 'Справочник', icon: 'book' },
+  service: { id: 'service', title: 'Сервис и обслуживание', short: 'Сервис', icon: 'wrench' },
+  diagnostics: { id: 'diagnostics', title: 'Диагностика OBD-II', short: 'OBD', icon: 'obd' },
+  settings: { id: 'settings', title: 'Настройки', short: 'Настройки', icon: 'gear' },
 };
 
-export const DOCK_LEFT: SectionId[] = ['vehicle', 'navigation', 'media', 'assistant'];
-export const DOCK_RIGHT: SectionId[] = ['manual', 'service', 'diagnostics'];
+export const PANELS: PanelId[] = ['media', 'assistant', 'apps', 'trip'];
+export const PAGES: PageId[] = ['vehicle', 'manual', 'service', 'diagnostics', 'settings'];
+
+export function isPanel(id: SectionId): id is PanelId {
+  return (PANELS as string[]).includes(id);
+}

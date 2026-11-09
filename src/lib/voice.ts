@@ -1,7 +1,8 @@
 import { createStore } from './store';
-import { listen, speechRecognitionSupported, stopSpeaking } from './speech';
+import { listen, speechRecognitionSupported, stopSpeaking, setPreferredVoice } from './speech';
 import { settingsStore } from './state';
 import { handleVoiceCommand } from './voiceCommands';
+import { setAfterSpokenHook } from './assistant';
 
 export interface VoiceState {
   open: boolean;
@@ -13,6 +14,18 @@ export interface VoiceState {
 export const voiceStore = createStore<VoiceState>({ open: false, listening: false, interim: '', error: null });
 
 let stopFn: (() => void) | null = null;
+/** Последний запрос пришёл голосом — в режиме разговора слушаем снова после ответа. */
+let lastViaVoice = false;
+
+setPreferredVoice(settingsStore.get().voiceURI);
+settingsStore.subscribe(() => setPreferredVoice(settingsStore.get().voiceURI));
+
+setAfterSpokenHook(() => {
+  if (lastViaVoice && settingsStore.get().conversationMode && !voiceStore.get().open) {
+    lastViaVoice = false;
+    startVoice();
+  }
+});
 
 export function startVoice() {
   stopSpeaking();
@@ -25,8 +38,9 @@ export function startVoice() {
       voiceStore.set((s) => ({ ...s, interim: t }));
       setTimeout(() => {
         closeVoice();
-        handleVoiceCommand(t);
-      }, 350);
+        lastViaVoice = true;
+        void handleVoiceCommand(t);
+      }, 300);
     },
     onError: (m) => voiceStore.set((s) => ({ ...s, error: m })),
     onEnd: () => {
@@ -48,5 +62,6 @@ export function closeVoice() {
 
 export function submitTyped(text: string) {
   closeVoice();
-  handleVoiceCommand(text);
+  lastViaVoice = false;
+  void handleVoiceCommand(text);
 }
