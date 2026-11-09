@@ -92,6 +92,10 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
     case 'open_app': {
       const app = findApp(str('app'));
       if (!app) return { ok: false, text: 'Приложение не найдено в списке.' };
+      if (app.id === 'chatgpt') {
+        launchApp(app);
+        return { ok: true, text: 'Открываю ChatGPT. Если окно не открылось, нажмите кнопку ChatGPT внизу экрана.' };
+      }
       setTimeout(() => launchApp(app), 1200); // даём договорить ответ
       return { ok: true, text: `Открываю ${app.name}. Если приложение не установлено, ничего не произойдёт.` };
     }

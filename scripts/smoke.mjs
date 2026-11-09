@@ -29,6 +29,8 @@ const ROUTE_POS = [
 ];
 
 async function mockNetwork(ctx) {
+  // ChatGPT открывается во внешнем окне; в тесте отвечает заглушка (реальный сервис не нагружаем).
+  await ctx.route('https://chatgpt.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<title>ChatGPT stub</title>' }));
   if (!MOCK) return;
   const json = (body) => ({ status: 200, contentType: 'application/json', body, headers: { 'Access-Control-Allow-Origin': '*' } });
   await ctx.route('**/router.project-osrm.org/**', (r) => r.fulfill(json(fixture('osrm-route.json'))));
@@ -72,6 +74,34 @@ async function layoutProblems(page) {
     }
     return problems;
   });
+}
+
+/** Кнопка ChatGPT: видна, помещается, подсказка о возврате, открытие в новом окне, возврат, без iframe. */
+async function checkChatGpt(name, ctx, page) {
+  const btn = page.locator('.dock [aria-label="Открыть ChatGPT"]');
+  const box = await btn.boundingBox();
+  const vp = page.viewportSize();
+  check(`${name}: кнопка ChatGPT на главном экране`, box && box.width >= 44 && box.height >= 44 && box.x >= 0 && box.x + box.width <= vp.width + 1, box ? `${Math.round(box.width)}×${Math.round(box.height)}` : 'нет');
+  check(`${name}: ChatGPT без iframe`, (await page.locator('iframe').count()) === 0);
+  await btn.click();
+  const link = page.locator('.cg-sheet a:has-text("Открыть ChatGPT")');
+  const sheetOk = (await link.count()) === 1 && (await link.getAttribute('href')) === 'https://chatgpt.com/' && (await link.getAttribute('target')) === '_blank';
+  const sheetPr = await page.evaluate(() => {
+    const r = document.querySelector('.cg-sheet')?.getBoundingClientRect();
+    return r ? r.left >= 0 && r.right <= innerWidth + 1 && r.top >= 0 && r.bottom <= innerHeight + 1 : false;
+  });
+  check(`${name}: подсказка о возврате перед первым открытием`, sheetOk && sheetPr && (await page.locator('.cg-return li').count()) > 0);
+  const [popup] = await Promise.all([ctx.waitForEvent('page', { timeout: 10000 }), link.click()]);
+  await popup.waitForLoadState().catch(() => {});
+  check(`${name}: ChatGPT открывается в новом окне, AI Car Expert остаётся`, popup.url().startsWith('https://chatgpt.com/') && page.url().includes(new URL(url).host), popup.url());
+  await popup.close();
+  await page.waitForTimeout(1700);
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await page.waitForTimeout(300);
+  const back = (await page.locator('.toast').allTextContents()).join(' ');
+  check(`${name}: возвращение — сообщение и сохранённое состояние`, back.includes('С возвращением') && (await page.locator('.drive-map .leaflet-container').count()) === 1, back.slice(0, 60));
+  const tag = await page.locator('.dock [aria-label="Открыть ChatGPT"]').evaluate((el) => `${el.tagName}|${el.getAttribute('href')}|${el.getAttribute('target')}`);
+  check(`${name}: повторное нажатие открывает ChatGPT сразу`, tag === 'A|https://chatgpt.com/|_blank', tag);
 }
 
 const browser = await chromium.launch();
@@ -239,6 +269,9 @@ try {
   check('Радио играет', (await page.locator('.np-info .eyebrow').textContent()) === 'Сейчас играет');
   await page.screenshot({ path: `${out}/06-ipad-media.png` });
 
+  // ChatGPT по подписке (iPad вертикально)
+  await checkChatGpt('iPad', ctx, page);
+
   // Горизонтальная ориентация iPad
   await page.setViewportSize({ width: 1366, height: 1024 });
   await page.waitForTimeout(500);
@@ -275,6 +308,8 @@ try {
     await ph.click('.more-item:has-text("Настройки")');
     pr = await layoutProblems(ph);
     check(`${name}: раздел поверх карты`, !pr.length, pr.join('; '));
+    await ph.click('.page-back');
+    await checkChatGpt(name, c, ph);
     await c.close();
   }
 

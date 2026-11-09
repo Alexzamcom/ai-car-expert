@@ -4,6 +4,7 @@ import { useStore } from '../lib/store';
 import { settingsStore, toast, type Settings as SettingsT, type VehicleProfile } from '../lib/state';
 import { wakeLockSupported } from '../lib/wakeLock';
 import { speechRecognitionSupported, listVoices, speak } from '../lib/speech';
+import { chatgptPrefsStore } from '../lib/chatgpt';
 
 const FUELS: Record<VehicleProfile['fuel'], string> = {
   petrol: 'Бензин',
@@ -144,6 +145,8 @@ export function Settings() {
         </div>
       </form>
 
+      <ChatGptSettings />
+
       <div className="card">
         <h3 className="section-title">
           <Icon name="mic" /> Голос и экран
@@ -237,6 +240,54 @@ export function Settings() {
         <ResetButton />
         <p className="muted small">AI Car Expert · версия {__APP_VERSION__}</p>
       </div>
+    </div>
+  );
+}
+
+function ChatGptSettings() {
+  const prefs = useStore(chatgptPrefsStore);
+  const [name, setName] = useState(prefs.voiceShortcut);
+  return (
+    <div className="card">
+      <h3 className="section-title">
+        <Icon name="chat" /> ChatGPT по подписке
+      </h3>
+      <p className="muted">
+        Кнопка ChatGPT в нижней панели открывает приложение ChatGPT (или сайт chatgpt.com) с вашей подпиской.
+        API и платные сервисы не используются. Голосовой режим включается в самом ChatGPT.
+      </p>
+      <form
+        className="form-grid"
+        onSubmit={(e) => {
+          e.preventDefault();
+          chatgptPrefsStore.set((p) => ({ ...p, voiceShortcut: name.trim() }));
+          toast(name.trim() ? 'Быстрая команда сохранена' : 'Кнопка голосового режима скрыта', 'ok');
+        }}
+      >
+        <label className="field field-wide">
+          <span>Быстрая команда для голосового режима (необязательно, iPad/iPhone)</span>
+          <input id="chatgpt-shortcut" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Например: ChatGPT голос" />
+        </label>
+        <p className="muted small field-wide">
+          В приложении «Команды» создайте команду с действием ChatGPT для голосового разговора (если оно есть в вашей
+          версии приложения ChatGPT) и впишите её имя. Тогда рядом с кнопкой «Открыть ChatGPT» появится «Голосовой режим».
+        </p>
+        <div className="toolbar field-wide">
+          <button className="btn btn-primary" type="submit">
+            <Icon name="check" /> Сохранить
+          </button>
+          <button
+            className="btn"
+            type="button"
+            onClick={() => {
+              chatgptPrefsStore.set((p) => ({ ...p, hintSeen: false }));
+              toast('Подсказка «как вернуться» снова будет показана', 'ok');
+            }}
+          >
+            Показывать подсказку о возврате
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

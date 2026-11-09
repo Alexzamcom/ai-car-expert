@@ -1,5 +1,6 @@
 import { Icon } from '../components/Icon';
-import { APPS, GROUPS, type AppLink } from '../lib/apps';
+import { APPS, GROUPS, isWebLink, type AppLink } from '../lib/apps';
+import { markLeaving } from '../lib/chatgpt';
 
 export function Apps() {
   const groups = Object.keys(GROUPS) as AppLink['group'][];
@@ -10,7 +11,13 @@ export function Apps() {
           <h3 className="section-title">{GROUPS[g]}</h3>
           <div className="app-grid">
             {APPS.filter((a) => a.group === g).map((a) => (
-              <a key={a.id} className="app-tile" href={a.href}>
+              <a
+                key={a.id}
+                className="app-tile"
+                href={a.href}
+                {...(isWebLink(a) ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+                onClick={a.id === 'chatgpt' ? markLeaving : undefined}
+              >
                 <span className="app-icon">
                   <Icon name={a.icon} size="1.8rem" />
                 </span>

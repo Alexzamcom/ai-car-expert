@@ -1116,6 +1116,51 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .setting-row small { color: var(--muted); font-size: 0.8rem; }
 .settings .card > .btn { align-self: flex-start; }
 
+/* ============ ChatGPT ============ */
+
+.dock-chatgpt { color: var(--text); }
+.dock-chatgpt svg { color: #19c37d; }
+.cg-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 560px;
+  min-height: 76px;
+  padding: 12px 16px;
+  border-radius: 18px;
+  background: rgba(25, 195, 125, 0.08);
+  border: 1px solid rgba(25, 195, 125, 0.35);
+  text-align: left;
+}
+.cg-card > svg { color: var(--muted); flex: none; }
+.cg-card-icon { width: 52px; height: 52px; flex: none; display: grid; place-items: center; border-radius: 15px; background: rgba(25, 195, 125, 0.16); color: #19c37d; }
+.cg-card-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.cg-card-text small { color: var(--muted); font-size: 0.8rem; }
+.cg-sheet-backdrop { position: fixed; inset: 0; z-index: 45; display: grid; place-items: center; padding: 16px; background: rgba(4, 6, 9, 0.75); }
+.cg-sheet {
+  width: min(560px, 100%);
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.cg-sheet-head { display: flex; gap: 14px; align-items: flex-start; }
+.cg-sheet-head h2 { font-size: 1.4rem; }
+.cg-return { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 16px; background: var(--bg-2); border: 1px solid var(--line); }
+.cg-return ul { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; color: var(--text-2); }
+.cg-check { display: flex; align-items: center; gap: 12px; min-height: 48px; }
+.cg-check input { width: 26px; height: 26px; accent-color: var(--accent); }
+.cg-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.cg-actions .btn { flex: 1 1 auto; }
+.chat-empty .cg-card { margin: 4px 0; }
+
 /* ============ Приложения ============ */
 
 .app-group { display: flex; flex-direction: column; gap: 10px; }

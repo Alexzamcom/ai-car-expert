@@ -68,6 +68,11 @@ export function parseCommand(raw: string): Command {
     return { kind: 'tool', name: 'media_control', args: { action: 'play' } };
   }
 
+  // ChatGPT: «открой ChatGPT», «чат джипити», «відкрий чатджіпіті»
+  if (/(chat ?gpt|чат ?(джи ?пи ?ти|gpt|жпт|гпт)|чатджипити|чатджіпіті|чат джіпіті)/.test(t)) {
+    return { kind: 'tool', name: 'open_app', args: { app: 'chatgpt' } };
+  }
+
   // Голос
   if (/(выключи|отключи|вимкни) (голос|озвучк|голосові)/.test(t)) return { kind: 'tool', name: 'set_voice_replies', args: { enabled: false }, say: true };
   if (/(включи|увімкни) (голос|озвучк|голосові)/.test(t)) return { kind: 'tool', name: 'set_voice_replies', args: { enabled: true }, say: true };

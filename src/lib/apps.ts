@@ -2,11 +2,12 @@
    Веб-приложение не может проверить, установлено ли приложение, и не получает
    управления обратно — переход уводит AI Car Expert в фон. */
 import type { IconName } from '../components/Icon';
+import { markLeaving } from './chatgpt';
 
 export interface AppLink {
   id: string;
   name: string;
-  group: 'nav' | 'music' | 'comm';
+  group: 'ai' | 'nav' | 'music' | 'comm';
   icon: IconName;
   /** URL-схема приложения; web — запасной вариант в браузере. */
   href: string;
@@ -14,6 +15,8 @@ export interface AppLink {
 }
 
 export const APPS: AppLink[] = [
+  // ChatGPT — по подписке пользователя: https-ссылка открывает приложение (универсальная ссылка) или сайт.
+  { id: 'chatgpt', name: 'ChatGPT', group: 'ai', icon: 'chat', href: 'https://chatgpt.com/' },
   { id: 'yandexnavi', name: 'Яндекс Навигатор', group: 'nav', icon: 'navigate', href: 'yandexnavi://' },
   { id: 'yandexmaps', name: 'Яндекс Карты', group: 'nav', icon: 'map', href: 'yandexmaps://', web: 'https://yandex.ru/maps/' },
   { id: 'googlemaps', name: 'Google Maps', group: 'nav', icon: 'map', href: 'comgooglemaps://', web: 'https://www.google.com/maps' },
@@ -29,13 +32,26 @@ export const APPS: AppLink[] = [
   { id: 'whatsapp', name: 'WhatsApp', group: 'comm', icon: 'chat', href: 'whatsapp://', web: 'https://web.whatsapp.com/' },
 ];
 
-export const GROUPS: Record<AppLink['group'], string> = { nav: 'Навигация', music: 'Музыка', comm: 'Связь' };
+export const GROUPS: Record<AppLink['group'], string> = { ai: 'ИИ', nav: 'Навигация', music: 'Музыка', comm: 'Связь' };
 
 export function findApp(query: string): AppLink | undefined {
   const q = query.toLowerCase().replace(/ё/g, 'е');
   return APPS.find((a) => a.id === q || a.name.toLowerCase().replace(/ё/g, 'е').includes(q) || q.includes(a.name.toLowerCase().split(' ')[0]));
 }
 
-export function launchApp(app: AppLink) {
+/** https-адреса открываем в новом окне: иначе веб-приложение ушло бы со своей страницы. */
+export function isWebLink(app: AppLink) {
+  return app.href.startsWith('https://');
+}
+
+export function launchApp(app: AppLink): boolean {
+  if (isWebLink(app)) {
+    if (app.id === 'chatgpt') markLeaving();
+    // Без нажатия пользователя (например, по голосовой команде) браузер может заблокировать окно;
+    // с 'noopener' window.open всегда возвращает null, поэтому результат не проверяем.
+    window.open(app.href, '_blank', 'noopener');
+    return true;
+  }
   window.location.href = app.href;
+  return true;
 }
