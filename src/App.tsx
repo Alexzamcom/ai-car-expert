@@ -11,6 +11,7 @@ import { layoutStore, settingsStore, closePage } from './lib/state';
 import { setKeepAwake, retryWakeLockOnGesture } from './lib/wakeLock';
 import { startGeo } from './lib/nav';
 import { restorePlayer } from './lib/player';
+import { onReturn } from './lib/chatgpt';
 
 export function App() {
   const layout = useStore(layoutStore);
@@ -34,7 +35,15 @@ export function App() {
     restorePlayer();
     // ?mode=car — запуск из автоматизации «Подключено к Bluetooth автомобиля»: сразу экран вождения.
     if (new URLSearchParams(location.search).get('mode') === 'car') closePage();
-    return () => window.removeEventListener('pointerdown', onTouch);
+    // Возврат из ChatGPT (или другого приложения): подтверждаем, что маршрут и музыка на месте.
+    const onVisible = () => document.visibilityState === 'visible' && onReturn();
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onVisible);
+    return () => {
+      window.removeEventListener('pointerdown', onTouch);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onVisible);
+    };
   }, []);
 
   return (

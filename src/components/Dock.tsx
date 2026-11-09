@@ -4,6 +4,7 @@ import { useStore } from '../lib/store';
 import { layoutStore, openSection } from '../lib/state';
 import { SECTIONS, PAGES, type SectionId } from '../lib/sections';
 import { voiceStore, startVoice, closeVoice } from '../lib/voice';
+import { ChatGptButton } from './ChatGpt';
 
 function DockButton({ id, active }: { id: SectionId; active: boolean }) {
   const meta = SECTIONS[id];
@@ -55,7 +56,7 @@ export function Dock() {
         >
           <Icon name="mic" size="2.3rem" stroke={2} />
         </button>
-        <DockButton id="apps" active={panelOn('apps')} />
+        <ChatGptButton variant="dock" />
         <DockButton id="trip" active={panelOn('trip')} />
         <button className={`dock-btn ${!onDrive || more ? 'is-active' : ''}`} onClick={() => setMore((m) => !m)} aria-label="Ещё разделы" aria-expanded={more}>
           <Icon name="more" size="1.9rem" stroke={3} />

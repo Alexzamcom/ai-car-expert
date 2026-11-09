@@ -5,6 +5,7 @@ import { chatStore, chatBusyStore, sendToAssistant, clearChat } from '../lib/ass
 import { settingsStore, openSection } from '../lib/state';
 import { listen, speechRecognitionSupported, stopSpeaking, speak } from '../lib/speech';
 import { openArticle } from '../lib/manualNav';
+import { ChatGptButton } from '../components/ChatGpt';
 
 const SUGGESTIONS = [
   'Маршрут до ближайшей заправки',
@@ -92,6 +93,7 @@ export function Assistant() {
             </div>
             <h2>Чем помочь в дороге?</h2>
             <p className="muted">Скажите или напишите: маршрут, музыка, вопрос о вашем автомобиле.</p>
+            <ChatGptButton variant="card" />
             <div className="chips">
               {SUGGESTIONS.map((s) => (
                 <button key={s} className="chip" onClick={() => submit(s)}>
