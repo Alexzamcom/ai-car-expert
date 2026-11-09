@@ -25,13 +25,14 @@ export interface Poi {
   openingHours?: string;
 }
 
-/** Публичные серверы Overpass часто перегружены: пробуем по очереди с ограничением времени. */
+/** Публичные серверы Overpass часто перегружены: спрашиваем все сразу, берём первый корректный ответ. */
 export const OVERPASS_SERVERS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
-const PER_SERVER_TIMEOUT = 12000;
+/** Живая проверка: зеркало отвечало за 12,7 с — ждём дольше, но параллельно. */
+const SERVER_TIMEOUT = 25000;
 
 export function buildQuery(category: PoiCategory, around: { radius: number; points: LatLon[] }): string {
   const pts = around.points.map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join(',');
@@ -103,30 +104,33 @@ export function parseOverpass(json: unknown, category: PoiCategory): Poi[] {
   });
 }
 
+async function askServer(server: string, query: string, signal: AbortSignal): Promise<unknown> {
+  const res = await fetch(server, { method: 'POST', body: new URLSearchParams({ data: query }), signal });
+  if (!res.ok) throw new Error(res.status === 429 || res.status === 504 ? 'Сервис поиска объектов перегружен' : `Поиск объектов недоступен (${res.status})`);
+  const json = (await res.json()) as { remark?: string };
+  // При нехватке времени Overpass отвечает 200 с пустым результатом и пометкой remark.
+  if (json.remark && /timed out|out of memory/i.test(json.remark)) throw new Error('Сервис поиска объектов не успел ответить');
+  return json;
+}
+
 async function overpass(query: string, signal?: AbortSignal): Promise<unknown> {
-  let lastError: Error = new Error('Поиск объектов недоступен');
-  for (const server of OVERPASS_SERVERS) {
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort();
+  signal?.addEventListener('abort', onAbort);
+  const timer = setTimeout(() => ctrl.abort(), SERVER_TIMEOUT);
+  try {
+    // Первый успешный ответ побеждает, остальные запросы отменяются в finally.
+    return await Promise.any(OVERPASS_SERVERS.map((s) => askServer(s, query, ctrl.signal)));
+  } catch (e) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-    const ctrl = new AbortController();
-    const onAbort = () => ctrl.abort();
-    signal?.addEventListener('abort', onAbort);
-    const timer = setTimeout(() => ctrl.abort(), PER_SERVER_TIMEOUT);
-    try {
-      const res = await fetch(server, { method: 'POST', body: new URLSearchParams({ data: query }), signal: ctrl.signal });
-      if (!res.ok) throw new Error(res.status === 429 || res.status === 504 ? 'Сервис поиска объектов перегружен' : `Поиск объектов недоступен (${res.status})`);
-      const json = (await res.json()) as { remark?: string };
-      // При нехватке времени Overpass отвечает 200 с пустым результатом и пометкой remark.
-      if (json.remark && /timed out|out of memory/i.test(json.remark)) throw new Error('Сервис поиска объектов не успел ответить');
-      return json;
-    } catch (e) {
-      if (signal?.aborted) throw e;
-      lastError = e instanceof Error && e.name !== 'AbortError' ? e : new Error('Сервис поиска объектов не ответил вовремя');
-    } finally {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-    }
+    const errors = e instanceof AggregateError ? (e.errors as Error[]) : [e as Error];
+    const meaningful = errors.find((x) => x && x.name !== 'AbortError' && !/fetch/i.test(x.message));
+    throw meaningful ?? new Error('Сервис поиска объектов не ответил вовремя');
+  } finally {
+    clearTimeout(timer);
+    ctrl.abort();
+    signal?.removeEventListener('abort', onAbort);
   }
-  throw lastError;
 }
 
 /** Объекты в коридоре вдоль маршрута, по порядку следования. */
