@@ -202,6 +202,28 @@ async function checkYouTubeMusic(name, ctx, page, out, slug) {
   );
   if (vp.width > 700) check(`${name}: в верхней строке — YouTube Music`, await page.locator('.sb-ytm').isVisible());
 
+  // Управление воспроизведением YouTube Music: подсказка о системных способах, без фиктивных кнопок.
+  await page.click('.dock [aria-label="Музыка и радио"]');
+  await page.locator('.sources .source:has-text("YouTube Music")').click();
+  const ways = await page.locator('.ytm-ways li').allTextContents();
+  const fake = await page.locator('.ytm button[aria-label="Пауза"], .ytm button[aria-label="Следующая"], .ytm button[aria-label="Предыдущая"], .ytm button[aria-label="Играть"]').count();
+  check(
+    `${name}: YouTube Music — способы управления без фиктивных кнопок`,
+    ways.length === 3 && (ios ? ways.join(' ').includes('Пункт управления') && ways.join(' ').includes('Siri') : ways.join(' ').includes('Шторка') && !ways.join(' ').includes('Siri')) && fake === 0,
+    `способов: ${ways.length}, фиктивных кнопок: ${fake}`,
+  );
+  await page.click('.dock [aria-label="Помощник Grok"]');
+  for (const cmd of ['следующая', 'играй']) {
+    const n = await page.locator('.msg-assistant .msg-bubble').count();
+    await page.fill('#assistant-input', cmd);
+    await page.click('.composer button[type=submit]');
+    await page.waitForFunction((k) => document.querySelectorAll('.msg-assistant .msg-bubble').length > k, n, { timeout: 10000 }).catch(() => {});
+    const reply = (await page.locator('.msg-assistant .msg-bubble').last().textContent()) ?? '';
+    const radioOn = await page.evaluate(() => document.querySelector('.sb-now:not(.sb-ytm) svg') !== null && !document.querySelector('.sb-ytm'));
+    const hintOk = ios ? reply.includes('Siri') && reply.includes('Пункт управления') : reply.includes('Google') && !reply.includes('Siri');
+    check(`${name}: «${cmd}» при YouTube Music — подсказка, радио не включается`, reply.includes('не может им управлять') && hintOk && !radioOn, reply.slice(70, 140));
+  }
+
   // «Вернись к карте» — локальная команда без ИИ: развёрнутая панель уступает место карте.
   await page.click('.dock [aria-label="Помощник Grok"]');
   await page.click('.panel-actions [aria-label="Развернуть панель"]');
