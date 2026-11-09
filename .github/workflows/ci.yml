@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Ручной запуск той же проверки для любой ветки (например, если запуск по pull_request не стартовал).
+  workflow_dispatch:
 
 permissions:
   contents: read
