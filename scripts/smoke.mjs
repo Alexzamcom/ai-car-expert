@@ -34,7 +34,9 @@ async function mockNetwork(ctx) {
   await ctx.route('**/router.project-osrm.org/**', (r) => r.fulfill(json(fixture('osrm-route.json'))));
   await ctx.route('**/nominatim.openstreetmap.org/**', (r) => r.fulfill(json(fixture('nominatim.json'))));
   await ctx.route('**/overpass-api.de/**', (r) => r.fulfill(json(fixture('overpass-fuel.json'))));
-  await ctx.route('**/*.api.radio-browser.info/**', (r) => r.fulfill(json(fixture('radio-browser.json'))));
+  await ctx.route('**/*.api.radio-browser.info/**', (r) =>
+    r.fulfill(json(r.request().url().includes('/json/servers') ? JSON.stringify([{ name: 'de1.api.radio-browser.info' }]) : fixture('radio-browser.json'))),
+  );
 }
 
 /** Пересечения элементов поверх карты и горизонтальная прокрутка страницы. */
