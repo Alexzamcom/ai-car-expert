@@ -148,7 +148,47 @@ interface RbStation {
   lastcheckok: number;
 }
 
-const RB_HOSTS = ['https://de1.api.radio-browser.info', 'https://de2.api.radio-browser.info', 'https://fi1.api.radio-browser.info'];
+/** Запасной список; актуальный каталог отдаёт сам (/json/servers) — адреса серверов меняются. */
+export const RB_FALLBACK_HOSTS = [
+  'https://de1.api.radio-browser.info',
+  'https://de2.api.radio-browser.info',
+  'https://nl1.api.radio-browser.info',
+  'https://at1.api.radio-browser.info',
+  'https://fi1.api.radio-browser.info',
+];
+let rbHosts: string[] | null = null;
+
+async function withTimeout(url: string, ms: number, signal?: AbortSignal): Promise<Response> {
+  const ctrl = new AbortController();
+  const onAbort = () => ctrl.abort();
+  signal?.addEventListener('abort', onAbort);
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/** Список серверов каталога: живой (от любого доступного сервера) + запасной. */
+export async function radioBrowserHosts(signal?: AbortSignal): Promise<string[]> {
+  if (rbHosts) return rbHosts;
+  for (const base of ['https://all.api.radio-browser.info', ...RB_FALLBACK_HOSTS]) {
+    try {
+      const res = await withTimeout(`${base}/json/servers`, 5000, signal);
+      if (!res.ok) continue;
+      const list = ((await res.json()) as { name: string }[]).map((s) => `https://${s.name}`).filter((h) => /^https:\/\/[a-z0-9.-]+\.radio-browser\.info$/.test(h));
+      if (list.length) {
+        rbHosts = [...new Set([...list.sort(() => Math.random() - 0.5), ...RB_FALLBACK_HOSTS])];
+        return rbHosts;
+      }
+    } catch (e) {
+      if (signal?.aborted) throw e;
+    }
+  }
+  return RB_FALLBACK_HOSTS;
+}
 
 /** Только потоки, которые реально воспроизведёт страница по HTTPS (без смешанного контента). */
 export function filterPlayable(list: RbStation[]): Station[] {
@@ -175,17 +215,22 @@ export async function searchStations(params: { name?: string; countrycode?: stri
   if (params.countrycode) qs.set('countrycode', params.countrycode);
   if (params.tag) qs.set('tag', params.tag);
   let lastErr: unknown;
-  for (const host of RB_HOSTS) {
+  for (const host of (await radioBrowserHosts(signal)).slice(0, 5)) {
     try {
-      const res = await fetch(`${host}/json/stations/search?${qs}`, { signal });
+      const res = await withTimeout(`${host}/json/stations/search?${qs}`, 8000, signal);
       if (!res.ok) throw new Error(String(res.status));
       return filterPlayable((await res.json()) as RbStation[]);
     } catch (e) {
-      if ((e as Error).name === 'AbortError') throw e;
+      if (signal?.aborted) throw e;
       lastErr = e;
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error('Каталог недоступен');
+}
+
+/** Для тестов: сбросить найденный список серверов. */
+export function __resetRadioHosts() {
+  rbHosts = null;
 }
 
 export function isSaved(id: string) {

@@ -1,5 +1,5 @@
 /* Объекты вдоль маршрута или рядом: АЗС, места отдыха, кафе (OpenStreetMap / Overpass API). */
-import { downsample, distanceToRoute, cumulative, haversine, type LatLon, type Route } from './routing';
+import { distanceToRoute, cumulative, haversine, type LatLon, type Route } from './routing';
 
 export type PoiCategory = 'fuel' | 'rest' | 'food' | 'parking';
 
@@ -35,8 +35,46 @@ const PER_SERVER_TIMEOUT = 12000;
 
 export function buildQuery(category: PoiCategory, around: { radius: number; points: LatLon[] }): string {
   const pts = around.points.map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join(',');
-  // around с несколькими точками трактуется Overpass как ломаная линия.
   return `[out:json][timeout:12];${POI_CATEGORIES[category].query}(around:${around.radius},${pts});out center 60;`;
+}
+
+export type BBox = [south: number, west: number, north: number, east: number];
+
+/** Участок маршрута впереди → несколько прямоугольников с запасом corridorM.
+    Поиск по прямоугольникам для Overpass намного дешевле, чем «around» по ломаной. */
+export function routeBoxes(coords: LatLon[], corridorM: number, maxAheadM = 60000, chunkM = 8000): BBox[] {
+  const boxes: BBox[] = [];
+  let box: BBox | null = null;
+  let chunk = 0;
+  let total = 0;
+  for (let i = 0; i < coords.length; i++) {
+    const c = coords[i];
+    if (i > 0) {
+      const d = haversine(coords[i - 1], c);
+      chunk += d;
+      total += d;
+    }
+    if (!box) box = [c.lat, c.lon, c.lat, c.lon];
+    box = [Math.min(box[0], c.lat), Math.min(box[1], c.lon), Math.max(box[2], c.lat), Math.max(box[3], c.lon)];
+    if (chunk >= chunkM || total >= maxAheadM || i === coords.length - 1) {
+      boxes.push(box);
+      // следующий прямоугольник начинается с этой же точки, чтобы не было разрывов
+      box = [c.lat, c.lon, c.lat, c.lon];
+      chunk = 0;
+      if (total >= maxAheadM) break;
+    }
+  }
+  const dLat = corridorM / 111_320;
+  return boxes.map(([s, w, n, e]) => {
+    const dLon = corridorM / (111_320 * Math.cos(((s + n) / 2) * (Math.PI / 180)));
+    return [s - dLat, w - dLon, n + dLat, e + dLon] as BBox;
+  });
+}
+
+export function buildBoxQuery(category: PoiCategory, boxes: BBox[]): string {
+  const q = POI_CATEGORIES[category].query;
+  const parts = boxes.map((b) => `${q}(${b.map((x) => x.toFixed(5)).join(',')});`).join('');
+  return `[out:json][timeout:12];(${parts});out center 80;`;
 }
 
 interface OverpassEl {
@@ -97,7 +135,7 @@ export async function poiAlongRoute(route: Route, category: PoiCategory, from: n
   // Берём часть маршрута, которая ещё впереди.
   const startIdx = Math.max(0, cum.findIndex((d) => d >= from) - 1);
   const ahead = route.coords.slice(startIdx);
-  const json = await overpass(buildQuery(category, { radius: corridorM, points: downsample(ahead, 40) }), signal);
+  const json = await overpass(buildBoxQuery(category, routeBoxes(ahead, corridorM)), signal);
   return parseOverpass(json, category)
     .map((p) => {
       const d = distanceToRoute(route, p, cum);
