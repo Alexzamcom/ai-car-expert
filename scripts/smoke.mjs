@@ -147,9 +147,10 @@ try {
       await page.waitForTimeout(800);
       check('Статус-бар показывает прибытие', await page.locator('.sb-route').isVisible());
       await page.click('.route-guiding button[aria-label="АЗС по пути"]');
-      await page.waitForSelector('.poi-card .place-row, .poi-card .text-warn', { timeout: 25000 }).catch(() => {});
+      await page.waitForSelector('.poi-card .place-row, .poi-card .text-warn', { timeout: 45000 }).catch(() => {});
       const poiCount = await page.locator('.poi-card .place-row').count();
-      check(MOCK ? 'АЗС по пути' : 'АЗС по пути (реальный сервис)', poiCount > 0, `найдено ${poiCount}`);
+      const poiErr = poiCount ? '' : ((await page.locator('.poi-card .text-warn').first().textContent().catch(() => '')) ?? '');
+      check(MOCK ? 'АЗС по пути' : 'АЗС по пути (реальный сервис)', poiCount > 0, `найдено ${poiCount}${poiErr ? ` — ${poiErr}` : ''}`);
       problems = await layoutProblems(page);
       check('Ведение и список АЗС без наложений', !problems.length, problems.join('; '));
       await page.screenshot({ path: `${out}/03-ipad-guiding-fuel.png` });

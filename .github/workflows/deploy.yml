@@ -27,7 +27,10 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - run: touch dist/.nojekyll
+      - name: Метка версии
+        run: |
+          touch dist/.nojekyll
+          printf '{"commit":"%s","built":"%s"}\n' "$GITHUB_SHA" "$(date -u +%FT%TZ)" > dist/version.json
       - uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -50,16 +53,16 @@ jobs:
         run: |
           URL="$(echo "$SITE_URL" | tr '[:upper:]' '[:lower:]')"
           echo "SITE_URL=$URL" >> "$GITHUB_ENV"
-          SHA_SHORT="${GITHUB_SHA::7}"
           for i in $(seq 1 60); do
-            code=$(curl -s -o /tmp/index.html -w '%{http_code}' "$URL?nocache=$i" || true)
-            echo "attempt $i: HTTP $code"
-            if [ "$code" = "200" ] && grep -q 'AI Car Expert' /tmp/index.html; then
+            # Ждём именно эту сборку: GitHub Pages обновляется не мгновенно.
+            live=$(curl -s "${URL}version.json?nocache=$i" | grep -o '"commit":"[0-9a-f]*"' | cut -d'"' -f4 || true)
+            echo "attempt $i: на сайте ${live:-нет version.json}, ожидается $GITHUB_SHA"
+            if [ "$live" = "$GITHUB_SHA" ]; then
               exit 0
             fi
             sleep 10
           done
-          echo "::error::Сайт $URL не стал доступен. Проверьте Settings → Pages: источник — ветка gh-pages."
+          echo "::error::На $URL не появилась сборка $GITHUB_SHA. Проверьте Settings → Pages: источник — ветка gh-pages."
           exit 1
       - name: Проверка ресурсов
         run: |

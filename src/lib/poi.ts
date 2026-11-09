@@ -25,12 +25,18 @@ export interface Poi {
   openingHours?: string;
 }
 
-const OVERPASS = 'https://overpass-api.de/api/interpreter';
+/** Публичные серверы Overpass часто перегружены: пробуем по очереди с ограничением времени. */
+export const OVERPASS_SERVERS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
+const PER_SERVER_TIMEOUT = 12000;
 
 export function buildQuery(category: PoiCategory, around: { radius: number; points: LatLon[] }): string {
   const pts = around.points.map((p) => `${p.lat.toFixed(5)},${p.lon.toFixed(5)}`).join(',');
   // around с несколькими точками трактуется Overpass как ломаная линия.
-  return `[out:json][timeout:20];${POI_CATEGORIES[category].query}(around:${around.radius},${pts});out center 60;`;
+  return `[out:json][timeout:12];${POI_CATEGORIES[category].query}(around:${around.radius},${pts});out center 60;`;
 }
 
 interface OverpassEl {
@@ -60,14 +66,29 @@ export function parseOverpass(json: unknown, category: PoiCategory): Poi[] {
 }
 
 async function overpass(query: string, signal?: AbortSignal): Promise<unknown> {
-  const res = await fetch(OVERPASS, {
-    method: 'POST',
-    body: new URLSearchParams({ data: query }),
-    signal,
-  });
-  if (res.status === 429 || res.status === 504) throw new Error('Сервис поиска объектов перегружен, повторите позже');
-  if (!res.ok) throw new Error(`Поиск объектов недоступен (${res.status})`);
-  return res.json();
+  let lastError: Error = new Error('Поиск объектов недоступен');
+  for (const server of OVERPASS_SERVERS) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+    const ctrl = new AbortController();
+    const onAbort = () => ctrl.abort();
+    signal?.addEventListener('abort', onAbort);
+    const timer = setTimeout(() => ctrl.abort(), PER_SERVER_TIMEOUT);
+    try {
+      const res = await fetch(server, { method: 'POST', body: new URLSearchParams({ data: query }), signal: ctrl.signal });
+      if (!res.ok) throw new Error(res.status === 429 || res.status === 504 ? 'Сервис поиска объектов перегружен' : `Поиск объектов недоступен (${res.status})`);
+      const json = (await res.json()) as { remark?: string };
+      // При нехватке времени Overpass отвечает 200 с пустым результатом и пометкой remark.
+      if (json.remark && /timed out|out of memory/i.test(json.remark)) throw new Error('Сервис поиска объектов не успел ответить');
+      return json;
+    } catch (e) {
+      if (signal?.aborted) throw e;
+      lastError = e instanceof Error && e.name !== 'AbortError' ? e : new Error('Сервис поиска объектов не ответил вовремя');
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    }
+  }
+  throw lastError;
 }
 
 /** Объекты в коридоре вдоль маршрута, по порядку следования. */
@@ -76,7 +97,7 @@ export async function poiAlongRoute(route: Route, category: PoiCategory, from: n
   // Берём часть маршрута, которая ещё впереди.
   const startIdx = Math.max(0, cum.findIndex((d) => d >= from) - 1);
   const ahead = route.coords.slice(startIdx);
-  const json = await overpass(buildQuery(category, { radius: corridorM, points: downsample(ahead, 90) }), signal);
+  const json = await overpass(buildQuery(category, { radius: corridorM, points: downsample(ahead, 40) }), signal);
   return parseOverpass(json, category)
     .map((p) => {
       const d = distanceToRoute(route, p, cum);
