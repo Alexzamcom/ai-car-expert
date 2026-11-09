@@ -81,3 +81,35 @@ export function openYouTubeMusic(): string {
   toast('Если YouTube Music не открылся, нажмите кнопку YouTube Music в разделе «Музыка».', 'info');
   return 'Открываю YouTube Music. Треки выбираются в самом приложении.';
 }
+
+/** Системные способы управлять YouTube Music без перехода в него (docs/MEDIA-CONTROL.md). */
+export interface ControlWay {
+  icon: 'grid' | 'mic' | 'car';
+  title: string;
+  text: string;
+}
+
+export function controlWays(p: Platform = platform()): ControlWay[] {
+  const wheel: ControlWay = { icon: 'car', title: 'Кнопки на руле или магнитоле', text: 'Если устройство подключено к машине по Bluetooth как аудиоустройство.' };
+  if (p === 'android') {
+    return [
+      { icon: 'grid', title: 'Шторка уведомлений', text: 'Смахните вниз от верхнего края экрана: плеер YouTube Music — назад, пауза, вперёд.' },
+      { icon: 'mic', title: 'Google Ассистент', text: '«Окей, Google, пауза», «…следующий трек», «…продолжи».' },
+      wheel,
+    ];
+  }
+  return [
+    { icon: 'grid', title: 'Пункт управления', text: 'Смахните вниз от правого верхнего угла экрана: назад, пауза, вперёд.' },
+    { icon: 'mic', title: 'Siri', text: '«Привет, Siri, пауза», «…следующий трек», «…предыдущий трек», «…продолжи».' },
+    wheel,
+  ];
+}
+
+/** Ответ на «пауза / следующая / играй», пока активен YouTube Music. */
+export function ytmControlHint(p: Platform = platform()): string {
+  const how =
+    p === 'android'
+      ? 'Скажите «Окей, Google, пауза» или «следующий трек», откройте шторку уведомлений или нажмите кнопки на руле.'
+      : 'Скажите Siri «пауза» или «следующий трек», смахните вниз от правого верхнего угла (Пункт управления) или нажмите кнопки на руле.';
+  return `YouTube Music играет в своём приложении — AI Car Expert не может им управлять. ${how}`;
+}

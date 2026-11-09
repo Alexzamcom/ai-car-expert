@@ -1,6 +1,6 @@
 import { Icon } from './Icon';
 import { useStore } from '../lib/store';
-import { YTM_URL, currentPlan, onYouTubeMusicClick, ytmFallbackStore } from '../lib/music/youtube';
+import { YTM_URL, currentPlan, onYouTubeMusicClick, ytmFallbackStore, controlWays } from '../lib/music/youtube';
 import { lastHandoffStore, markLeaving } from '../lib/handoff';
 import { musicStore, setActiveSource } from '../lib/music/sources';
 import { playerStore, resume } from '../lib/player';
@@ -57,6 +57,25 @@ export function YouTubeMusicPanel() {
           {player.playing ? 'играет' : player.current ? `на паузе (${player.current.title})` : 'выключено'}
         </span>
       </div>
+
+      <section className="ytm-control" aria-label="Управление YouTube Music в машине">
+        <h3 className="section-title">Пауза и переключение треков</h3>
+        <p className="muted small">
+          Система не позволяет веб-приложению управлять другим приложением, поэтому здесь нет кнопок «пауза» и
+          «следующий трек» для YouTube Music. Работают системные способы — без перехода в YouTube Music:
+        </p>
+        <ul className="ytm-ways">
+          {controlWays().map((w) => (
+            <li key={w.title}>
+              <Icon name={w.icon} size="1.6rem" />
+              <span>
+                <strong>{w.title}</strong>
+                <small>{w.text}</small>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
 
       <div className="ytm-actions">
         {music.active === 'youtube-music' && player.current && !player.playing && (

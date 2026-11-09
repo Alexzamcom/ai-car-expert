@@ -4,6 +4,7 @@ import { useStore } from '../lib/store';
 import { layoutStore, openSection, setPanelMode, swapOrder } from '../lib/state';
 import { PANELS, SECTIONS, type PanelId } from '../lib/sections';
 import { playerStore, togglePlay, next } from '../lib/player';
+import { musicStore } from '../lib/music/sources';
 import { Media } from '../sections/Media';
 import { Assistant } from '../sections/Assistant';
 import { Apps } from '../sections/Apps';
@@ -15,6 +16,7 @@ const VIEWS: Record<PanelId, ComponentType> = { media: Media, assistant: Assista
 export function Panel() {
   const layout = useStore(layoutStore);
   const player = useStore(playerStore);
+  const music = useStore(musicStore);
   const View = VIEWS[layout.panel];
   const collapsed = layout.panelMode === 'collapsed';
 
@@ -37,7 +39,12 @@ export function Panel() {
           ))}
         </div>
 
-        {collapsed && player.current && (
+        {collapsed && music.active === 'youtube-music' && !player.playing ? (
+          <div className="mini-player">
+            <span className="mini-title">YouTube Music</span>
+            <small className="mini-note">управление — системный плеер или голосовой помощник</small>
+          </div>
+        ) : collapsed && player.current && (
           <div className="mini-player">
             <span className="mini-title">{player.current.title}</span>
             <button className="icon-btn" onClick={togglePlay} aria-label={player.playing ? 'Пауза' : 'Играть'}>

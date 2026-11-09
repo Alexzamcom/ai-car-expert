@@ -1264,6 +1264,13 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .ytm-help summary { min-height: 48px; display: flex; align-items: center; cursor: pointer; font-weight: 600; color: var(--accent); }
 .ytm-help ul { margin: 4px 0 8px; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; }
 .sb-ytm { color: var(--danger); }
+.ytm-control { display: flex; flex-direction: column; gap: 8px; }
+.ytm-ways { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px; }
+.ytm-ways li { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: 18px; background: var(--panel-2); border: 1px solid var(--line); }
+.ytm-ways li > svg { color: var(--accent); flex: none; margin-top: 2px; }
+.ytm-ways span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ytm-ways small { color: var(--text-2); font-size: 0.85rem; }
+.mini-note { color: var(--muted); font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ============ Приложения ============ */
 

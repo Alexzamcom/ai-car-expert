@@ -5,8 +5,8 @@ import { openSection, settingsStore } from './state';
 import { navigateToQuery, stopNavigation, findPoi, navStore, poiStore, startGuidance } from './nav';
 import { playByQuery, pause, resume, next, prev, stop, playerStore } from './player';
 import { findApp, launchApp, APPS } from './apps';
-import { openYouTubeMusic } from './music/youtube';
-import { setActiveSource } from './music/sources';
+import { openYouTubeMusic, ytmControlHint } from './music/youtube';
+import { setActiveSource, musicStore } from './music/sources';
 import { decodeDtc, dtcSummary } from './dtc';
 import { searchFacts, STATUS_LABEL } from './knowledge';
 import { fmtDistance } from './routing';
@@ -33,7 +33,7 @@ export const TOOLS: ToolDef[] = [
     service: { type: 'string', enum: ['radio', 'youtube-music'] },
   }, ['service']),
   fn('play_music', 'Включить музыку из предпочитаемого источника пользователя.'),
-  fn('media_control', 'Управление воспроизведением.', { action: { type: 'string', enum: ['play', 'pause', 'next', 'previous', 'stop'] } }, ['action']),
+  fn('media_control', 'Управление встроенным интернет-радио. YouTube Music этим не управляется — для него подскажи системные способы (Siri / Google Ассистент, Пункт управления / шторка, кнопки на руле).', { action: { type: 'string', enum: ['play', 'pause', 'next', 'previous', 'stop'] } }, ['action']),
   fn('open_section', 'Открыть раздел интерфейса.', {
     section: { type: 'string', enum: ['navigation', 'media', 'assistant', 'apps', 'trip', 'vehicle', 'manual', 'service', 'diagnostics', 'settings'] },
   }, ['section']),
@@ -99,6 +99,11 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
       return playByQuery('');
     case 'media_control': {
       const a = str('action');
+      // Пока активен YouTube Music, команды не трогают встроенное радио: иначе «играй» включило бы его
+      // поверх YouTube Music, а «пауза» ответила бы «готово», ничего не сделав с YouTube Music.
+      if (musicStore.get().active === 'youtube-music' && !playerStore.get().playing) {
+        return { ok: false, text: ytmControlHint() };
+      }
       if (a === 'play') resume();
       else if (a === 'pause') pause();
       else if (a === 'next') next();
