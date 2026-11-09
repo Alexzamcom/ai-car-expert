@@ -31,6 +31,8 @@ const ROUTE_POS = [
 async function mockNetwork(ctx) {
   // ChatGPT открывается во внешнем окне; в тесте отвечает заглушка (реальный сервис не нагружаем).
   await ctx.route('https://chatgpt.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<title>ChatGPT stub</title>' }));
+  // YouTube Music тоже не нагружаем: отвечает заглушка.
+  await ctx.route('https://music.youtube.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<title>YouTube Music stub</title>' }));
   if (!MOCK) return;
   const json = (body) => ({ status: 200, contentType: 'application/json', body, headers: { 'Access-Control-Allow-Origin': '*' } });
   await ctx.route('**/router.project-osrm.org/**', (r) => r.fulfill(json(fixture('osrm-route.json'))));
@@ -138,6 +140,94 @@ async function checkThemes(name, page, out, slug) {
   }
   const same = await page.evaluate((m) => window.__aceMarker === m, marker);
   check(`${name}: тема меняется без перезагрузки`, same);
+}
+
+/** YouTube Music: переключение источника, открытие (iOS — приложение и запасной сайт), пауза радио,
+    возвращение с сохранённым маршрутом, «к карте», обе темы. */
+async function checkYouTubeMusic(name, ctx, page, out, slug) {
+  const ios = await page.evaluate(() => /iPad|iPhone/.test(navigator.userAgent));
+  // Маршрут, который должен пережить переход.
+  if (!(await page.locator('.route-card, .maneuver').count())) {
+    await page.fill('#map-search', 'Театр Сатиры');
+    await page.press('#map-search', 'Enter');
+    await page.locator('.map-panel .place-row').first().click({ timeout: 15000 }).catch(() => {});
+    await page.waitForSelector('.route-card', { timeout: 15000 }).catch(() => {});
+  }
+  const destBefore = (await page.locator('.route-card .dest-name').textContent().catch(() => null)) ?? null;
+  // Радио: если играет, при переходе должно встать на паузу.
+  await page.click('.dock [aria-label="Музыка и радио"]');
+  await page.locator('.sources .source:has-text("Радио")').click();
+  await page.locator('.station-main').first().click();
+  await page.waitForFunction(() => document.querySelector('.np-info .eyebrow')?.textContent === 'Сейчас играет', null, { timeout: 8000 }).catch(() => {});
+  const radioWasPlaying = (await page.locator('.np-info .eyebrow').textContent()) === 'Сейчас играет';
+
+  await page.locator('.sources .source:has-text("YouTube Music")').click();
+  const open = page.locator('.ytm-open');
+  const box = await open.boundingBox();
+  const vp = page.viewportSize();
+  const planned = await page.locator('.sources .source:disabled').allTextContents();
+  check(
+    `${name}: YouTube Music в разделе «Музыка»`,
+    box && box.height >= 64 && box.x >= 0 && box.x + box.width <= vp.width + 1 && (await open.getAttribute('href')) === 'https://music.youtube.com/' && planned.join(' ').includes('Spotify') && planned.join(' ').includes('Apple Music'),
+    box ? `${Math.round(box.width)}×${Math.round(box.height)}, в планах: ${planned.length}` : 'нет кнопки',
+  );
+  check(`${name}: YouTube Music без iframe`, (await page.locator('iframe').count()) === 0);
+  let pr = await layoutProblems(page);
+  check(`${name}: раздел YouTube Music без наложений`, !pr.length, pr.join('; '));
+
+  let popup;
+  if (ios) {
+    await open.click(); // попытка открыть приложение youtubemusic://
+    const fb = page.locator('.cg-sheet:has-text("YouTube Music") a:has-text("Открыть в браузере")');
+    await fb.waitFor({ timeout: 5000 }).catch(() => {});
+    check(`${name}: приложение не открылось — предложен сайт`, (await fb.count()) === 1 && (await fb.getAttribute('href')) === 'https://music.youtube.com/');
+    [popup] = await Promise.all([ctx.waitForEvent('page', { timeout: 10000 }), fb.click()]);
+  } else {
+    [popup] = await Promise.all([ctx.waitForEvent('page', { timeout: 10000 }), open.click()]);
+  }
+  check(`${name}: YouTube Music открывается отдельно, AI Car Expert остаётся`, popup.url().startsWith('https://music.youtube.com/') && page.url().includes(new URL(url).host), popup.url());
+  const radioState = (await page.locator('.ytm-radio-state').textContent()) ?? '';
+  check(`${name}: радио не играет одновременно с YouTube Music`, !radioState.includes('играет') || radioState.includes('на паузе'), `${radioWasPlaying ? 'играло → ' : ''}${radioState.trim()}`);
+  await popup.close();
+
+  await page.waitForTimeout(1700);
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await page.waitForTimeout(400);
+  const msg = (await page.locator('.toast').allTextContents()).join(' ');
+  const destAfter = (await page.locator('.route-card .dest-name').textContent().catch(() => null)) ?? null;
+  check(
+    `${name}: возвращение — карта и маршрут на месте, честный статус`,
+    msg.includes('С возвращением') && msg.includes('YouTube Music') && msg.includes('не видит') && (await page.locator('.drive-map .leaflet-container').count()) === 1 && destAfter === destBefore,
+    `${destAfter ?? 'без маршрута'} — ${msg.slice(0, 70)}`,
+  );
+  if (vp.width > 700) check(`${name}: в верхней строке — YouTube Music`, await page.locator('.sb-ytm').isVisible());
+
+  // «Вернись к карте» — локальная команда без ИИ: развёрнутая панель уступает место карте.
+  await page.click('.dock [aria-label="Помощник Grok"]');
+  await page.click('.panel-actions [aria-label="Развернуть панель"]');
+  // Площадь карты: вертикально она растёт в высоту, горизонтально — в ширину.
+  const area = async () => {
+    const r = await page.locator('.drive-map').boundingBox();
+    return r ? r.width * r.height : 0;
+  };
+  const mapBefore = await area();
+  await page.fill('#assistant-input', 'Вернись к карте');
+  await page.click('.composer button[type=submit]');
+  await page.waitForTimeout(500);
+  const mapAfter = await area();
+  check(`${name}: «Вернись к карте» возвращает карту`, mapAfter > mapBefore * 1.05 && (await page.locator('.page-sheet').count()) === 0, `площадь карты ×${(mapAfter / Math.max(1, mapBefore)).toFixed(2)}`);
+
+  // Обе темы на разделе YouTube Music
+  await page.click('.dock [aria-label="Музыка и радио"]');
+  await page.locator('.sources .source:has-text("YouTube Music")').click();
+  for (const mode of ['day', 'night']) {
+    await setThemeMode(page, mode);
+    await page.waitForTimeout(650);
+    pr = await layoutProblems(page);
+    check(`${name}: YouTube Music, тема «${mode === 'day' ? 'День' : 'Ночь'}»`, !pr.length, pr.join('; '));
+    await page.screenshot({ path: `${out}/ytm-${slug}-${mode}.png` });
+  }
+  await page.locator('.sources .source:has-text("Радио")').click();
 }
 
 const browser = await chromium.launch();
@@ -336,6 +426,7 @@ try {
 
   // ChatGPT по подписке (iPad вертикально)
   await checkChatGpt('iPad', ctx, page);
+  await checkYouTubeMusic('iPad', ctx, page, out, 'ipad');
 
   // Горизонтальная ориентация iPad
   await page.setViewportSize({ width: 1366, height: 1024 });
@@ -346,6 +437,7 @@ try {
   problems = await layoutProblems(page);
   check('iPad горизонтально: без наложений', !problems.length, problems.join('; '));
   await checkThemes('iPad горизонтально', page, out, 'ipad-landscape');
+  await checkYouTubeMusic('iPad горизонтально', ctx, page, out, 'ipad-landscape');
   await page.screenshot({ path: `${out}/07-ipad-landscape.png` });
   await ctx.close();
 
@@ -377,6 +469,7 @@ try {
     await ph.click('.page-back');
     await checkChatGpt(name, c, ph);
     await checkThemes(name, ph, out, slug);
+    await checkYouTubeMusic(name, c, ph, out, slug);
     await c.close();
   }
 

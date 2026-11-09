@@ -1,6 +1,7 @@
 import { Icon } from '../components/Icon';
 import { APPS, GROUPS, isWebLink, type AppLink } from '../lib/apps';
 import { markLeaving } from '../lib/chatgpt';
+import { onYouTubeMusicClick } from '../lib/music/youtube';
 
 export function Apps() {
   const groups = Object.keys(GROUPS) as AppLink['group'][];
@@ -16,7 +17,7 @@ export function Apps() {
                 className="app-tile"
                 href={a.href}
                 {...(isWebLink(a) ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-                onClick={a.id === 'chatgpt' ? markLeaving : undefined}
+                onClick={a.id === 'chatgpt' ? markLeaving : a.id === 'youtubemusic' ? onYouTubeMusicClick : undefined}
               >
                 <span className="app-icon">
                   <Icon name={a.icon} size="1.8rem" />

@@ -40,6 +40,8 @@ export interface Tokens {
   maneuver: string;
   'maneuver-2': string;
   chatgpt: string;
+  /** Фирменный красный кнопки YouTube Music (белый значок поверх). */
+  ytm: string;
   'car-body': string;
   'car-body-2': string;
   'car-line': string;
@@ -77,6 +79,7 @@ export const THEMES: Record<ThemeName, Tokens> = {
     maneuver: '#0f6b8a',
     'maneuver-2': '#0c5571',
     chatgpt: '#19c37d',
+    ytm: '#d91c23',
     'car-body': '#2a3442',
     'car-body-2': '#141a22',
     'car-line': '#3a4656',
@@ -112,6 +115,7 @@ export const THEMES: Record<ThemeName, Tokens> = {
     maneuver: '#0064a6',
     'maneuver-2': '#004f84',
     chatgpt: '#0d8a57',
+    ytm: '#d91c23',
     'car-body': '#cfd7e1',
     'car-body-2': '#9aa7b6',
     'car-line': '#7d8a99',

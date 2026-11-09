@@ -5,6 +5,8 @@ import { openSection, settingsStore } from './state';
 import { navigateToQuery, stopNavigation, findPoi, navStore, poiStore, startGuidance } from './nav';
 import { playByQuery, pause, resume, next, prev, stop, playerStore } from './player';
 import { findApp, launchApp, APPS } from './apps';
+import { openYouTubeMusic } from './music/youtube';
+import { setActiveSource } from './music/sources';
 import { decodeDtc, dtcSummary } from './dtc';
 import { searchFacts, STATUS_LABEL } from './knowledge';
 import { fmtDistance } from './routing';
@@ -27,6 +29,10 @@ export const TOOLS: ToolDef[] = [
   fn('stop_navigation', 'Завершить маршрут.'),
   fn('find_along_route', 'Найти объекты по маршруту (если он есть) или рядом.', { category: { type: 'string', enum: ['fuel', 'rest', 'food', 'parking'] } }, ['category']),
   fn('play_radio', 'Включить радио. Без названия — продолжить последнюю станцию.', { station: { type: 'string', description: 'Название станции (необязательно)' } }),
+  fn('open_music_service', 'Открыть музыкальный источник: встроенное интернет-радио или приложение YouTube Music. Выбрать трек в YouTube Music нельзя.', {
+    service: { type: 'string', enum: ['radio', 'youtube-music'] },
+  }, ['service']),
+  fn('play_music', 'Включить музыку из предпочитаемого источника пользователя.'),
   fn('media_control', 'Управление воспроизведением.', { action: { type: 'string', enum: ['play', 'pause', 'next', 'previous', 'stop'] } }, ['action']),
   fn('open_section', 'Открыть раздел интерфейса.', {
     section: { type: 'string', enum: ['navigation', 'media', 'assistant', 'apps', 'trip', 'vehicle', 'manual', 'service', 'diagnostics', 'settings'] },
@@ -77,6 +83,20 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
     case 'play_radio':
       openSection('media');
       return playByQuery(str('station'));
+    case 'open_music_service': {
+      const svc = str('service');
+      if (svc === 'youtube-music') return { ok: true, text: openYouTubeMusic() };
+      if (svc === 'radio') {
+        setActiveSource('radio');
+        openSection('media');
+        return playByQuery('');
+      }
+      return { ok: false, text: 'Этот музыкальный сервис пока не подключён.' };
+    }
+    case 'play_music':
+      if (settingsStore.get().preferredMusic === 'youtube-music') return { ok: true, text: openYouTubeMusic() };
+      openSection('media');
+      return playByQuery('');
     case 'media_control': {
       const a = str('action');
       if (a === 'play') resume();
@@ -93,6 +113,7 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
     case 'open_app': {
       const app = findApp(str('app'));
       if (!app) return { ok: false, text: 'Приложение не найдено в списке.' };
+      if (app.id === 'youtubemusic') return { ok: true, text: openYouTubeMusic() };
       if (app.id === 'chatgpt') {
         launchApp(app);
         return { ok: true, text: 'Открываю ChatGPT. Если окно не открылось, нажмите кнопку ChatGPT внизу экрана.' };

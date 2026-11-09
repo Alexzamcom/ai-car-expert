@@ -7,6 +7,7 @@
 import { createStore } from './store';
 import { playerStore } from './player';
 import { toast } from './state';
+import { markLeaving as markHandoff, takeReturn, type Handoff } from './handoff';
 
 export const CHATGPT_URL = 'https://chatgpt.com/';
 
@@ -53,29 +54,20 @@ export function returnHint(p: Platform = platform(), ipad = isIpad()): string[] 
 
 /* ---------- Уход и возвращение ---------- */
 
-const LEFT_KEY = 'ace:left-for-chatgpt';
-
 export function markLeaving() {
-  try {
-    sessionStorage.setItem(LEFT_KEY, JSON.stringify({ at: Date.now(), playing: playerStore.get().playing }));
-  } catch {
-    /* хранилище недоступно — просто без приветствия при возврате */
-  }
+  markHandoff('chatgpt');
 }
 
-/** Вызывается при возвращении на страницу: короткое подтверждение, что всё на месте. */
+/** Сообщение при возвращении из ChatGPT. */
+export function chatgptReturnMessage(h: Handoff): string {
+  const radioPaused = h.radioWasPlaying && !playerStore.get().playing;
+  return radioPaused ? 'С возвращением. Маршрут сохранён; радио на паузе — нажмите ▶, чтобы продолжить.' : 'С возвращением. Маршрут и музыка на месте.';
+}
+
+/** Для совместимости: обработать возвращение (используется тестами и App). */
 export function onReturn(): boolean {
-  let raw: string | null = null;
-  try {
-    raw = sessionStorage.getItem(LEFT_KEY);
-    sessionStorage.removeItem(LEFT_KEY);
-  } catch {
-    return false;
-  }
-  if (!raw) return false;
-  const { at, playing } = JSON.parse(raw) as { at: number; playing: boolean };
-  if (Date.now() - at < 1500) return false; // переход не состоялся
-  const radioPaused = playing && !playerStore.get().playing;
-  toast(radioPaused ? 'С возвращением. Маршрут сохранён; радио на паузе — нажмите ▶, чтобы продолжить.' : 'С возвращением. Маршрут и музыка на месте.', 'ok');
+  const h = takeReturn();
+  if (!h) return false;
+  toast(h.app === 'chatgpt' ? chatgptReturnMessage(h) : 'С возвращением.', 'ok');
   return true;
 }

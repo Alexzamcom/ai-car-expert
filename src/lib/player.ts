@@ -1,4 +1,5 @@
 import { createStore, uid } from './store';
+import { setActiveSource } from './music/sources';
 
 /* Единый аудиоплеер: продолжает играть при переключении разделов. */
 
@@ -83,6 +84,7 @@ function updateMediaSession(t: Track) {
 
 export function playTrack(track: Track, queue?: Track[]) {
   if (!audio) return;
+  setActiveSource('radio');
   playerStore.set((s) => ({ ...s, current: track, queue: queue ?? s.queue, loading: true, error: null }));
   audio.src = track.url;
   audio.volume = playerStore.get().volume;
@@ -253,6 +255,7 @@ export function resume() {
     if (first) playStation(first);
     return;
   }
+  setActiveSource('radio');
   if (current.kind === 'radio') {
     // Для потока — переподключаемся, чтобы не проигрывать устаревший буфер.
     audio.src = current.url;

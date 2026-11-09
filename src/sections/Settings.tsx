@@ -6,6 +6,7 @@ import { wakeLockSupported } from '../lib/wakeLock';
 import { speechRecognitionSupported, listVoices, speak } from '../lib/speech';
 import { chatgptPrefsStore } from '../lib/chatgpt';
 import { themeStore, setThemeMode, THEME_MODE_LABEL, type ThemeMode } from '../lib/theme';
+import { MUSIC_SOURCES } from '../lib/music/sources';
 
 const FUELS: Record<VehicleProfile['fuel'], string> = {
   petrol: 'Бензин',
@@ -148,6 +149,8 @@ export function Settings() {
 
       <ThemeSettings />
 
+      <MusicSettings />
+
       <ChatGptSettings />
 
       <div className="card">
@@ -243,6 +246,61 @@ export function Settings() {
         <ResetButton />
         <p className="muted small">AI Car Expert · версия {__APP_VERSION__}</p>
       </div>
+    </div>
+  );
+}
+
+function MusicSettings() {
+  const s = useStore(settingsStore);
+  const patch = (p: Partial<SettingsT>) => settingsStore.set((x) => ({ ...x, ...p }));
+  return (
+    <div className="card">
+      <h3 className="section-title">
+        <Icon name="music" /> Музыка
+      </h3>
+      <div className="setting-row">
+        <div>
+          <strong>Предпочитаемый сервис</strong>
+          <small>Для команды «Включи музыку» и раздела «Музыка»</small>
+        </div>
+        <div className="seg" role="radiogroup" aria-label="Предпочитаемый музыкальный сервис">
+          {MUSIC_SOURCES.map((m) => (
+            <button
+              key={m.id}
+              role="radio"
+              aria-checked={s.preferredMusic === m.id}
+              disabled={m.kind === 'planned'}
+              className={`chip ${s.preferredMusic === m.id ? 'is-active' : ''}`}
+              onClick={() => m.kind !== 'planned' && patch({ preferredMusic: m.id as 'radio' | 'youtube-music' })}
+            >
+              {m.id === 'radio' ? 'Радио' : m.name}
+              {m.kind === 'planned' ? ' · скоро' : ''}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="setting-row">
+        <div>
+          <strong>YouTube Music на iPad и iPhone</strong>
+          <small>Сначала пробовать приложение; если оно не открылось — предложить сайт music.youtube.com</small>
+        </div>
+        <div className="seg" role="radiogroup" aria-label="Как открывать YouTube Music">
+          {(
+            [
+              ['app', 'Приложение'],
+              ['browser', 'Сразу сайт'],
+            ] as const
+          ).map(([v, label]) => (
+            <button key={v} role="radio" aria-checked={s.ytmOpenMode === v} className={`chip ${s.ytmOpenMode === v ? 'is-active' : ''}`} onClick={() => patch({ ytmOpenMode: v })}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="muted small">
+        YouTube Music открывается как отдельное приложение с вашей учётной записью: без API-ключей и без встраивания.
+        Управлять его воспроизведением и выбирать треки голосом AI Car Expert не может. При переходе интернет-радио ставится на паузу.
+      </p>
     </div>
   );
 }

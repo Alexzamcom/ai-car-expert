@@ -373,3 +373,69 @@ export async function navigateToQuery(query: string): Promise<{ ok: boolean; tex
     return { ok: false, text: navigator.onLine ? (e as Error).message : 'Нет интернета для поиска адреса.' };
   }
 }
+
+/* ---------- Сохранение маршрута между запусками ----------
+   iPadOS может выгрузить веб-приложение из памяти, пока открыт YouTube Music или ChatGPT.
+   Цель, промежуточная точка и режим ведения сохраняются; маршрут перестраивается при возвращении. */
+
+const NAV_KEY = 'ace:nav-session';
+const NAV_TTL = 6 * 3600 * 1000;
+let lastSaved = '';
+
+export interface NavSession {
+  dest: Place;
+  via: Place | null;
+  guiding: boolean;
+  at: number;
+}
+
+navStore.subscribe(() => {
+  const s = navStore.get();
+  // Пишем только при смене цели/остановки/режима, а не на каждую точку GPS.
+  const key = s.dest ? JSON.stringify([s.dest, s.via, s.status === 'guiding']) : '';
+  if (key === lastSaved || s.status === 'routing') return;
+  lastSaved = key;
+  try {
+    if (!s.dest || s.status === 'arrived') localStorage.removeItem(NAV_KEY);
+    else localStorage.setItem(NAV_KEY, JSON.stringify({ dest: s.dest, via: s.via, guiding: s.status === 'guiding', at: Date.now() } satisfies NavSession));
+  } catch {
+    /* хранилище недоступно */
+  }
+});
+
+export function readNavSession(now = Date.now()): NavSession | null {
+  try {
+    const raw = localStorage.getItem(NAV_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw) as NavSession;
+    return s.dest && now - s.at < NAV_TTL ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Восстановить маршрут после перезапуска (ждём первую точку GPS до 30 с). */
+export function restoreNavSession() {
+  const saved = readNavSession();
+  if (!saved || navStore.get().dest) return;
+  const go = async () => {
+    await setDestination(saved.dest, saved.via);
+    if (saved.guiding && navStore.get().route) startGuidance();
+  };
+  if (currentPos()) return void go();
+  let done = false;
+  const unsub = geoStore.subscribe(() => {
+    if (!done && currentPos()) {
+      done = true;
+      unsub();
+      void go();
+    }
+  });
+  setTimeout(() => {
+    if (!done) {
+      done = true;
+      unsub();
+      void go();
+    }
+  }, 30000);
+}

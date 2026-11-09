@@ -3,7 +3,7 @@ import { Icon } from './Icon';
 import { useStore } from '../lib/store';
 import { voiceStore, closeVoice, startVoice, stopListening, submitTyped } from '../lib/voice';
 
-const HINTS = ['«Маршрут до Красной площади»', '«Найди заправку»', '«Включи радио»', '«Как работает AUTO на климате?»', '«Когда следующее ТО?»', '«Їдемо до Львова»'];
+const HINTS = ['«Маршрут до Красной площади»', '«Найди заправку»', '«Включи радио»', '«Открой YouTube Music»', '«Вернись к карте»', '«Когда следующее ТО?»', '«Їдемо до Львова»'];
 
 export function VoiceOverlay() {
   const v = useStore(voiceStore);
