@@ -1,0 +1,46 @@
+[
+ {
+  "stationuuid": "u1",
+  "name": "Радио Тест FM",
+  "url_resolved": "https://stream.example.com/test.mp3",
+  "codec": "MP3",
+  "bitrate": 128,
+  "countrycode": "RU",
+  "tags": "pop,hits",
+  "hls": 0,
+  "lastcheckok": 1
+ },
+ {
+  "stationuuid": "u2",
+  "name": "Незащищённое радио",
+  "url_resolved": "http://insecure.example.com/live",
+  "codec": "MP3",
+  "bitrate": 128,
+  "countrycode": "RU",
+  "tags": "rock",
+  "hls": 0,
+  "lastcheckok": 1
+ },
+ {
+  "stationuuid": "u3",
+  "name": "Радио OGG",
+  "url_resolved": "https://stream.example.com/x.ogg",
+  "codec": "OGG",
+  "bitrate": 96,
+  "countrycode": "UA",
+  "tags": "jazz",
+  "hls": 0,
+  "lastcheckok": 1
+ },
+ {
+  "stationuuid": "u4",
+  "name": "Радіо Україна Тест",
+  "url_resolved": "https://stream.example.com/ua.aac",
+  "codec": "AAC",
+  "bitrate": 64,
+  "countrycode": "UA",
+  "tags": "news",
+  "hls": 0,
+  "lastcheckok": 1
+ }
+]

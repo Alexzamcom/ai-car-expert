@@ -1,0 +1,111 @@
+{
+ "code": "Ok",
+ "routes": [
+  {
+   "distance": 2420,
+   "duration": 330,
+   "geometry": {
+    "type": "LineString",
+    "coordinates": [
+     [
+      37.6156,
+      55.757
+     ],
+     [
+      37.612,
+      55.76
+     ],
+     [
+      37.608,
+      55.763
+     ],
+     [
+      37.604,
+      55.766
+     ],
+     [
+      37.6,
+      55.769
+     ],
+     [
+      37.603,
+      55.771
+     ],
+     [
+      37.608,
+      55.773
+     ],
+     [
+      37.613,
+      55.775
+     ],
+     [
+      37.615,
+      55.777
+     ],
+     [
+      37.617,
+      55.779
+     ]
+    ]
+   },
+   "legs": [
+    {
+     "steps": [
+      {
+       "distance": 1300,
+       "duration": 180,
+       "name": "Тверская улица",
+       "maneuver": {
+        "type": "depart",
+        "location": [
+         37.6156,
+         55.757
+        ]
+       }
+      },
+      {
+       "distance": 700,
+       "duration": 90,
+       "name": "Садовая-Триумфальная улица",
+       "maneuver": {
+        "type": "turn",
+        "modifier": "right",
+        "location": [
+         37.6,
+         55.769
+        ]
+       }
+      },
+      {
+       "distance": 420,
+       "duration": 60,
+       "name": "Краснопролетарская улица",
+       "maneuver": {
+        "type": "roundabout",
+        "modifier": "right",
+        "exit": 2,
+        "location": [
+         37.613,
+         55.775
+        ]
+       }
+      },
+      {
+       "distance": 0,
+       "duration": 0,
+       "name": "",
+       "maneuver": {
+        "type": "arrive",
+        "location": [
+         37.617,
+         55.779
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
