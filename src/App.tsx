@@ -11,7 +11,12 @@ import { layoutStore, settingsStore, closePage } from './lib/state';
 import { setKeepAwake, retryWakeLockOnGesture } from './lib/wakeLock';
 import { startGeo } from './lib/nav';
 import { restorePlayer } from './lib/player';
-import { onReturn } from './lib/chatgpt';
+import { chatgptReturnMessage } from './lib/chatgpt';
+import { takeReturn } from './lib/handoff';
+import { restoreNavSession, navStore } from './lib/nav';
+import { YouTubeMusicFallback } from './components/YouTubeMusic';
+import { ytmFallbackStore } from './lib/music/youtube';
+import { openSection, toast } from './lib/state';
 
 export function App() {
   const layout = useStore(layoutStore);
@@ -36,7 +41,20 @@ export function App() {
     // ?mode=car — запуск из автоматизации «Подключено к Bluetooth автомобиля»: сразу экран вождения.
     if (new URLSearchParams(location.search).get('mode') === 'car') closePage();
     // Возврат из ChatGPT (или другого приложения): подтверждаем, что маршрут и музыка на месте.
-    const onVisible = () => document.visibilityState === 'visible' && onReturn();
+    restoreNavSession();
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      const h = takeReturn();
+      if (!h) return;
+      if (h.app === 'chatgpt') toast(chatgptReturnMessage(h), 'ok');
+      else {
+        // Из YouTube Music сразу возвращаемся к карте; приложение не знает, что играет в YouTube Music.
+        ytmFallbackStore.set(false);
+        openSection('navigation');
+        const route = navStore.get().dest ? 'Карта и маршрут на месте.' : 'Карта на месте.';
+        toast(`С возвращением. ${route} Что играет в YouTube Music, AI Car Expert не видит — управление в YouTube Music или кнопками автомобиля.`, 'ok');
+      }
+    };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('pageshow', onVisible);
     return () => {
@@ -59,6 +77,7 @@ export function App() {
       </main>
       <Dock />
       <VoiceOverlay />
+      <YouTubeMusicFallback />
       <Toasts />
     </div>
   );

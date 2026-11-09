@@ -26,7 +26,8 @@ export const APPS: AppLink[] = [
   { id: 'applemusic', name: 'Apple Музыка', group: 'music', icon: 'music', href: 'music://' },
   { id: 'spotify', name: 'Spotify', group: 'music', icon: 'music', href: 'spotify://', web: 'https://open.spotify.com/' },
   { id: 'yandexmusic', name: 'Яндекс Музыка', group: 'music', icon: 'music', href: 'yandexmusic://', web: 'https://music.yandex.ru/' },
-  { id: 'youtubemusic', name: 'YouTube Music', group: 'music', icon: 'music', href: 'youtubemusic://', web: 'https://music.youtube.com/' },
+  // Официальный адрес; на iPad сначала пробуем приложение (см. lib/music/youtube.ts).
+  { id: 'youtubemusic', name: 'YouTube Music', group: 'music', icon: 'play', href: 'https://music.youtube.com/' },
   { id: 'podcasts', name: 'Подкасты', group: 'music', icon: 'radio', href: 'podcasts://' },
   { id: 'telegram', name: 'Telegram', group: 'comm', icon: 'chat', href: 'tg://', web: 'https://web.telegram.org/' },
   { id: 'whatsapp', name: 'WhatsApp', group: 'comm', icon: 'chat', href: 'whatsapp://', web: 'https://web.whatsapp.com/' },

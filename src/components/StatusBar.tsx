@@ -6,6 +6,8 @@ import { geoStore, navStore, navLang } from '../lib/nav';
 import { fmtDistance } from '../lib/routing';
 import { playerStore, togglePlay } from '../lib/player';
 import { isRemoteConfigured } from '../lib/assistant';
+import { musicStore } from '../lib/music/sources';
+import { YouTubeMusicLink } from './YouTubeMusic';
 import { themeStore, cycleThemeMode, THEME_MODE_LABEL, type ThemeMode } from '../lib/theme';
 
 function useClock() {
@@ -39,6 +41,7 @@ export function StatusBar() {
   const geo = useStore(geoStore);
   const nav = useStore(navStore);
   const player = useStore(playerStore);
+  const music = useStore(musicStore);
   const theme = useStore(themeStore);
   const name = vehicleName(settings.vehicle);
   const routeLeft = nav.route && nav.progress ? nav.route.duration * (nav.progress.remainingM / Math.max(1, nav.route.distance)) : null;
@@ -69,7 +72,12 @@ export function StatusBar() {
             </span>
           </button>
         )}
-        {player.current && (
+        {music.active === 'youtube-music' && !player.playing ? (
+          <YouTubeMusicLink className="sb-chip sb-now sb-ytm" label="YouTube Music — открыть">
+            <Icon name="play" size="1em" filled stroke={0} />
+            <span>YouTube Music</span>
+          </YouTubeMusicLink>
+        ) : player.current && (
           <button className="sb-chip sb-now" onClick={togglePlay} aria-label={player.playing ? 'Пауза' : 'Воспроизвести'}>
             <Icon name={player.playing ? 'pause' : 'play'} size="1em" filled stroke={0} />
             <span>{player.current.title}</span>

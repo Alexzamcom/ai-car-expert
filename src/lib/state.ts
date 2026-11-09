@@ -73,6 +73,10 @@ export interface Settings {
   keepAwake: boolean;
   /** Оформление: день, ночь или автоматически (по солнцу либо по теме устройства). */
   theme: 'auto' | 'day' | 'night';
+  /** Предпочитаемый музыкальный сервис (для «включи музыку» и раздела «Музыка»). */
+  preferredMusic: 'radio' | 'youtube-music';
+  /** iOS: пробовать открыть приложение YouTube Music (иначе — сразу сайт). */
+  ytmOpenMode: 'app' | 'browser';
 }
 
 export const settingsStore = createStore<Settings>(
@@ -101,6 +105,8 @@ export const settingsStore = createStore<Settings>(
     textScale: 'normal',
     keepAwake: true,
     theme: 'auto',
+    preferredMusic: 'radio',
+    ytmOpenMode: 'app',
   },
   'settings',
 );

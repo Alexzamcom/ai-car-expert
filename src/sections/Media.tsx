@@ -19,7 +19,9 @@ import {
   volumeControllable,
   type Station,
 } from '../lib/player';
-import { toast } from '../lib/state';
+import { toast, settingsStore } from '../lib/state';
+import { MUSIC_SOURCES, musicStore } from '../lib/music/sources';
+import { YouTubeMusicPanel } from '../components/YouTubeMusic';
 
 type Tab = 'mine' | 'find' | 'files';
 
@@ -45,6 +47,10 @@ export function Media() {
   const [err, setErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const cur = player.current;
+  const music = useStore(musicStore);
+  const [view, setView] = useState<'radio' | 'youtube-music'>(() =>
+    musicStore.get().active === 'youtube-music' || (!playerStore.get().current && settingsStore.get().preferredMusic === 'youtube-music') ? 'youtube-music' : 'radio',
+  );
 
   async function find(params: { name?: string; countrycode?: string; tag?: string }) {
     setBusy(true);
@@ -62,6 +68,28 @@ export function Media() {
 
   return (
     <div className="section media">
+      <div className="sources" role="tablist" aria-label="Источник музыки">
+        {MUSIC_SOURCES.map((s) => (
+          <button
+            key={s.id}
+            role="tab"
+            aria-selected={view === s.id}
+            disabled={s.kind === 'planned'}
+            className={`source ${view === s.id ? 'is-active' : ''} ${music.active === s.id ? 'is-playing' : ''}`}
+            onClick={() => s.kind !== 'planned' && setView(s.id as 'radio' | 'youtube-music')}
+            title={s.note}
+          >
+            <Icon name={s.id === 'radio' ? 'radio' : s.kind === 'planned' ? 'clock' : 'play'} size="1.2em" filled={s.id === 'youtube-music'} stroke={s.id === 'youtube-music' ? 0 : undefined} />
+            <span>{s.id === 'radio' ? 'Радио' : s.name}</span>
+            {s.kind === 'planned' && <small>скоро</small>}
+          </button>
+        ))}
+      </div>
+
+      {view === 'youtube-music' ? (
+        <YouTubeMusicPanel />
+      ) : (
+      <>
       <div className="now-playing">
         <div className={`np-art ${player.playing ? 'is-playing' : ''}`}>
           <Icon name={cur?.kind === 'file' ? 'music' : 'radio'} size="2.4rem" />
@@ -237,6 +265,8 @@ export function Media() {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
     </div>
   );

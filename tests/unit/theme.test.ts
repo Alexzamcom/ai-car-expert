@@ -31,6 +31,9 @@ describe('контраст тем (WCAG)', () => {
       const overlay = over(t.overlay, t['map-bg']);
       for (const fg of ['text', 'muted', 'accent'] as const) expect(contrast(t[fg], overlay), fg).toBeGreaterThanOrEqual(4.5);
     });
+    it(`${n}: белый значок на кнопке YouTube Music`, () => {
+      expect(contrast('#ffffff', t.ytm)).toBeGreaterThanOrEqual(4.5);
+    });
     it(`${n}: белый текст подсказки манёвра`, () => {
       expect(contrast('#ffffff', t.maneuver)).toBeGreaterThanOrEqual(4.5);
       expect(contrast('#ffffff', t['maneuver-2'])).toBeGreaterThanOrEqual(4.5);
@@ -43,6 +46,10 @@ describe('контраст тем (WCAG)', () => {
 
 describe('стили без «зашитых» цветов', () => {
   const css = fs.readFileSync('src/styles/global.css', 'utf8');
+  it('запасные значения :root не ссылаются сами на себя', () => {
+    const root = css.slice(0, css.indexOf('* { box-sizing'));
+    for (const m of root.matchAll(/--([a-z0-9-]+):\s*var\(--([a-z0-9-]+)\)/g)) expect(m[1]).not.toBe(m[2]);
+  });
   it('после :root цвета берутся из токенов темы', () => {
     const body = css.slice(css.indexOf('* { box-sizing'));
     const literals = [...new Set(body.match(/rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}\b/g) ?? [])].sort();

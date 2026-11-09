@@ -20,13 +20,14 @@
   --ok: #3ddc84;
   --warn: #ffb020;
   --danger: #ff6b70;
-  --overlay: var(--overlay);
+  --overlay: rgba(17, 21, 27, 0.96);
   --scrim: #020305;
-  --shadow: var(--shadow);
-  --map-bg: var(--map-bg);
+  --shadow: rgba(0, 0, 0, 0.5);
+  --map-bg: #0d1116;
   --maneuver: #0f6b8a;
   --maneuver-2: #0c5571;
-  --chatgpt: var(--chatgpt);
+  --chatgpt: #19c37d;
+  --ytm: #d91c23;
   --glow: color-mix(in srgb, var(--accent) 6%, transparent);
 
   --radius: 22px;
@@ -1214,6 +1215,56 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .cg-actions .btn { flex: 1 1 auto; }
 .chat-empty .cg-card { margin: 4px 0; }
 
+/* ============ Источники музыки и YouTube Music ============ */
+
+.sources { display: flex; gap: 6px; padding: 6px; background: var(--bg-2); border-radius: 18px; border: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.sources::-webkit-scrollbar { display: none; }
+.source {
+  flex: 1 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 0 14px;
+  border-radius: 14px;
+  color: var(--text-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.source svg { flex: none; }
+.source.is-active { background: var(--panel-3); color: var(--text); }
+.source.is-playing::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent-2); }
+.source small { font-size: 0.7rem; color: var(--muted); font-weight: 500; }
+.source:disabled { opacity: 0.55; }
+
+.ytm { display: flex; flex-direction: column; gap: 14px; }
+.ytm-open {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 96px;
+  padding: 16px 20px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  border: 2px solid var(--danger);
+}
+.ytm-open:active { background: var(--panel-3); }
+.ytm-open > svg { color: var(--muted); flex: none; }
+.ytm-logo { width: 60px; height: 60px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--ytm); color: #fff; }
+.ytm-open-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.ytm-open-text strong { font-size: 1.3rem; }
+.ytm-open-text small { color: var(--muted); font-size: 0.85rem; }
+.ytm-status { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 18px; background: var(--bg-2); border: 1px solid var(--line); color: var(--text-2); }
+.ytm-status strong { color: var(--text); }
+.ytm-radio-state { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.85rem; }
+.ytm-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.ytm-actions .btn { flex: 1 1 200px; }
+.ytm-help { padding: 4px 4px; color: var(--text-2); }
+.ytm-help summary { min-height: 48px; display: flex; align-items: center; cursor: pointer; font-weight: 600; color: var(--accent); }
+.ytm-help ul { margin: 4px 0 8px; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; }
+.sb-ytm { color: var(--danger); }
+
 /* ============ Приложения ============ */
 
 .app-group { display: flex; flex-direction: column; gap: 10px; }
@@ -1324,6 +1375,8 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
   .drive.order-panel-first { grid-template-areas: 'panel map'; grid-template-columns: minmax(0, 45fr) minmax(0, 55fr) !important; }
   .drive.panel-collapsed { grid-template-columns: minmax(0, 1fr) auto !important; }
   .drive.order-panel-first.panel-collapsed { grid-template-columns: auto minmax(0, 1fr) !important; }
+  .drive.panel-expanded { grid-template-columns: minmax(0, 35fr) minmax(0, 65fr) !important; }
+  .drive.order-panel-first.panel-expanded { grid-template-columns: minmax(0, 65fr) minmax(0, 35fr) !important; }
   .panel-collapsed .panel-head { flex-direction: column; height: 100%; width: 72px; padding: 4px; }
   .panel-collapsed .panel-tabs { flex-direction: column; }
   .panel-collapsed .mini-player { display: none; }

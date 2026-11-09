@@ -42,6 +42,16 @@ export function parseCommand(raw: string): Command {
   // Управление системами автомобиля — только честный ответ помощника.
   if (isVehicleControlRequest(t)) return { kind: 'ask', text: raw };
 
+  // YouTube Music: «открой YouTube Music», «включи ютуб музыку», «відкрий YouTube Music»
+  if (/(youtube ?music|ютуб ?(музык|музик|мьюзик|мюзик)|ю ?туб ?(музык|музик|мьюзик)|youtube ?(музык|музик))/.test(t)) {
+    return { kind: 'tool', name: 'open_music_service', args: { service: 'youtube-music' } };
+  }
+
+  // Назад к карте: «вернись к карте», «покажи карту», «повернись до карти», «до мапи»
+  if (/^(вернись|вернуться|назад|верни|повернись|повернутися|покажи|покажи мне)\s*(к|на|до)?\s*(карт|мап|навигац|навігац)/.test(t) || /^(к карте|на карту|до мапи|до карти)$/.test(t)) {
+    return { kind: 'tool', name: 'open_section', args: { section: 'navigation' } };
+  }
+
   // Маршрут: «маршрут до …», «поехали в …», «проклади маршрут до …», «їдемо до …»
   const route = t.match(
     /^(?:(?:проложи|построй|прокладі|проклади|побудуй)\s+)?(?:маршрут|поехали|поедем|едем|ехать|їдемо|поїхали|навигаци\w*|веди|как доехать|як доїхати)\s+(?:до|в|во|на|к|ко)\s+(.+)$/,
@@ -64,9 +74,8 @@ export function parseCommand(raw: string): Command {
   if (/^(предыдущ|назад|попередн)/.test(t)) return { kind: 'tool', name: 'media_control', args: { action: 'previous' } };
   const radio = t.match(/^(?:включи|поставь|играй|увімкни|ввімкни|постав)\s+(?:радио|радіо|станцию|станцію)\s*(.*)$/);
   if (radio) return { kind: 'tool', name: 'play_radio', args: { station: radio[1] ?? '' } };
-  if (/^(включи|продолжи|увімкни|продовж)\s+(музыку|музику)$/.test(t) || /^(играй|грай)$/.test(t)) {
-    return { kind: 'tool', name: 'media_control', args: { action: 'play' } };
-  }
+  if (/^(включи|продолжи|увімкни|продовж)\s+(музыку|музику)$/.test(t)) return { kind: 'tool', name: 'play_music', args: {} };
+  if (/^(играй|грай)$/.test(t)) return { kind: 'tool', name: 'media_control', args: { action: 'play' } };
 
   // Тема: «ночной режим», «включи дневную тему», «тема авто», «нічна тема»
   if (/(тем[ауы]|режим|оформлен)/.test(t) || /^(день|ночь|ніч)$/.test(t)) {
@@ -104,7 +113,7 @@ export async function handleVoiceCommand(raw: string) {
   toast(res.text, res.ok ? 'ok' : 'warn');
   const s = settingsStore.get();
   // Озвучиваем результат для навигации и поиска, где важна обратная связь без взгляда на экран.
-  if ((s.speakReplies || cmd.say) && ['navigate_to', 'find_along_route', 'set_voice_replies', 'set_navigation_voice', 'play_radio', 'set_theme'].includes(cmd.name)) {
+  if ((s.speakReplies || cmd.say) && ['navigate_to', 'find_along_route', 'set_voice_replies', 'set_navigation_voice', 'play_radio', 'set_theme', 'open_music_service', 'play_music'].includes(cmd.name)) {
     speak(res.text, s.speechLang);
   }
 }
