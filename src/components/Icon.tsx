@@ -76,6 +76,8 @@ const PATHS = {
   chat: 'M4 5h16v11H9l-5 4V5Z',
   bluetooth: 'M7 7l10 10-5 4V3l5 4L7 17',
   camera: 'M4 8h4l2-3h4l2 3h4v11H4zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z',
+  moon: 'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z',
+  autoTheme: 'M12 3a9 9 0 1 0 0 18V3ZM12 3a9 9 0 0 1 0 18',
   shield: 'M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6l8-3Z',
 } as const;
 

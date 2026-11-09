@@ -6,6 +6,7 @@ import { geoStore, navStore, navLang } from '../lib/nav';
 import { fmtDistance } from '../lib/routing';
 import { playerStore, togglePlay } from '../lib/player';
 import { isRemoteConfigured } from '../lib/assistant';
+import { themeStore, cycleThemeMode, THEME_MODE_LABEL, type ThemeMode } from '../lib/theme';
 
 function useClock() {
   const [now, setNow] = useState(() => new Date());
@@ -38,6 +39,7 @@ export function StatusBar() {
   const geo = useStore(geoStore);
   const nav = useStore(navStore);
   const player = useStore(playerStore);
+  const theme = useStore(themeStore);
   const name = vehicleName(settings.vehicle);
   const routeLeft = nav.route && nav.progress ? nav.route.duration * (nav.progress.remainingM / Math.max(1, nav.route.distance)) : null;
 
@@ -90,6 +92,18 @@ export function StatusBar() {
         <span className={`sb-icon ${online ? 'is-ok' : 'is-warn'}`} title={online ? 'Сеть доступна' : 'Нет сети'} aria-label={online ? 'Сеть доступна' : 'Нет сети'}>
           <Icon name={online ? 'wifi' : 'wifiOff'} size="1.25em" />
         </span>
+        <button
+          className={`sb-icon-btn sb-theme ${theme.mode === 'auto' ? 'is-auto' : ''}`}
+          onClick={() => {
+            const m: ThemeMode = cycleThemeMode();
+            toast(`Тема: ${THEME_MODE_LABEL[m]}`, 'info');
+          }}
+          aria-label={`Тема: ${THEME_MODE_LABEL[theme.mode]}. Переключить`}
+          title={`Тема: ${THEME_MODE_LABEL[theme.mode]}`}
+        >
+          <Icon name={theme.mode === 'auto' ? 'autoTheme' : theme.active === 'day' ? 'sun' : 'moon'} size="1.35em" />
+          {theme.mode === 'auto' && <span className="sb-theme-badge">A</span>}
+        </button>
         <button className="sb-icon-btn" onClick={() => openSection('settings')} aria-label="Настройки">
           <Icon name="gear" size="1.35em" />
         </button>

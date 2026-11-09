@@ -34,6 +34,7 @@ export const TOOLS: ToolDef[] = [
   fn('open_app', 'Открыть стороннее приложение на устройстве (уводит AI Car Expert в фон).', { app: { type: 'string', enum: APPS.map((a) => a.id) } }, ['app']),
   fn('set_voice_replies', 'Включить или выключить голосовые ответы помощника.', { enabled: { type: 'boolean' } }, ['enabled']),
   fn('set_navigation_voice', 'Включить или выключить голосовые подсказки навигации.', { enabled: { type: 'boolean' } }, ['enabled']),
+  fn('set_theme', 'Тема оформления: день, ночь или автоматически по солнцу.', { mode: { type: 'string', enum: ['auto', 'day', 'night'] } }, ['mode']),
   fn('decode_dtc', 'Расшифровать код ошибки OBD-II.', { code: { type: 'string' } }, ['code']),
   fn('lookup_vehicle_knowledge', 'Поиск в базе знаний об автомобиле владельца. Возвращает факты со статусом достоверности.', { query: { type: 'string' } }, ['query']),
   fn('get_status', 'Текущее состояние: маршрут, музыка, геопозиция.'),
@@ -105,6 +106,12 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
     case 'set_navigation_voice':
       settingsStore.set((s) => ({ ...s, speakNavigation: Boolean(args.enabled) }));
       return { ok: true, text: args.enabled ? 'Подсказки навигации включены.' : 'Подсказки навигации выключены.' };
+    case 'set_theme': {
+      const mode = str('mode') as 'auto' | 'day' | 'night';
+      if (!['auto', 'day', 'night'].includes(mode)) return { ok: false, text: 'Неизвестный режим темы' };
+      settingsStore.set((s) => ({ ...s, theme: mode }));
+      return { ok: true, text: mode === 'auto' ? 'Тема переключается автоматически.' : mode === 'day' ? 'Включена дневная тема.' : 'Включена ночная тема.' };
+    }
     case 'decode_dtc':
       return { ok: true, text: dtcSummary(decodeDtc(str('code'))) };
     case 'lookup_vehicle_knowledge': {

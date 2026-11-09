@@ -1,7 +1,7 @@
 /* AI Car Expert — service worker (генерируется при сборке) */
 const CACHE = '__VERSION__';
 const PRECACHE = __PRECACHE__;
-const TILE_CACHE = 'ace-map-tiles';
+const TILE_CACHE = 'ace-osm-tiles';
 const TILE_LIMIT = 600;
 
 self.addEventListener('install', (event) => {
@@ -32,23 +32,19 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  // Тайлы карты: cache-first с ограничением размера — карта частично доступна без сети.
-  if (/basemaps\.cartocdn\.com$/.test(url.hostname)) {
+  // Тайлы OpenStreetMap: сначала сеть (кэширование HTTP по заголовкам сервера),
+  // ограниченная копия просмотренных тайлов — только для работы без связи. Массовая загрузка не ведётся.
+  if (url.hostname === 'tile.openstreetmap.org') {
     event.respondWith(
-      caches.open(TILE_CACHE).then(async (cache) => {
-        const hit = await cache.match(req);
-        if (hit) return hit;
-        try {
-          const res = await fetch(req);
-          if (res.ok || res.type === 'opaque') {
-            cache.put(req, res.clone());
-            trimTiles();
+      fetch(req)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(TILE_CACHE).then((c) => c.put(req, copy)).then(trimTiles);
           }
           return res;
-        } catch {
-          return Response.error();
-        }
-      }),
+        })
+        .catch(() => caches.open(TILE_CACHE).then((c) => c.match(req)).then((hit) => hit || Response.error())),
     );
     return;
   }

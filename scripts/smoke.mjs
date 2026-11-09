@@ -51,7 +51,8 @@ async function layoutProblems(page) {
       const st = getComputedStyle(el);
       return r.width > 0 && r.height > 0 && st.display !== 'none' && st.visibility !== 'hidden' ? r : null;
     };
-    const sel = ['.map-search', '.maneuver', '.map-controls', '.map-speed', '.route-card', '.poi-card', '.geo-chip'];
+    // Кнопки карты проверяем по отдельности: контейнер мог быть меньше вылезших из него кнопок.
+    const sel = ['.map-search', '.maneuver', '.map-ctl', '.map-speed', '.route-card', '.poi-card', '.geo-chip'];
     const rects = sel.flatMap((s) => [...document.querySelectorAll(s)].map((el) => [s, vis(el)])).filter(([, r]) => r);
     for (let i = 0; i < rects.length; i++)
       for (let j = i + 1; j < rects.length; j++) {
@@ -104,8 +105,45 @@ async function checkChatGpt(name, ctx, page) {
   check(`${name}: повторное нажатие открывает ChatGPT сразу`, tag === 'A|https://chatgpt.com/|_blank', tag);
 }
 
+/** Переключить тему кнопкой в статус-баре до нужного режима (без перезагрузки). */
+async function setThemeMode(page, mode) {
+  for (let i = 0; i < 3; i++) {
+    const cur = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings') || '{}').theme ?? 'auto');
+    if (cur === mode) return;
+    await page.click('.sb-theme');
+    await page.waitForTimeout(150);
+  }
+}
+
+const bgLuminance = (page) =>
+  page.evaluate(() => {
+    const [r, g, b] = getComputedStyle(document.body).backgroundColor.match(/\d+/g).map(Number);
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  });
+
+/** Обе темы: переключение без перезагрузки, внешний вид, наложения, ночной фильтр карты. */
+async function checkThemes(name, page, out, slug) {
+  const marker = await page.evaluate(() => (window.__aceMarker = Math.random()));
+  for (const mode of ['day', 'night']) {
+    await setThemeMode(page, mode);
+    const switching = await page.evaluate(() => document.documentElement.classList.contains('theme-switching'));
+    await page.waitForTimeout(700);
+    const active = await page.evaluate(() => document.documentElement.dataset.theme);
+    const lum = await bgLuminance(page);
+    const filter = await page.evaluate(() => getComputedStyle(document.querySelector('.leaflet-tile-pane')).filter);
+    const pr = await layoutProblems(page);
+    const ok = active === mode && (mode === 'day' ? lum > 0.8 : lum < 0.1) && (mode === 'night' ? filter.includes('invert') : filter === 'none');
+    check(`${name}: тема «${mode === 'day' ? 'День' : 'Ночь'}»`, ok && !pr.length, `${active}, яркость фона ${lum.toFixed(2)}${pr.length ? '; ' + pr.join('; ') : ''}${switching ? ', плавно' : ''}`);
+    await page.screenshot({ path: `${out}/theme-${slug}-${mode}.png` });
+  }
+  const same = await page.evaluate((m) => window.__aceMarker === m, marker);
+  check(`${name}: тема меняется без перезагрузки`, same);
+}
+
 const browser = await chromium.launch();
 const errors = [];
+const tileHosts = new Set();
+let cartoRequests = 0;
 
 async function newPage(device, extra = {}) {
   const ctx = await browser.newContext({
@@ -118,6 +156,11 @@ async function newPage(device, extra = {}) {
   await mockNetwork(ctx);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('request', (r) => {
+    const u = new URL(r.url());
+    if (/\/\d+\/\d+\/\d+(@2x)?\.png$/.test(u.pathname)) tileHosts.add(u.hostname);
+    if (u.hostname.includes('cartocdn') || u.hostname.includes('carto.com')) cartoRequests++;
+  });
   return { ctx, page };
 }
 
@@ -269,6 +312,28 @@ try {
   check('Радио играет', (await page.locator('.np-info .eyebrow').textContent()) === 'Сейчас играет');
   await page.screenshot({ path: `${out}/06-ipad-media.png` });
 
+  // Карта: OpenStreetMap с атрибуцией, без CARTO
+  const attr = await page.evaluate(() => {
+    const el = document.querySelector('.leaflet-control-attribution');
+    const r = el?.getBoundingClientRect();
+    const st = el && getComputedStyle(el);
+    return { text: el?.textContent ?? '', visible: !!r && r.width > 40 && r.height > 8 && st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) > 0.5, link: el?.querySelector('a[href*="openstreetmap.org/copyright"]') != null };
+  });
+  check('Атрибуция OpenStreetMap видна', attr.visible && attr.link && attr.text.includes('OpenStreetMap'), attr.text.trim());
+
+  // Темы (iPad вертикально), авто по солнцу и сохранение выбора
+  await page.click('.dock [aria-label="Ещё разделы"]');
+  await page.click('.more-item:has-text("Настройки")');
+  const status = (await page.locator('#theme-status').textContent()) ?? '';
+  check('Тема «Авто» по восходу и закату при наличии геопозиции', status.includes('солнца'), status.slice(0, 90));
+  await page.click('.page-back');
+  await checkThemes('iPad', page, out, 'ipad');
+  await setThemeMode(page, 'day');
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(500);
+  check('Выбранная тема сохраняется после перезапуска', (await page.evaluate(() => document.documentElement.dataset.theme)) === 'day');
+  await page.waitForSelector('.drive-map .leaflet-container');
+
   // ChatGPT по подписке (iPad вертикально)
   await checkChatGpt('iPad', ctx, page);
 
@@ -280,6 +345,7 @@ try {
   check('iPad горизонтально: карта и панель рядом', m && p && Math.abs(m.y - p.y) < 5 && p.x > m.x);
   problems = await layoutProblems(page);
   check('iPad горизонтально: без наложений', !problems.length, problems.join('; '));
+  await checkThemes('iPad горизонтально', page, out, 'ipad-landscape');
   await page.screenshot({ path: `${out}/07-ipad-landscape.png` });
   await ctx.close();
 
@@ -310,8 +376,21 @@ try {
     check(`${name}: раздел поверх карты`, !pr.length, pr.join('; '));
     await ph.click('.page-back');
     await checkChatGpt(name, c, ph);
+    await checkThemes(name, ph, out, slug);
     await c.close();
   }
+
+  for (const scheme of ['light', 'dark']) {
+    const cx = await browser.newContext({ viewport: { width: 1024, height: 1366 }, colorScheme: scheme, locale: 'ru-RU' });
+    await mockNetwork(cx);
+    const px = await cx.newPage();
+    await px.goto(url, { waitUntil: 'networkidle' });
+    const th = await px.evaluate(() => document.documentElement.dataset.theme);
+    check(`Без геопозиции «Авто» следует теме устройства (${scheme})`, th === (scheme === 'light' ? 'day' : 'night'), th);
+    await cx.close();
+  }
+
+  check('Тайлы карты только OpenStreetMap', [...tileHosts].every((h) => h === 'tile.openstreetmap.org') && cartoRequests === 0, [...tileHosts].join(', ') || 'запросов тайлов не было');
 
   check('Нет ошибок JavaScript', errors.length === 0, errors.join(' | '));
 } catch (e) {

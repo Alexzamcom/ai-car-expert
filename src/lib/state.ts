@@ -71,6 +71,8 @@ export interface Settings {
   voiceURI: string;
   textScale: 'normal' | 'large' | 'xlarge';
   keepAwake: boolean;
+  /** Оформление: день, ночь или автоматически (по солнцу либо по теме устройства). */
+  theme: 'auto' | 'day' | 'night';
 }
 
 export const settingsStore = createStore<Settings>(
@@ -98,6 +100,7 @@ export const settingsStore = createStore<Settings>(
     voiceURI: '',
     textScale: 'normal',
     keepAwake: true,
+    theme: 'auto',
   },
   'settings',
 );
