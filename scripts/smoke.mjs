@@ -225,10 +225,12 @@ try {
   // Радио
   await page.click('.panel-tabs [aria-label="Музыка и радио"]');
   await page.click('.tab:has-text("Найти")');
-  await page.click('.chips .chip:has-text("Украина")');
-  await page.waitForSelector('.station-grid .station, .list-note.text-warn', { timeout: 20000 }).catch(() => {});
-  const found = await page.locator('.station-grid .station').count();
-  check(MOCK ? 'Каталог радио: только HTTPS MP3/AAC' : 'Каталог радио (реальный сервис)', MOCK ? found === 2 : found > 0, `станций: ${found}`);
+  await page.click('.panel .chips .chip:has-text("Украина")');
+  // Ждём результат именно в панели музыки (на карте может остаться чужое сообщение об ошибке).
+  await page.waitForSelector('.panel .media .station-grid .station, .panel .media .list-note.text-warn', { timeout: 30000 }).catch(() => {});
+  const found = await page.locator('.panel .media .station-grid .station').count();
+  const radioErr = found ? '' : ((await page.locator('.panel .media .list-note.text-warn').first().textContent().catch(() => '')) ?? '');
+  check(MOCK ? 'Каталог радио: только HTTPS MP3/AAC' : 'Каталог радио (реальный сервис)', MOCK ? found === 2 : found > 0, `станций: ${found}${radioErr ? ` — ${radioErr}` : ''}`);
   await page.click('.tab:has-text("Мои станции")');
   await page.locator('.station-main').first().click();
   await page
