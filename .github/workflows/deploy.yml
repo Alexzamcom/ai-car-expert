@@ -72,9 +72,15 @@ jobs:
           done
           echo "Overpass (прямоугольник у Тверской, как в приложении):"
           Q='[out:json][timeout:12];(nwr["amenity"="fuel"](55.75,37.59,55.79,37.63););out center 80;'
+          SAFARI_UA='Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'
           for s in https://overpass-api.de/api/interpreter https://overpass.private.coffee/api/interpreter https://maps.mail.ru/osm/tools/overpass/api/interpreter; do
             meta=$(curl -s -m 20 -o /tmp/op.json -w 'HTTP %{http_code}, %{time_total} с' --data-urlencode "data=$Q" "$s" || true)
             echo "$s → $meta, АЗС: $(grep -o '"amenity"' /tmp/op.json 2>/dev/null | wc -l)"
+            # Тот же запрос как из Safari на iPad: отличает блокировку клиента от блокировки IP.
+            meta=$(curl -s -m 20 -o /tmp/op.json -w 'HTTP %{http_code}, %{time_total} с' -A "$SAFARI_UA" \
+              -H 'Origin: https://alexzamcom.github.io' -H 'Referer: https://alexzamcom.github.io/ai-car-expert/' \
+              --data-urlencode "data=$Q" "$s" || true)
+            echo "  как Safari → $meta, АЗС: $(grep -o '"amenity"' /tmp/op.json 2>/dev/null | wc -l)"
           done
           echo "Radio Browser:"
           curl -s -m 10 -o /dev/null -w "all.api /json/servers → %{http_code}\n" https://all.api.radio-browser.info/json/servers || true
