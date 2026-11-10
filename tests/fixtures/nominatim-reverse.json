@@ -1,0 +1,11 @@
+{
+  "place_id": 101,
+  "lat": "55.7610",
+  "lon": "37.6200",
+  "category": "highway",
+  "type": "residential",
+  "addresstype": "road",
+  "name": "",
+  "display_name": "12, Петровка, Тверской район, Москва, Центральный федеральный округ, Россия",
+  "address": { "house_number": "12", "road": "Петровка", "suburb": "Тверской район", "city": "Москва", "state": "Москва", "country": "Россия" }
+}

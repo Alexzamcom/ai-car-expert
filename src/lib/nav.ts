@@ -1,6 +1,7 @@
 import { createStore, uid } from './store';
 import {
-  fetchRoute,
+  fetchRoutes,
+  RouteError,
   routeProgress,
   cumulative,
   stepOffsets,
@@ -16,16 +17,11 @@ import { poiAlongRoute, poiNearby, type Poi, type PoiCategory } from './poi';
 import { settingsStore } from './state';
 import { speak } from './speech';
 import { recordFix } from './trip';
+import { searchPlaces as geoSearch, reverseGeocode, coordsPlace, type Place } from './geo/geocode';
+
+export type { Place };
 
 /* ---------- Геопозиция ---------- */
-
-export interface Place {
-  id: string;
-  name: string;
-  address: string;
-  lat: number;
-  lon: number;
-}
 
 export interface GeoState {
   status: 'idle' | 'watching' | 'denied' | 'unavailable';
@@ -54,6 +50,18 @@ export const favoritesStore = createStore<Place[]>([], 'favorites');
 export const recentsStore = createStore<Place[]>([], 'recents');
 
 let watchId: number | null = null;
+let lastFix: LatLon | null = null;
+
+/** Направление движения (°) между двумя точками. */
+export function bearing(a: LatLon, b: LatLon) {
+  const r = Math.PI / 180;
+  const y = Math.sin((b.lon - a.lon) * r) * Math.cos(b.lat * r);
+  const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lon - a.lon) * r);
+  return ((Math.atan2(y, x) / r) + 360) % 360;
+}
+
+/** Точка GPS с точностью хуже этой не используется для перестроения и «прибыли». */
+export const MAX_GUIDANCE_ACCURACY = 100;
 
 export function startGeo() {
   if (watchId != null) return;
@@ -64,17 +72,23 @@ export function startGeo() {
   watchId = navigator.geolocation.watchPosition(
     (p) => {
       const speed = p.coords.speed != null && p.coords.speed >= 0 ? p.coords.speed * 3.6 : null;
+      const pos = { lat: p.coords.latitude, lon: p.coords.longitude };
+      let heading = p.coords.heading != null && !Number.isNaN(p.coords.heading) ? p.coords.heading : null;
+      // Safari часто не даёт heading — считаем по смещению, если сдвинулись заметно больше погрешности.
+      const movedEnough = !lastFix || haversine(lastFix, pos) > Math.max(8, p.coords.accuracy * 0.5);
+      if (heading == null && lastFix) heading = movedEnough ? bearing(lastFix, pos) : geoStore.get().heading;
+      if (movedEnough) lastFix = pos;
       geoStore.set({
         status: 'watching',
         lat: p.coords.latitude,
         lon: p.coords.longitude,
         accuracy: p.coords.accuracy,
         speedKmh: speed,
-        heading: p.coords.heading != null && !Number.isNaN(p.coords.heading) ? p.coords.heading : null,
+        heading,
         updated: Date.now(),
       });
       recordFix({ lat: p.coords.latitude, lon: p.coords.longitude }, p.coords.accuracy, speed, Date.now());
-      onPosition({ lat: p.coords.latitude, lon: p.coords.longitude });
+      onPosition(pos, p.coords.accuracy);
     },
     (err) => {
       geoStore.set((s) => ({ ...s, status: err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable' }));
@@ -104,31 +118,8 @@ export function geoHelp(): string {
 
 /* ---------- Поиск мест ---------- */
 
-export async function searchPlaces(query: string, near?: LatLon): Promise<Place[]> {
-  const params = new URLSearchParams({
-    q: query,
-    format: 'jsonv2',
-    limit: '8',
-    'accept-language': 'ru,uk,en',
-    addressdetails: '0',
-  });
-  if (near) {
-    const d = 1.5;
-    params.set('viewbox', `${near.lon - d},${near.lat + d},${near.lon + d},${near.lat - d}`);
-  }
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`);
-  if (!res.ok) throw new Error(`Поиск адресов недоступен (${res.status})`);
-  const data = (await res.json()) as { place_id: number; name?: string; display_name: string; lat: string; lon: string }[];
-  return data.map((r) => {
-    const [first, ...rest] = r.display_name.split(', ');
-    return {
-      id: String(r.place_id),
-      name: r.name || first,
-      address: (r.name ? r.display_name : rest.join(', ')).split(', ').slice(0, 4).join(', '),
-      lat: Number(r.lat),
-      lon: Number(r.lon),
-    };
-  });
+export function searchPlaces(query: string, near?: LatLon, signal?: AbortSignal): Promise<Place[]> {
+  return geoSearch(query, { near, lang: navLang(), signal });
 }
 
 export function addRecent(p: Place) {
@@ -161,18 +152,25 @@ export interface NavState {
   /** Промежуточная остановка (например, АЗС по пути). */
   via: Place | null;
   route: Route | null;
+  /** Все варианты от сервиса маршрутов (основной + альтернативы); route = routes[routeIndex]. */
+  routes: Route[];
+  routeIndex: number;
   status: 'idle' | 'routing' | 'preview' | 'guiding' | 'arrived';
   error: string | null;
   progress: Progress | null;
   rerouting: boolean;
+  /** Сообщение во время ведения (нет сети для перестроения и т. п.). */
+  notice: string | null;
 }
 
-export const navStore = createStore<NavState>({ dest: null, via: null, route: null, status: 'idle', error: null, progress: null, rerouting: false });
+const emptyNav = (): NavState => ({ dest: null, via: null, route: null, routes: [], routeIndex: 0, status: 'idle', error: null, progress: null, rerouting: false, notice: null });
+export const navStore = createStore<NavState>(emptyNav());
 
 let routeCache: { cum: number[]; offsets: number[] } | null = null;
 let routeAbort: AbortController | null = null;
 let lastReroute = 0;
 let offRouteCount = 0;
+let pendingReroute = false;
 const announced = new Set<string>();
 
 export function navLang(): Lang {
@@ -185,12 +183,17 @@ function setRoute(route: Route) {
   announced.clear();
 }
 
-async function buildRoute(from: LatLon, dest: Place, via?: Place | null) {
+async function buildRoutes(from: LatLon, dest: Place, via?: Place | null) {
   routeAbort?.abort();
   routeAbort = new AbortController();
-  const route = await fetchRoute(from, dest, routeAbort.signal, via ?? undefined);
-  setRoute(route);
-  return route;
+  const routes = await fetchRoutes(from, dest, { signal: routeAbort.signal, via: via ?? undefined });
+  setRoute(routes[0]);
+  return routes;
+}
+
+function routeErrorText(e: unknown) {
+  if (e instanceof RouteError) return e.message;
+  return navigator.onLine ? (e as Error).message : 'Нет интернета — маршрут построить нельзя';
 }
 
 /** Выбрать пункт назначения и построить маршрут (предпросмотр). */
@@ -198,27 +201,33 @@ export async function setDestination(dest: Place, via: Place | null = null, keep
   if (!via) addRecent(dest);
   poiStore.set(emptyPoi());
   const prevStatus = navStore.get().status;
-  const base = { dest, via, progress: null, rerouting: false };
+  pickStore.set(null);
+  const base = { dest, via, progress: null, rerouting: false, notice: null, routeIndex: 0 };
   const from = currentPos();
   if (!from) {
-    navStore.set({ ...base, route: null, status: 'preview', error: 'Нет геопозиции — маршрут построить нельзя. Можно открыть его во внешнем навигаторе.' });
+    navStore.set({ ...base, route: null, routes: [], status: 'preview', error: 'Нет геопозиции — маршрут построить нельзя. Разрешите геолокацию или откройте маршрут во внешнем навигаторе.' });
     return;
   }
-  navStore.set({ ...base, route: null, status: 'routing', error: null });
+  navStore.set({ ...base, route: null, routes: [], status: 'routing', error: null });
   try {
-    const route = await buildRoute(from, dest, via);
+    const routes = await buildRoutes(from, dest, via);
     if (navStore.get().dest !== dest) return;
     const status = keepStatus && prevStatus === 'guiding' ? 'guiding' : 'preview';
-    navStore.set({ ...base, route, status, error: null, progress: routeProgress(route, from, routeCache!) });
+    navStore.set({ ...base, route: routes[0], routes, status, error: null, progress: routeProgress(routes[0], from, routeCache!) });
   } catch (e) {
     if ((e as Error).name === 'AbortError') return;
-    navStore.set({
-      ...base,
-      route: null,
-      status: 'preview',
-      error: navigator.onLine ? (e as Error).message : 'Нет интернета — маршрут построить нельзя',
-    });
+    navStore.set({ ...base, route: null, routes: [], status: 'preview', error: routeErrorText(e) });
   }
+}
+
+/** Выбрать один из вариантов маршрута (до начала ведения). */
+export function selectRoute(i: number) {
+  const s = navStore.get();
+  const route = s.routes[i];
+  if (!route || s.status === 'guiding') return;
+  setRoute(route);
+  const pos = currentPos();
+  navStore.set({ ...s, route, routeIndex: i, progress: pos ? routeProgress(route, pos, routeCache!) : null });
 }
 
 /** Заехать по пути (АЗС, кафе) и продолжить к цели. */
@@ -236,7 +245,8 @@ export function removeStop() {
 export function startGuidance() {
   const s = navStore.get();
   if (!s.route) return;
-  navStore.set({ ...s, status: 'guiding' });
+  // Во время ведения варианты не нужны: остаётся выбранный.
+  navStore.set({ ...s, status: 'guiding', routes: [s.route], routeIndex: 0, notice: null });
   offRouteCount = 0;
   const pos = currentPos();
   if (pos) onPosition(pos);
@@ -247,14 +257,15 @@ export function startGuidance() {
 export function stopNavigation() {
   routeAbort?.abort();
   routeCache = null;
-  navStore.set({ dest: null, via: null, route: null, status: 'idle', error: null, progress: null, rerouting: false });
+  pendingReroute = false;
+  navStore.set(emptyNav());
   poiStore.set(emptyPoi());
 }
 
 const PHRASES: Record<Lang, Record<string, string>> = {
-  ru: { through: 'через', now: 'сейчас', reroute: 'Перестраиваю маршрут', arrived: 'Вы прибыли в пункт назначения' },
-  uk: { through: 'через', now: 'зараз', reroute: 'Перебудовую маршрут', arrived: 'Ви прибули до пункту призначення' },
-  en: { through: 'in', now: 'now', reroute: 'Rerouting', arrived: 'You have arrived at your destination' },
+  ru: { through: 'через', now: 'сейчас', reroute: 'Перестраиваю маршрут', arrived: 'Вы прибыли в пункт назначения', offline: 'Нет интернета, маршрут не перестроить' },
+  uk: { through: 'через', now: 'зараз', reroute: 'Перебудовую маршрут', arrived: 'Ви прибули до пункту призначення', offline: 'Немає інтернету, маршрут не перебудувати' },
+  en: { through: 'in', now: 'now', reroute: 'Rerouting', arrived: 'You have arrived at your destination', offline: 'No internet, cannot reroute' },
 };
 const t = (k: string) => PHRASES[navLang()][k];
 
@@ -263,12 +274,51 @@ function say(text: string) {
   if (s.speakNavigation) speak(text, s.speechLang);
 }
 
-function onPosition(pos: LatLon) {
+/** Перестроить маршрут от текущей точки (сход с маршрута или возврат сети). */
+function reroute(pos: LatLon) {
+  const s = navStore.get();
+  if (!s.dest) return;
+  lastReroute = Date.now();
+  offRouteCount = 0;
+  if (navigator.onLine === false) {
+    if (!pendingReroute) say(t('offline'));
+    pendingReroute = true;
+    navStore.set({ ...s, notice: 'Нет интернета: вы ушли с маршрута, перестрою, когда появится связь' });
+    return;
+  }
+  pendingReroute = false;
+  say(t('reroute'));
+  navStore.set({ ...s, rerouting: true, notice: null });
+  buildRoutes(pos, s.dest, s.via)
+    .then((routes) => {
+      const cur = navStore.get();
+      if (cur.dest !== s.dest) return;
+      navStore.set({ ...cur, route: routes[0], routes: [routes[0]], routeIndex: 0, rerouting: false, notice: null, progress: routeProgress(routes[0], pos, routeCache!) });
+    })
+    .catch((e) => {
+      if ((e as Error).name === 'AbortError') return;
+      if (!navigator.onLine) pendingReroute = true;
+      navStore.set({ ...navStore.get(), rerouting: false, notice: `${routeErrorText(e)} Повторю попытку.` });
+    });
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    const s = navStore.get();
+    const pos = currentPos();
+    if (pendingReroute && s.status === 'guiding' && pos) reroute(pos);
+    else if (s.notice) navStore.set({ ...s, notice: null });
+  });
+}
+
+function onPosition(pos: LatLon, accuracy = 20) {
   const s = navStore.get();
   if (!s.route || !routeCache || (s.status !== 'guiding' && s.status !== 'preview')) return;
   const p = routeProgress(s.route, pos, routeCache, s.progress?.segIndex ?? 0);
   navStore.set({ ...s, progress: p });
   if (s.status !== 'guiding') return;
+  // Грубая точка (вышки сотовой связи, туннель) не должна вызывать перестроение или «прибыли».
+  if (accuracy > MAX_GUIDANCE_ACCURACY) return;
 
   if (p.remainingM < 30) {
     navStore.set({ ...navStore.get(), status: 'arrived' });
@@ -277,16 +327,9 @@ function onPosition(pos: LatLon) {
   }
 
   // Сход с маршрута: 3 точки подряд дальше 60 м (с учётом точности GPS) → перестроение.
-  const acc = geoStore.get().accuracy ?? 20;
-  offRouteCount = p.offRouteM > Math.max(60, acc * 1.5) ? offRouteCount + 1 : 0;
-  if (offRouteCount >= 3 && Date.now() - lastReroute > 15000 && s.dest) {
-    lastReroute = Date.now();
-    offRouteCount = 0;
-    say(t('reroute'));
-    navStore.set({ ...navStore.get(), rerouting: true });
-    buildRoute(pos, s.dest, s.via)
-      .then((route) => navStore.set({ ...navStore.get(), route, rerouting: false, progress: routeProgress(route, pos, routeCache!) }))
-      .catch(() => navStore.set({ ...navStore.get(), rerouting: false }));
+  offRouteCount = p.offRouteM > Math.max(60, accuracy * 1.5) ? offRouteCount + 1 : 0;
+  if (offRouteCount >= 3 && Date.now() - lastReroute > (pendingReroute ? 30000 : 15000) && s.dest && !s.rerouting) {
+    reroute(pos);
     return;
   }
 
@@ -314,6 +357,72 @@ function onPosition(pos: LatLon) {
       break;
     }
   }
+}
+
+/* ---------- Выбор точки на карте (долгое нажатие, правый клик, результат поиска) ---------- */
+
+export interface PickState {
+  lat: number;
+  lon: number;
+  /** Адрес (обратное геокодирование) или результат поиска; null — пока неизвестен. */
+  place: Place | null;
+  loading: boolean;
+  /** Адрес определить не удалось — показываем координаты. */
+  failed: boolean;
+  origin: 'map' | 'search';
+}
+
+export const pickStore = createStore<PickState | null>(null);
+let pickAbort: AbortController | null = null;
+
+/** Показать точку на карте с карточкой «Маршрут сюда / Добавить остановку / Отмена». */
+export async function pickPoint(pt: LatLon, origin: PickState['origin'] = 'map', place?: Place) {
+  pickAbort?.abort();
+  if (place) {
+    pickStore.set({ lat: place.lat, lon: place.lon, place, loading: false, failed: false, origin });
+    return;
+  }
+  pickAbort = new AbortController();
+  const signal = pickAbort.signal;
+  pickStore.set({ lat: pt.lat, lon: pt.lon, place: null, loading: true, failed: false, origin });
+  try {
+    const found = await reverseGeocode(pt, { lang: navLang(), signal });
+    if (signal.aborted) return;
+    pickStore.set({ lat: pt.lat, lon: pt.lon, place: found, loading: false, failed: !found, origin });
+  } catch (e) {
+    if (signal.aborted) return;
+    void e;
+    pickStore.set({ lat: pt.lat, lon: pt.lon, place: null, loading: false, failed: true, origin });
+  }
+}
+
+export function cancelPick() {
+  pickAbort?.abort();
+  pickStore.set(null);
+}
+
+function pickedPlace(): Place | null {
+  const p = pickStore.get();
+  if (!p) return null;
+  return p.place ?? coordsPlace(p);
+}
+
+/** «Маршрут сюда». */
+export function routeToPick() {
+  const place = pickedPlace();
+  if (!place) return;
+  pickAbort?.abort();
+  pickStore.set(null);
+  return setDestination(place);
+}
+
+/** «Добавить остановку» — заезд по пути к текущей цели. */
+export function addPickAsStop() {
+  const place = pickedPlace();
+  if (!place) return;
+  pickAbort?.abort();
+  pickStore.set(null);
+  return addStop(place);
 }
 
 /* ---------- Объекты по пути ---------- */
@@ -366,7 +475,7 @@ export async function navigateToQuery(query: string): Promise<{ ok: boolean; tex
     await setDestination(results[0]);
     const s = navStore.get();
     if (s.route) {
-      return { ok: true, text: `Маршрут до «${results[0].name}»: ${fmtDistance(s.route.distance)}, около ${Math.round(s.route.duration / 60)} мин без учёта пробок.` };
+      return { ok: true, text: `Маршрут до «${results[0].name}»: ${fmtDistance(s.route.distance)}, около ${Math.round(s.route.duration / 60)} мин без учёта пробок.${s.routes.length > 1 ? ` Есть вариантов: ${s.routes.length}.` : ''}` };
     }
     return { ok: true, text: `Нашёл «${results[0].name}». ${s.error ?? ''}`.trim() };
   } catch (e) {

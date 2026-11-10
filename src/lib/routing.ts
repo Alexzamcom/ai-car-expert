@@ -1,3 +1,5 @@
+import { fetchJson, isAbort, NetError } from './geo/http';
+
 /* Маршруты: запрос к OSRM, текст манёвров, расчёт прогресса по маршруту.
    Чистые функции (без DOM) — покрыты unit-тестами. */
 
@@ -18,9 +20,36 @@ export interface Route {
   duration: number; // с (без учёта пробок)
   coords: LatLon[];
   steps: RouteStep[];
+  /** Кто построил маршрут (показываем пользователю). */
+  source?: string;
 }
 
-export const OSRM_URL = 'https://router.project-osrm.org';
+/** Сервер маршрутов с API OSRM. Публичные серверы — без гарантий доступности (docs/NAVIGATION.md). */
+export interface Router {
+  id: string;
+  name: string;
+  base: string; // …/route/v1/<profile>/…
+  profile: string;
+}
+
+export const PUBLIC_ROUTERS: Router[] = [
+  // Сервер FOSSGIS, на котором работает маршрутизация openstreetmap.org.
+  { id: 'fossgis', name: 'OSRM · FOSSGIS', base: 'https://routing.openstreetmap.de/routed-car', profile: 'driving' },
+  // Демонстрационный сервер проекта OSRM.
+  { id: 'osrm-demo', name: 'OSRM · демо-сервер', base: 'https://router.project-osrm.org', profile: 'driving' },
+];
+
+export const OSRM_URL = PUBLIC_ROUTERS[1].base;
+
+export class RouteError extends Error {
+  constructor(
+    public kind: 'no-route' | 'unavailable' | 'offline',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'RouteError';
+  }
+}
 
 interface OsrmStep {
   distance: number;
@@ -29,20 +58,18 @@ interface OsrmStep {
   ref?: string;
   maneuver: { type: string; modifier?: string; exit?: number; location: [number, number] };
 }
+interface OsrmRoute {
+  distance: number;
+  duration: number;
+  geometry: { coordinates: [number, number][] };
+  legs: { steps: OsrmStep[] }[];
+}
 
-export function parseOsrm(json: unknown): Route {
-  const data = json as {
-    code?: string;
-    message?: string;
-    routes?: { distance: number; duration: number; geometry: { coordinates: [number, number][] }; legs: { steps: OsrmStep[] }[] }[];
-  };
-  if (data.code !== 'Ok' || !data.routes?.length) {
-    throw new Error(data.code === 'NoRoute' ? 'Маршрут не найден' : data.message || 'Сервис маршрутов не ответил');
-  }
-  const r = data.routes[0];
+function toRoute(r: OsrmRoute, source?: string): Route {
   return {
     distance: r.distance,
     duration: r.duration,
+    source,
     coords: r.geometry.coordinates.map(([lon, lat]) => ({ lat, lon })),
     steps: r.legs.flatMap((leg, li) =>
       leg.steps.map((s) => ({
@@ -59,12 +86,54 @@ export function parseOsrm(json: unknown): Route {
   };
 }
 
+/** Все маршруты из ответа OSRM (основной + альтернативы). */
+export function parseOsrmAll(json: unknown, source?: string): Route[] {
+  const data = json as { code?: string; message?: string; routes?: OsrmRoute[] };
+  if (data.code === 'NoRoute' || data.code === 'NoSegment') {
+    throw new RouteError('no-route', 'Маршрут не найден: точка далеко от дорог или до неё нельзя доехать на автомобиле.');
+  }
+  if (data.code !== 'Ok' || !data.routes?.length) {
+    throw new RouteError('unavailable', data.message || 'Сервис маршрутов вернул ошибку');
+  }
+  return data.routes.filter((r) => r.geometry?.coordinates?.length >= 2).map((r) => toRoute(r, source));
+}
+
+export function parseOsrm(json: unknown): Route {
+  return parseOsrmAll(json)[0];
+}
+
+export function routeUrl(router: Router, pts: LatLon[], alternatives: boolean): string {
+  const coords = pts.map((p) => `${p.lon.toFixed(6)},${p.lat.toFixed(6)}`).join(';');
+  return `${router.base.replace(/\/$/, '')}/route/v1/${router.profile}/${coords}?overview=full&geometries=geojson&steps=true&alternatives=${alternatives}`;
+}
+
+/** Маршруты по дорогам: свой сервер (если задан), затем публичные. «Нет маршрута» не перепроверяется на другом сервере. */
+export async function fetchRoutes(
+  from: LatLon,
+  to: LatLon,
+  opts: { signal?: AbortSignal; via?: LatLon; routers?: Router[]; timeoutMs?: number } = {},
+): Promise<Route[]> {
+  const routers = opts.routers ?? PUBLIC_ROUTERS;
+  const pts = [from, ...(opts.via ? [opts.via] : []), to];
+  // Альтернативы OSRM строит только между двумя точками.
+  const alternatives = !opts.via;
+  let lastErr: Error = new RouteError('unavailable', 'Сервис маршрутов недоступен');
+  for (const r of routers) {
+    try {
+      const json = await fetchJson<unknown>(routeUrl(r, pts, alternatives), { timeoutMs: opts.timeoutMs ?? 12000, signal: opts.signal, service: r.name });
+      return parseOsrmAll(json, r.name);
+    } catch (e) {
+      if (isAbort(e, opts.signal)) throw e;
+      if (e instanceof RouteError && e.kind === 'no-route') throw e;
+      if (e instanceof NetError && e.kind === 'offline') throw new RouteError('offline', 'Нет интернета — маршрут построить нельзя');
+      lastErr = e as Error;
+    }
+  }
+  throw new RouteError('unavailable', `Не удалось построить маршрут: ${lastErr.message}. Попробуйте позже или откройте внешний навигатор.`);
+}
+
 export async function fetchRoute(from: LatLon, to: LatLon, signal?: AbortSignal, via?: LatLon): Promise<Route> {
-  const pts = [from, ...(via ? [via] : []), to].map((p) => `${p.lon},${p.lat}`).join(';');
-  const url = `${OSRM_URL}/route/v1/driving/${pts}?overview=full&geometries=geojson&steps=true&alternatives=false`;
-  const res = await fetch(url, { signal });
-  if (res.status === 429) throw new Error('Сервис маршрутов перегружен, повторите позже');
-  return parseOsrm(await res.json());
+  return (await fetchRoutes(from, to, { signal, via }))[0];
 }
 
 /* ---------- Текст манёвров ---------- */

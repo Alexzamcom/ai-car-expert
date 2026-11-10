@@ -20,7 +20,7 @@ const check = (name, ok, info = '') => {
   console.log(`${ok ? '✓' : '✗'} ${name}${info ? ` — ${info}` : ''}`);
 };
 // Сбои внешних сервисов (тайлы, потоки) видны в отчёте, но не валят проверку.
-const SOFT = new Set(['Тайлы карты', 'Радио играет', 'Маршрут (реальный сервис)', 'АЗС по пути (реальный сервис)', 'Каталог радио (реальный сервис)']);
+const SOFT = new Set(['Тайлы карты', 'Радио играет', 'Маршрут (реальный сервис)', 'АЗС по пути (реальный сервис)', 'Каталог радио (реальный сервис)', 'Украинский адрес по-украински (реальный сервис)', 'Украинский адрес по-русски (реальный сервис)', 'Маршрут сюда (реальный сервис)']);
 
 const ROUTE_POS = [
   { latitude: 55.757, longitude: 37.6156 },
@@ -35,12 +35,87 @@ async function mockNetwork(ctx) {
   await ctx.route('https://music.youtube.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<title>YouTube Music stub</title>' }));
   if (!MOCK) return;
   const json = (body) => ({ status: 200, contentType: 'application/json', body, headers: { 'Access-Control-Allow-Origin': '*' } });
-  await ctx.route('**/router.project-osrm.org/**', (r) => r.fulfill(json(fixture('osrm-route.json'))));
-  await ctx.route('**/nominatim.openstreetmap.org/**', (r) => r.fulfill(json(fixture('nominatim.json'))));
+  // Основной сервер маршрутов (FOSSGIS) — с вариантами; демо-сервер OSRM — запасной.
+  const osrm = (r) => r.fulfill(json(fixture(r.request().url().includes('alternatives=true') ? 'osrm-alternatives.json' : 'osrm-route.json')));
+  await ctx.route('**/routing.openstreetmap.de/**', osrm);
+  await ctx.route('**/router.project-osrm.org/**', osrm);
+  await ctx.route('**/nominatim.openstreetmap.org/**', (r) => r.fulfill(json(fixture(r.request().url().includes('/reverse') ? 'nominatim-reverse.json' : 'nominatim.json'))));
+  await ctx.route('**/photon.komoot.io/**', (r) => r.fulfill(json('{"features":[]}')));
   await ctx.route('**/overpass-api.de/**', (r) => r.fulfill(json(fixture('overpass-fuel.json'))));
   await ctx.route('**/*.api.radio-browser.info/**', (r) =>
     r.fulfill(json(r.request().url().includes('/json/servers') ? JSON.stringify([{ name: 'de1.api.radio-browser.info' }]) : fixture('radio-browser.json'))),
   );
+}
+
+/* ---------- Долгое нажатие на карте (сенсорные события через CDP) ---------- */
+
+async function touch(cdp, type, points) {
+  await cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(([x, y], i) => ({ x, y, id: i + 1, radiusX: 4, radiusY: 4, force: 1 })) });
+}
+
+/** Свободная точка карты (не под кнопками и карточками). */
+async function freeMapPoint(page, fx = 0.42, fy = 0.42) {
+  const b = await page.locator('.drive-map .leaflet-container').boundingBox();
+  return [Math.round(b.x + b.width * fx), Math.round(b.y + b.height * fy)];
+}
+
+const pickVisible = (page) => page.locator('.pick-card').isVisible().catch(() => false);
+
+async function longPress(cdp, page, [x, y], ms = 900) {
+  await touch(cdp, 'touchStart', [[x, y]]);
+  await page.waitForTimeout(ms);
+  await touch(cdp, 'touchEnd', []);
+}
+
+/** Полный набор жестов: долгое нажатие, отмены сдвигом, двумя пальцами, коротким касанием, по кнопке. */
+async function checkLongPress(name, ctx, page, { full = false } = {}) {
+  const cdp = await ctx.newCDPSession(page);
+  const pt = await freeMapPoint(page);
+  if (full) {
+    await touch(cdp, 'touchStart', [pt]);
+    await page.waitForTimeout(200);
+    await touch(cdp, 'touchEnd', []);
+    await page.waitForTimeout(700);
+    check(`${name}: короткое касание не выбирает точку`, !(await pickVisible(page)));
+
+    // Сдвиг карты пальцем
+    const center0 = await page.evaluate(() => document.querySelector('.leaflet-map-pane')?.style.transform ?? '');
+    await touch(cdp, 'touchStart', [pt]);
+    for (let i = 1; i <= 6; i++) {
+      await page.waitForTimeout(40);
+      await touch(cdp, 'touchMove', [[pt[0] + i * 15, pt[1] + i * 10]]);
+    }
+    await page.waitForTimeout(800);
+    await touch(cdp, 'touchEnd', []);
+    await page.waitForTimeout(300);
+    const moved = (await page.evaluate(() => document.querySelector('.leaflet-map-pane')?.style.transform ?? '')) !== center0;
+    check(`${name}: сдвиг карты не выбирает точку`, !(await pickVisible(page)), moved ? 'карта сдвинулась' : 'карта не сдвинулась');
+
+    // Два пальца (масштаб / прокрутка двумя пальцами)
+    await touch(cdp, 'touchStart', [pt, [pt[0] + 120, pt[1] + 40]]);
+    await page.waitForTimeout(900);
+    await touch(cdp, 'touchEnd', []);
+    await page.waitForTimeout(300);
+    check(`${name}: жест двумя пальцами не выбирает точку`, !(await pickVisible(page)));
+
+    // Долгое нажатие на кнопку карты
+    const ctl = await page.locator('.map-ctl').last().boundingBox();
+    await longPress(cdp, page, [ctl.x + ctl.width / 2, ctl.y + ctl.height / 2]);
+    await page.waitForTimeout(300);
+    check(`${name}: долгое нажатие на кнопку карты не выбирает точку`, !(await pickVisible(page)));
+  }
+  await longPress(cdp, page, pt);
+  await page.waitForSelector('.pick-card', { timeout: 3000 }).catch(() => {});
+  const shown = await pickVisible(page);
+  await page.waitForFunction(() => !document.querySelector('.pick-card .dest-name')?.textContent?.includes('Определяю'), null, { timeout: 12000 }).catch(() => {});
+  const title = shown ? await page.locator('.pick-card .dest-name').textContent() : '';
+  const meta = shown ? await page.locator('.pick-card').innerText() : '';
+  check(`${name}: долгое нажатие выбирает точку`, shown && (await page.locator('.map-dest-pin.is-pick').count()) === 1, title);
+  check(`${name}: карточка точки — адрес или координаты`, /\d+\.\d{4,}, \d+\.\d{4,}/.test(meta) && (!MOCK || meta.includes('Петровка')), meta.replace(/\n/g, ' · ').slice(0, 120));
+  check(`${name}: кнопки «Маршрут сюда» и «Отмена»`, (await page.locator('.pick-card button:has-text("Маршрут сюда")').count()) === 1 && (await page.locator('.pick-card button:has-text("Отмена")').count()) === 1);
+  const pr = await layoutProblems(page);
+  check(`${name}: карточка точки без наложений`, !pr.length, pr.join('; '));
+  return cdp;
 }
 
 /** Пересечения элементов поверх карты и горизонтальная прокрутка страницы. */
@@ -309,7 +384,42 @@ try {
   check('iPad: без наложений', !problems.length, problems.join('; '));
   await page.screenshot({ path: `${out}/01-ipad-home.png` });
 
-  // Маршрут
+  // Выбор точки долгим нажатием и маршрут сюда
+  const cdp = await checkLongPress('iPad', ctx, page, { full: true });
+  await page.screenshot({ path: `${out}/02a-ipad-pick.png` });
+  await page.click('.pick-card button:has-text("Отмена")');
+  check('iPad: «Отмена» убирает точку', !(await pickVisible(page)) && (await page.locator('.map-dest-pin.is-pick').count()) === 0);
+  await longPress(cdp, page, await freeMapPoint(page, 0.6, 0.35));
+  await page.waitForSelector('.pick-card button:has-text("Маршрут сюда")', { timeout: 3000 });
+  await page.click('.pick-card button:has-text("Маршрут сюда")');
+  await page.waitForSelector('.route-card .btn-primary, .route-card .route-error', { timeout: 20000 }).catch(() => {});
+  {
+    const routed = (await page.locator('.route-card .btn-primary').count()) > 0;
+    const vertices = await page.evaluate(() => (document.querySelector('path.route-main')?.getAttribute('d')?.match(/L/g) ?? []).length);
+    check(MOCK ? 'Маршрут сюда: построен по дорогам' : 'Маршрут (реальный сервис)', routed && vertices > 1, `${vertices + 1} точек линии; ${(await page.locator('.route-card .muted.small').first().textContent().catch(() => '')) ?? ''}`);
+    const info = (await page.locator('.route-card .muted.small').first().textContent().catch(() => '')) ?? '';
+    check('Маршрут: расстояние, время в пути и прибытие', /км|м/.test(info) && /мин|ч/.test(info) && /прибытие \d\d:\d\d/.test(info), info);
+    if (MOCK) {
+      const chips = page.locator('.route-alt-chip');
+      check('Варианты маршрута показаны', (await chips.count()) === 2 && (await page.locator('path.route-alt').count()) === 2);
+      await chips.nth(1).click();
+      check('Выбор варианта маршрута', (await chips.nth(1).getAttribute('aria-checked')) === 'true');
+      await chips.nth(0).click();
+    }
+    await page.screenshot({ path: `${out}/02b-ipad-route-alternatives.png` });
+    // Остановка по пути долгим нажатием
+    await longPress(cdp, page, await freeMapPoint(page, 0.3, 0.3));
+    await page.waitForSelector('.pick-card button:has-text("Добавить остановку")', { timeout: 3000 }).catch(() => {});
+    const canStop = (await page.locator('.pick-card button:has-text("Добавить остановку")').count()) === 1;
+    if (canStop) await page.click('.pick-card button:has-text("Добавить остановку")');
+    await page.waitForSelector('.via-line', { timeout: 15000 }).catch(() => {});
+    check('Долгое нажатие → «Добавить остановку»', canStop && (await page.locator('.via-line').isVisible().catch(() => false)));
+    problems = await layoutProblems(page);
+    check('Маршрут с остановкой без наложений', !problems.length, problems.join('; '));
+    await page.locator('.route-card button[aria-label="Сбросить маршрут"]').click().catch(() => {});
+  }
+
+  // Маршрут через поиск
   await page.fill('#map-search', 'Театр Сатиры');
   await page.press('#map-search', 'Enter');
   const firstResult = page.locator('.map-panel .place-row').first();
@@ -318,6 +428,9 @@ try {
   check(MOCK ? 'Поиск адреса' : 'Поиск адреса (реальный сервис)', haveResults);
   if (haveResults) {
     await firstResult.click();
+    await page.waitForSelector('.pick-card', { timeout: 5000 }).catch(() => {});
+    check('Результат поиска показан точкой с карточкой', (await pickVisible(page)) && (await page.locator('.map-dest-pin.is-pick').count()) === 1, (await page.locator('.pick-card .dest-name').textContent().catch(() => '')) ?? '');
+    await page.click('.pick-card button:has-text("Маршрут сюда")');
     await page.waitForSelector('.route-card .btn-primary, .route-card .text-warn', { timeout: 20000 }).catch(() => {});
     const routed = (await page.locator('.route-card .btn-primary').count()) > 0;
     check(MOCK ? 'Маршрут построен' : 'Маршрут (реальный сервис)', routed, (await page.locator('.route-card .muted.small').first().textContent().catch(() => '')) ?? '');
@@ -327,6 +440,24 @@ try {
     if (routed) {
       await page.click('.route-card .btn-primary');
       await page.waitForSelector('.maneuver', { timeout: 5000 });
+      const overviewBtn = await page.locator('.route-guiding button:has-text("К машине")').isVisible().catch(() => false);
+      await page.waitForTimeout(3600);
+      const following = !(await page.locator('.route-guiding button:has-text("машине")').isVisible().catch(() => false));
+      check('Начало ведения: обзор маршрута, затем следование за машиной', overviewBtn && following);
+      // Пользователь сдвинул карту — кнопка возврата к машине
+      const dp = await freeMapPoint(page, 0.5, 0.5);
+      await touch(cdp, 'touchStart', [dp]);
+      for (let i = 1; i <= 6; i++) {
+        await page.waitForTimeout(30);
+        await touch(cdp, 'touchMove', [[dp[0] - i * 20, dp[1] - i * 12]]);
+      }
+      await touch(cdp, 'touchEnd', []);
+      await page.waitForTimeout(400);
+      const back = page.locator('.route-guiding button:has-text("Вернуться к машине")');
+      const backShown = await back.isVisible().catch(() => false);
+      if (backShown) await back.click();
+      await page.waitForTimeout(300);
+      check('Ведение: «Вернуться к машине» после сдвига карты', backShown && !(await back.isVisible().catch(() => false)));
       const instr = await page.locator('.maneuver-instr').textContent();
       check('Ведение: манёвр показан', Boolean(instr), instr);
       if (MOCK) check('Ведение: первый манёвр — поворот направо', instr?.includes('направо'), instr);
@@ -475,9 +606,12 @@ try {
     await ph.waitForTimeout(600);
     let pr = await layoutProblems(ph);
     check(`${name}: главный экран без наложений`, !pr.length, pr.join('; '));
+    await checkLongPress(name, c, ph);
+    await ph.click('.pick-card button:has-text("Отмена")').catch(() => {});
     await ph.fill('#map-search', 'Театр Сатиры');
     await ph.press('#map-search', 'Enter');
     await ph.locator('.map-panel .place-row').first().click({ timeout: 15000 }).catch(() => {});
+    await ph.locator('.pick-card button:has-text("Маршрут сюда")').click({ timeout: 5000 }).catch(() => {});
     await ph.waitForSelector('.route-card', { timeout: 15000 }).catch(() => {});
     await ph.waitForTimeout(500);
     pr = await layoutProblems(ph);
@@ -493,6 +627,40 @@ try {
     await checkThemes(name, ph, out, slug);
     await checkYouTubeMusic(name, c, ph, out, slug);
     await c.close();
+  }
+
+  /* ---------- Компьютер: правый клик ---------- */
+  {
+    const { ctx: dc, page: dp } = await newPage({ viewport: { width: 1440, height: 900 } });
+    await dp.goto(url, { waitUntil: 'networkidle' });
+    await dp.waitForSelector('.drive-map .leaflet-container');
+    const [x, y] = await freeMapPoint(dp);
+    await dp.mouse.click(x, y);
+    await dp.waitForTimeout(400);
+    check('Компьютер: обычный клик не выбирает точку', !(await pickVisible(dp)));
+    await dp.mouse.click(x, y, { button: 'right' });
+    await dp.waitForSelector('.pick-card', { timeout: 3000 }).catch(() => {});
+    check('Компьютер: правый клик выбирает точку', await pickVisible(dp));
+    await dp.click('.pick-card button:has-text("Маршрут сюда")').catch(() => {});
+    await dp.waitForSelector('.route-card .btn-primary', { timeout: 20000 }).catch(() => {});
+    check(MOCK ? 'Компьютер: маршрут к точке' : 'Маршрут сюда (реальный сервис)', (await dp.locator('.route-card .btn-primary').count()) > 0,
+      (await dp.locator('.route-card').innerText().catch(() => '')).replace(/\n/g, ' · ').slice(0, 160));
+    if (!MOCK) {
+      // Украинские адреса: на украинском и на русском (реальный Nominatim).
+      await dp.locator('.route-card button[aria-label="Сбросить маршрут"]').click().catch(() => {});
+      for (const [label, q, re] of [
+        ['Украинский адрес по-украински (реальный сервис)', 'Хрещатик 22, Київ', /Хрещатик|Крещатик/],
+        ['Украинский адрес по-русски (реальный сервис)', 'Крещатик 22, Киев', /Хрещатик|Крещатик/],
+      ]) {
+        await dp.fill('#map-search', q);
+        await dp.press('#map-search', 'Enter');
+        await dp.waitForTimeout(1500);
+        await dp.waitForFunction(() => !document.querySelector('.map-panel')?.textContent?.includes('Поиск…'), null, { timeout: 15000 }).catch(() => {});
+        const txt = (await dp.locator('.map-panel').innerText().catch(() => '')) ?? '';
+        check(label, re.test(txt) && /Київ|Киев|Kyiv/.test(txt), txt.replace(/\n/g, ' · ').slice(0, 160));
+      }
+    }
+    await dc.close();
   }
 
   for (const scheme of ['light', 'dark']) {

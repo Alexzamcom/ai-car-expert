@@ -25,8 +25,16 @@ import {
   geoHelp,
   navLang,
   currentPos,
+  pickStore,
+  pickPoint,
+  cancelPick,
+  routeToPick,
+  addPickAsStop,
+  selectRoute,
   type Place,
 } from '../lib/nav';
+import { LongPressDetector } from '../lib/geo/longpress';
+import { fmtCoords } from '../lib/geo/geocode';
 import { stepText, stepIcon, fmtDistance, fmtDuration, haversine } from '../lib/routing';
 import { POI_CATEGORIES, type PoiCategory, type Poi } from '../lib/poi';
 import { toast } from '../lib/state';
@@ -39,21 +47,44 @@ export const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/co
 
 const meIcon = L.divIcon({ className: 'map-me', html: '<div class="map-me-dot"><div class="map-me-cone"></div></div>', iconSize: [28, 28], iconAnchor: [14, 14] });
 const destIcon = L.divIcon({ className: 'map-dest', html: '<div class="map-dest-pin"></div>', iconSize: [36, 46], iconAnchor: [18, 44] });
+const pickIcon = L.divIcon({ className: 'map-dest', html: '<div class="map-dest-pin is-pick"></div>', iconSize: [36, 46], iconAnchor: [18, 44] });
 const viaIcon = L.divIcon({ className: 'map-dest', html: '<div class="map-dest-pin is-via"></div>', iconSize: [30, 40], iconAnchor: [15, 38] });
 const poiIcon = (c: PoiCategory) =>
   L.divIcon({ className: 'map-poi', html: `<div class="map-poi-dot poi-${c}"></div>`, iconSize: [22, 22], iconAnchor: [11, 11] });
 
 const POI_ICONS: Record<PoiCategory, 'fuel' | 'cup' | 'parking' | 'clock'> = { fuel: 'fuel', food: 'cup', parking: 'parking', rest: 'clock' };
 
+/** Сколько показываем весь маршрут после «Поехали», прежде чем камера пойдёт за машиной. */
+export const OVERVIEW_MS = 3000;
+
 function eta(sec: number) {
   return new Date(Date.now() + sec * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 }
 
+/** Показать область так, чтобы её не закрывали поиск сверху, кнопки справа и карточка снизу. */
+function fitVisible(m: L.Map, b: L.LatLngBounds, ui: HTMLElement | null) {
+  const box = m.getContainer().getBoundingClientRect();
+  const r = (sel: string) => ui?.querySelector<HTMLElement>(sel)?.getBoundingClientRect();
+  const top = r('.map-top');
+  const cards = r('.map-cards');
+  const ctl = r('.map-controls');
+  const padTop = top && top.height ? top.bottom - box.top + 16 : 40;
+  const padBottom = cards && cards.height ? box.bottom - cards.top + 16 : 40;
+  const padRight = ctl && ctl.width ? box.right - ctl.left + 12 : 40;
+  // Если места почти не осталось (низкий экран) — хотя бы часть карты.
+  const free = box.height - padTop - padBottom;
+  const k = free < 120 ? 0.4 : 1;
+  m.fitBounds(b, { paddingTopLeft: [40, padTop * k], paddingBottomRight: [padRight, padBottom * k], maxZoom: 16 });
+}
+
 export function Navigation() {
+  const uiEl = useRef<HTMLDivElement>(null);
   const mapEl = useRef<HTMLDivElement>(null);
   const themeOnly = useRef(false);
+  const fitted = useRef<unknown>(null);
   const map = useRef<L.Map | null>(null);
-  const layers = useRef<{ me?: L.Marker; dest?: L.Marker; via?: L.Marker; route?: L.LayerGroup; poi?: L.LayerGroup }>({});
+  const layers = useRef<{ me?: L.Marker; dest?: L.Marker; via?: L.Marker; pick?: L.Marker; route?: L.LayerGroup; poi?: L.LayerGroup }>({});
+  const pick = useStore(pickStore);
   const geo = useStore(geoStore);
   const nav = useStore(navStore);
   const poi = useStore(poiStore);
@@ -83,11 +114,60 @@ export function Navigation() {
     L.tileLayer(OSM_TILES, { maxZoom: 19, attribution: OSM_ATTRIBUTION }).addTo(m);
     m.on('dragstart', () => setFollow(false));
     map.current = m;
+
+    // Выбор точки: долгое нажатие пальцем (iPad, iPhone, Android) или правый клик мышью.
+    const el = mapEl.current;
+    const ignore = (t: EventTarget | null) => !!(t as HTMLElement | null)?.closest?.('.leaflet-marker-icon, .leaflet-control, .leaflet-interactive');
+    const lp = new LongPressDetector({
+      delay: 600,
+      tolerance: 10,
+      onLongPress: (x, y) => {
+        const r = el.getBoundingClientRect();
+        const ll = m.containerPointToLatLng([x - r.left, y - r.top]);
+        navigator.vibrate?.(25);
+        void pickPoint({ lat: ll.lat, lon: ll.lng });
+      },
+    });
+    let lastTouch = 0;
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') return;
+      lastTouch = Date.now();
+      if (ignore(e.target)) return lp.reset();
+      lp.down(e.pointerId, e.clientX, e.clientY);
+    };
+    const onMove = (e: PointerEvent) => e.pointerType !== 'mouse' && lp.move(e.pointerId, e.clientX, e.clientY);
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') return;
+      lastTouch = Date.now();
+      lp.up(e.pointerId);
+    };
+    const onCancel = () => lp.reset();
+    // capture: Leaflet останавливает часть событий на своих обработчиках.
+    el.addEventListener('pointerdown', onDown, true);
+    el.addEventListener('pointermove', onMove, true);
+    el.addEventListener('pointerup', onUp, true);
+    el.addEventListener('pointercancel', onCancel, true);
+    // Касание вторым пальцем без pointer-событий (старый WebKit) — тоже отмена.
+    const onTouch = (e: TouchEvent) => e.touches.length > 1 && lp.reset();
+    el.addEventListener('touchstart', onTouch, { capture: true, passive: true });
+    m.on('zoomstart', () => lp.cancel());
+    m.on('contextmenu', (e: L.LeafletMouseEvent) => {
+      // На сенсорных экранах системный contextmenu дублирует долгое нажатие — его уже обработали.
+      if (Date.now() - lastTouch < 1500 || Date.now() - lp.lastFired < 1500) return;
+      void pickPoint({ lat: e.latlng.lat, lon: e.latlng.lng });
+    });
+
     const ro = new ResizeObserver(() => m.invalidateSize());
     ro.observe(mapEl.current);
     startGeo();
     return () => {
       ro.disconnect();
+      lp.reset();
+      el.removeEventListener('pointerdown', onDown, true);
+      el.removeEventListener('pointermove', onMove, true);
+      el.removeEventListener('pointerup', onUp, true);
+      el.removeEventListener('pointercancel', onCancel, true);
+      el.removeEventListener('touchstart', onTouch, true);
       m.remove();
       map.current = null;
       layers.current = {};
@@ -122,20 +202,52 @@ export function Navigation() {
     if (nav.via) l.via = L.marker([nav.via.lat, nav.via.lon], { icon: viaIcon }).addTo(m);
     if (nav.route) {
       const pts = nav.route.coords.map((c) => [c.lat, c.lon] as L.LatLngTuple);
+      const tk = THEMES[theme.active];
+      // Альтернативы — серые линии под основной; нажатие выбирает вариант.
+      const alts = nav.status === 'guiding' ? [] : nav.routes.map((r, i) => ({ r, i })).filter(({ i }) => i !== nav.routeIndex);
+      const altLines = alts.flatMap(({ r, i }) => {
+        const ap = r.coords.map((c) => [c.lat, c.lon] as L.LatLngTuple);
+        return [
+          L.polyline(ap, { color: tk['route-casing'], weight: 10, opacity: 0.55, className: 'route-alt' }).on('click', () => selectRoute(i)),
+          L.polyline(ap, { color: tk.muted, weight: 6, opacity: 0.8, className: 'route-alt' }).on('click', () => selectRoute(i)),
+        ];
+      });
       l.route = L.layerGroup([
-        L.polyline(pts, { color: THEMES[theme.active]['route-casing'], weight: 11, opacity: 0.9, interactive: false }),
-        L.polyline(pts, { color: THEMES[theme.active].route, weight: 7, opacity: 0.95, interactive: false }),
+        ...altLines,
+        L.polyline(pts, { color: tk['route-casing'], weight: 11, opacity: 0.9, interactive: false }),
+        L.polyline(pts, { color: tk.route, weight: 7, opacity: 0.95, interactive: false, className: 'route-main' }),
       ]).addTo(m);
-      if (nav.status === 'preview' && !themeOnly.current) {
+      // Камера подстраивается под новый набор вариантов, но не при выборе варианта или смене темы.
+      if (nav.status === 'preview' && !themeOnly.current && fitted.current !== nav.routes) {
+        fitted.current = nav.routes;
         setFollow(false);
-        m.fitBounds(L.latLngBounds(pts), { padding: [60, 60], maxZoom: 16 });
+        const b = L.latLngBounds(pts);
+        alts.forEach(({ r }) => r.coords.forEach((c) => b.extend([c.lat, c.lon])));
+        // Карточка маршрута отрисовывается в этом же кадре — меряем после него.
+        requestAnimationFrame(() => fitVisible(m, b, uiEl.current));
       }
     } else if (nav.dest && nav.status === 'preview') {
       setFollow(false);
       m.setView([nav.dest.lat, nav.dest.lon], 15);
     }
     themeOnly.current = false;
-  }, [nav.route, nav.dest, nav.via, nav.status, theme.active]);
+  }, [nav.route, nav.routes, nav.routeIndex, nav.dest, nav.via, nav.status, theme.active]);
+
+  // Выбранная точка (долгое нажатие / результат поиска)
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    layers.current.pick?.remove();
+    layers.current.pick = undefined;
+    if (!pick) return;
+    layers.current.pick = L.marker([pick.lat, pick.lon], { icon: pickIcon, interactive: false, zIndexOffset: 900 }).addTo(m);
+    if (pick.origin === 'search') {
+      setFollow(false);
+      m.setView([pick.lat, pick.lon], Math.max(m.getZoom(), 16));
+    } else if (!m.getBounds().pad(-0.15).contains([pick.lat, pick.lon])) {
+      m.panTo([pick.lat, pick.lon]);
+    }
+  }, [pick?.lat, pick?.lon, pick?.origin, pick]);
 
   // Смена темы перерисовывает линию маршрута, но не двигает камеру.
   const prevTheme = useRef(theme.active);
@@ -144,10 +256,38 @@ export function Navigation() {
     themeOnly.current = true;
   }
 
-  // Начало ведения — камера следует за машиной
+  // Начало ведения: сначала весь маршрут, затем камера следует за машиной.
+  const [overview, setOverview] = useState(false);
   useEffect(() => {
-    if (guiding) setFollow(true);
+    const m = map.current;
+    if (!guiding) {
+      setOverview(false);
+      return;
+    }
+    const r = navStore.get().route;
+    if (!m || !r) {
+      setFollow(true);
+      return;
+    }
+    setFollow(false);
+    setOverview(true);
+    const rb = L.latLngBounds(r.coords.map((c) => [c.lat, c.lon] as L.LatLngTuple));
+    requestAnimationFrame(() => fitVisible(m, rb, uiEl.current));
+    const t = setTimeout(() => {
+      setOverview(false);
+      setFollow(true);
+    }, OVERVIEW_MS);
+    return () => clearTimeout(t);
   }, [guiding]);
+
+  const recenter = () => {
+    setOverview(false);
+    setFollow(true);
+    startGeo();
+    if (geo.lat != null && geo.lon != null) map.current?.setView([geo.lat, geo.lon], guiding ? 17 : 16);
+    else if (geo.status === 'denied') toast(`Геопозиция запрещена. ${geoHelp()}`, 'warn');
+    else toast('Ищу геопозицию…');
+  };
 
   // Объекты по пути
   useEffect(() => {
@@ -188,6 +328,13 @@ export function Navigation() {
     }
   }
 
+  /** Результат поиска: точка на карте и карточка с «Маршрут сюда». */
+  function showPlace(p: Place) {
+    setPanelOpen(false);
+    (document.activeElement as HTMLElement | null)?.blur();
+    void pickPoint(p, 'search', p);
+  }
+
   function selectPlace(p: Place) {
     setPanelOpen(false);
     setShowSteps(false);
@@ -206,7 +353,7 @@ export function Navigation() {
     <div className="navigation">
       <div ref={mapEl} className="map" />
 
-      <div className={`map-ui ${nav.dest && !guiding ? 'has-dest' : ''} ${nav.dest || poi.category ? 'has-card' : ''}`}>
+      <div ref={uiEl} className={`map-ui ${(nav.dest && !guiding) || pick ? 'has-dest' : ''} ${nav.dest || poi.category || pick ? 'has-card' : ''}`}>
         {/* Верх: поиск или манёвр */}
         <div className="map-top">
           {guiding && step && nav.progress ? (
@@ -224,6 +371,7 @@ export function Navigation() {
                 )}
               </div>
               {nav.rerouting && <span className="badge badge-warn">Перестраиваю…</span>}
+              {nav.notice && !nav.rerouting && <span className="badge badge-warn maneuver-notice">{nav.notice}</span>}
             </div>
           ) : (
             <form
@@ -266,16 +414,20 @@ export function Navigation() {
             <div className="map-panel">
               {searching && <div className="list-note">Поиск…</div>}
               {error && <div className="list-note text-warn">{error}</div>}
-              {results?.map((p) => (
-                <button key={p.id} className="place-row" onClick={() => selectPlace(p)}>
-                  <Icon name="gps" size="1.5rem" />
-                  <span>
-                    <strong>{p.name}</strong>
-                    <small>{p.address}</small>
-                  </span>
-                </button>
-              ))}
-              {!results && (
+              {results?.map((p) => {
+                const d = geo.lat != null && geo.lon != null ? haversine({ lat: geo.lat, lon: geo.lon }, p) : null;
+                return (
+                  <button key={p.id} className="place-row" onClick={() => showPlace(p)}>
+                    <Icon name="gps" size="1.5rem" />
+                    <span>
+                      <strong>{p.name}</strong>
+                      <small>{[p.kind, p.address].filter(Boolean).join(' · ')}</small>
+                    </span>
+                    {d != null && <small className="place-dist">{fmtDistance(d, lang)}</small>}
+                  </button>
+                );
+              })}
+              {!results && !searching && (
                 <>
                   <div className="poi-chips">
                     {(Object.keys(POI_CATEGORIES) as PoiCategory[]).map((c) => (
@@ -312,7 +464,7 @@ export function Navigation() {
                     </button>
                   ))}
                   {!favorites.length && !recents.length && (
-                    <div className="list-note">Введите адрес или скажите «Маршрут до …»</div>
+                    <div className="list-note">Введите адрес или скажите «Маршрут до …». Или зажмите палец на карте, чтобы выбрать точку.</div>
                   )}
                 </>
               )}
@@ -328,16 +480,7 @@ export function Navigation() {
           <button className="map-ctl" onClick={() => zoom(-1)} aria-label="Отдалить">
             <span className="map-minus" />
           </button>
-          <button
-            className={`map-ctl ${follow ? 'is-active' : ''}`}
-            onClick={() => {
-              setFollow(true);
-              startGeo();
-              if (geo.lat != null && geo.lon != null) map.current?.setView([geo.lat, geo.lon], guiding ? 17 : 16);
-              else if (geo.status === 'denied') toast(`Геопозиция запрещена. ${geoHelp()}`, 'warn');
-            }}
-            aria-label="Моё местоположение"
-          >
+          <button className={`map-ctl ${follow ? 'is-active' : ''}`} onClick={recenter} aria-label="Моё местоположение">
             <Icon name="locate" size="1.7rem" />
           </button>
         </div>
@@ -392,7 +535,40 @@ export function Navigation() {
               </div>
             )}
 
-            {nav.dest && !poi.category && (
+            {pick && (
+              <div className="pick-card card-float" role="dialog" aria-label="Выбранная точка">
+                <div className="route-head">
+                  <div className="route-title">
+                    <div className="dest-name">
+                      {pick.place ? pick.place.name : pick.loading ? 'Определяю адрес…' : 'Точка на карте'}
+                    </div>
+                    <div className="muted small">
+                      {pick.place?.address || (pick.failed ? 'Адрес не определён · ' : '')}
+                      {!pick.place?.address && fmtCoords(pick)}
+                    </div>
+                    <div className="muted small pick-meta">
+                      {pick.place?.address ? `${fmtCoords(pick)}` : ''}
+                      {geo.lat != null && geo.lon != null ? `${pick.place?.address ? ' · ' : ''}${fmtDistance(haversine({ lat: geo.lat, lon: geo.lon }, pick), lang)} по прямой` : ''}
+                    </div>
+                  </div>
+                </div>
+                <div className="route-actions pick-actions">
+                  <button className="btn btn-primary btn-lg" onClick={() => void routeToPick()}>
+                    <Icon name="navigate" /> Маршрут сюда
+                  </button>
+                  {nav.dest && (
+                    <button className="btn btn-lg" onClick={() => void addPickAsStop()}>
+                      <Icon name="flag" /> Добавить остановку
+                    </button>
+                  )}
+                  <button className="btn btn-lg" onClick={cancelPick}>
+                    Отмена
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {nav.dest && !poi.category && !pick && (
               <div className={`route-card card-float ${guiding ? 'is-guiding' : ''}`}>
                 {guiding && nav.route && nav.progress ? (
                   <div className="route-guiding">
@@ -409,6 +585,11 @@ export function Navigation() {
                       <small>осталось</small>
                     </div>
                     <span className="spacer" />
+                    {!follow && (
+                      <button className="btn btn-primary" onClick={recenter}>
+                        <Icon name="locate" /> {overview ? 'К машине' : 'Вернуться к машине'}
+                      </button>
+                    )}
                     <button className="btn" onClick={() => void findPoi('fuel')} aria-label="АЗС по пути">
                       <Icon name="fuel" /> АЗС
                     </button>
@@ -446,7 +627,22 @@ export function Navigation() {
                         <Icon name="close" />
                       </button>
                     </div>
-                    {nav.error && <div className="text-warn small">{nav.error}</div>}
+                    {nav.error && <div className="text-warn small route-error">{nav.error}</div>}
+                    {nav.routes.length > 1 && nav.status === 'preview' && (
+                      <div className="route-alts" role="radiogroup" aria-label="Варианты маршрута">
+                        {nav.routes.map((r, i) => (
+                          <button
+                            key={i}
+                            role="radio"
+                            aria-checked={i === nav.routeIndex}
+                            className={`chip route-alt-chip ${i === nav.routeIndex ? 'is-active' : ''}`}
+                            onClick={() => selectRoute(i)}
+                          >
+                            <strong>{fmtDuration(r.duration, lang)}</strong> · {fmtDistance(r.distance, lang)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     {nav.status === 'arrived' && <div className="text-ok">Вы прибыли</div>}
                     <div className="route-actions">
                       {nav.route && nav.status !== 'arrived' && (
@@ -494,7 +690,11 @@ export function Navigation() {
                         ))}
                       </ol>
                     )}
-                    {nav.route && <div className="muted small">Маршрут OSRM по данным OpenStreetMap, без учёта пробок.</div>}
+                    {nav.route && (
+                      <div className="muted small">
+                        Маршрут по дорогам: {nav.route.source ?? 'OSRM'}, данные OpenStreetMap. Время без учёта пробок.
+                      </div>
+                    )}
                   </>
                 )}
               </div>
