@@ -783,6 +783,9 @@ textarea.input { padding: 14px 16px; resize: none; }
 
 .navigation { position: absolute; inset: 0; container-type: size; container-name: map; }
 .map { position: absolute; inset: 0; background: var(--map-bg); }
+/* Долгое нажатие на карте не должно выделять текст или открывать системное меню iOS. */
+.map { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.leaflet-interactive.route-alt { cursor: pointer; }
 .map.leaflet-container { background: var(--map-bg); font: inherit; }
 .leaflet-control-attribution { background: var(--overlay) !important; color: var(--muted) !important; font-size: 10px; }
 .leaflet-control-attribution a { color: var(--text-2) !important; }
@@ -914,6 +917,11 @@ textarea.input { padding: 14px 16px; resize: none; }
 .route-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .route-actions .btn { flex: 1 1 auto; }
 .route-guiding { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; }
+.route-alts { display: flex; flex-wrap: wrap; gap: 8px; }
+.route-alt-chip { min-height: 48px; padding: 0 16px; }
+.pick-actions .btn-primary { flex: 2 1 auto; }
+.place-dist { margin-left: auto; color: var(--muted); font-size: 0.8rem; white-space: nowrap; flex: none; }
+.maneuver-notice { white-space: normal; max-width: 16rem; }
 .route-stat { display: flex; flex-direction: column; }
 .route-stat strong { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
 .route-stat small { color: var(--muted); font-size: 0.7rem; }
@@ -967,6 +975,17 @@ textarea.input { padding: 14px 16px; resize: none; }
   .map-speed-value { font-size: 1.35rem; }
   .map-ctl { width: 56px; height: 56px; }
   .route-actions .btn { min-height: 52px; padding: 0 14px; font-size: 0.9rem; }
+  /* Предпросмотр маршрута / выбранная точка: спидометр не нужен, карточка на всю ширину. */
+  .map-ui.has-dest .map-speed { display: none; }
+  .map-ui.has-dest .map-top { display: none; }
+  .map-ui.has-dest .route-actions { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .map-ui.has-dest .route-actions::-webkit-scrollbar { display: none; }
+  .map-ui.has-dest .route-actions .btn { flex: none; }
+  .map-ui.has-dest .pick-actions .btn-primary { flex: 1 0 auto; }
+  .route-alts { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .route-alts::-webkit-scrollbar { display: none; }
+  .route-alt-chip { flex: none; min-height: 44px; padding: 0 12px; }
+  .dest-name { font-size: 1.1rem; }
 }
 @container map (max-height: 300px) {
   .map-speed { display: none; }
@@ -1005,6 +1024,9 @@ textarea.input { padding: 14px 16px; resize: none; }
   box-shadow: 0 4px 12px var(--shadow);
 }
 .map-dest-pin.is-via { width: 30px; height: 30px; background: var(--warn); }
+.map-dest-pin.is-pick { background: var(--accent); animation: pick-drop 0.25s ease-out; }
+@keyframes pick-drop { from { transform: rotate(-45deg) translate(8px, -8px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .map-dest-pin.is-pick { animation: none; } }
 .map-poi-dot { width: 22px; height: 22px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 2px 8px var(--shadow); background: var(--warn); }
 .map-poi-dot.poi-food { background: #ff8a5c; }
 .map-poi-dot.poi-parking { background: #5c9dff; }
