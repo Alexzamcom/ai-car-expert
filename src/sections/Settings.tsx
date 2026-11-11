@@ -366,8 +366,36 @@ export async function checkProxy(endpoint: string, provider: AiProvider) {
   }
 }
 
+export interface ServerUsage {
+  spentUsd: number;
+  budgetUsd: number;
+  requestsToday: number;
+  dailyLimit: number;
+  persistent: boolean;
+}
+
+/** Расход по данным сервера (главная защита бюджета; локальные счётчики — только подсказка). */
+export async function fetchServerUsage(endpoint: string, token: string): Promise<ServerUsage | null> {
+  try {
+    const url = new URL(endpoint);
+    url.pathname = url.pathname.replace(/\/(chat)?$/, '') + '/usage';
+    const res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    const d = (await res.json()) as Partial<ServerUsage>;
+    // Неожиданный ответ (старая версия прокси) не должен ломать настройки.
+    if (typeof d.spentUsd !== 'number' || typeof d.budgetUsd !== 'number') return null;
+    return { spentUsd: d.spentUsd, budgetUsd: d.budgetUsd, requestsToday: Number(d.requestsToday) || 0, dailyLimit: Number(d.dailyLimit) || 0, persistent: Boolean(d.persistent) };
+  } catch {
+    return null;
+  }
+}
+
 function AiSettings() {
   const s = useStore(settingsStore);
+  const [server, setServer] = useState<ServerUsage | null>(null);
+  useEffect(() => {
+    if (s.aiEndpoint && s.aiToken) void fetchServerUsage(s.aiEndpoint, s.aiToken).then(setServer);
+  }, [s.aiEndpoint, s.aiToken]);
   const u = useStore(usageStore);
   void u;
   const usage = currentUsage();
@@ -481,7 +509,7 @@ function AiSettings() {
       <div className="usage-grid" aria-label="Расход ИИ">
         <div>
           <strong>{usage.dayRequests}</strong>
-          <small>запросов сегодня</small>
+          <small>запросов сегодня (устройство)</small>
         </div>
         <div>
           <strong>{usage.monthRequests}</strong>
@@ -498,6 +526,22 @@ function AiSettings() {
           </strong>
           <small>оценка за месяц</small>
         </div>
+      </div>
+      <div className={`server-usage ${server ? '' : 'is-empty'}`} aria-label="Расход по данным сервера">
+        {server ? (
+          <>
+            <strong>
+              Сервер: {fmtUsd(server.spentUsd)} из {fmtUsd(server.budgetUsd)} в месяц · сегодня {server.requestsToday} из {server.dailyLimit} запросов
+            </strong>
+            <small>
+              {server.persistent
+                ? 'Лимиты сервера хранятся в Cloudflare KV и действуют для всех устройств. Жёсткий потолок — предоплата в OpenAI без автопополнения.'
+                : 'Внимание: у сервера нет хранилища лимитов (KV) — бюджет считается приблизительно.'}
+            </small>
+          </>
+        ) : (
+          <small>Расход по данным сервера появится после подключения прокси. Счётчики ниже — оценка этого устройства, не защита от перерасхода.</small>
+        )}
       </div>
       <ToggleRow
         title="Передавать ИИ местоположение"

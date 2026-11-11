@@ -36,6 +36,29 @@ export function normalize(raw: string) {
   return raw.toLowerCase().replace(/ё/g, 'е').replace(/[.,!?«»"]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const NUM_WORDS: Record<string, number> = { один: 1, одну: 1, два: 2, две: 2, дві: 2, три: 3, четыре: 4, чотири: 4, пять: 5, "п'ять": 5, десять: 10 };
+
+/** Простые относительные сроки ru/uk → дата YYYY-MM-DD и текст без них. */
+export function extractRelativeDate(text: string, now = new Date()): { date: string | null; text: string } {
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const rules: [RegExp, (m: RegExpMatchArray) => void][] = [
+    [/(?:^|\s)(?:послезавтра|післязавтра)(?=\s|$)/, () => d.setDate(d.getDate() + 2)],
+    [/(?:^|\s)(?:завтра)(?=\s|$)/, () => d.setDate(d.getDate() + 1)],
+    [/(?:^|\s)через\s+(?:(\d+|[а-яіїє']+)\s+)?(?:недел[юиь]|тижн[іяь]|тиждень)(?=\s|$)/, (m) => d.setDate(d.getDate() + 7 * (Number(m[1]) || NUM_WORDS[m[1] ?? ''] || 1))],
+    [/(?:^|\s)через\s+(?:(\d+|[а-яіїє']+)\s+)?(?:месяц[а-яёіїє]*|місяц[а-яёіїє]*|місяць)(?=\s|$)/, (m) => d.setMonth(d.getMonth() + (Number(m[1]) || NUM_WORDS[m[1] ?? ''] || 1))],
+    [/(?:^|\s)через\s+(\d+|[а-яіїє']+)\s+(?:дн[а-яёіїє]*|ден[а-яёіїє]*|день)(?=\s|$)/, (m) => d.setDate(d.getDate() + (Number(m[1]) || NUM_WORDS[m[1]] || 1))],
+  ];
+  for (const [re, apply] of rules) {
+    const m = text.match(re);
+    if (m) {
+      apply(m);
+      return { date: iso(d), text: text.replace(m[0], ' ').replace(/\s+/g, ' ').trim() };
+    }
+  }
+  return { date: null, text };
+}
+
 export function parseCommand(raw: string): Command {
   const t = normalize(raw);
   if (!t) return { kind: 'ask', text: raw };
@@ -56,13 +79,21 @@ export function parseCommand(raw: string): Command {
     if (what.length > 1) return { kind: 'tool', name: 'add_stop', args: { query: what } };
   }
 
-  // Напоминание: «напомни заменить масло через 5000 км», «нагадай перевірити шини»
-  const remind = t.match(/^(?:напомни|напомнить|нагадай|нагадати)(?:\s+мне|\s+мені)?\s+(?:про\s+|о\s+)?(.+?)(?:\s+через\s+(\d[\d ]*)\s*(?:км|километр\w*|кілометр\w*))?$/);
-  if (remind && remind[1].length > 2) {
-    const km = remind[2] ? parseInt(remind[2].replace(/\s/g, ''), 10) : null;
+  // Напоминание: «напомни заменить масло через 5000 км», «нагадай через тиждень перевірити шини», «напомни завтра …»
+  const remind = t.match(/^(?:напомни|напомнить|нагадай|нагадати)(?:\s+мне|\s+мені)?\s+(.+)$/);
+  if (remind) {
+    let rest = remind[1];
+    const kmM = rest.match(/\s*через\s+(\d[\d ]*)\s*(?:км|километр[а-яёіїє]*|кілометр[а-яёіїє]*)/);
+    rest = rest.replace(kmM?.[0] ?? '', ' ');
+    const { date, text } = extractRelativeDate(rest);
+    const clean = text.replace(/^(?:про|о|об)\s+/, '').replace(/\s+/g, ' ').trim();
+    const km = kmM ? parseInt(kmM[1].replace(/\s/g, ''), 10) : null;
     const odo = settingsStore.get().vehicle.odometerKm;
     // Без известного пробега «через N км» не превращаем в выдуманный срок — пусть уточнит ИИ или пользователь.
-    if (km == null || odo != null) return { kind: 'tool', name: 'add_reminder', args: { text: remind[1], ...(km != null ? { due_km: odo! + km } : {}) } };
+    // Непонятный срок («через полгода после ТО») — тоже ИИ.
+    if (clean.length > 2 && (km == null || odo != null) && !/через|после|після|до\s+\d/.test(clean)) {
+      return { kind: 'tool', name: 'add_reminder', args: { text: clean, ...(date ? { due_date: date } : {}), ...(km != null ? { due_km: odo! + km } : {}) } };
+    }
   }
 
   // Поиск места без маршрута: «найди Театр Сатиры», «знайди Хрещатик 22», «покажи на карте вокзал»
@@ -78,16 +109,18 @@ export function parseCommand(raw: string): Command {
 
   // Маршрут: «маршрут до …», «поехали в …», «проклади маршрут до …», «їдемо до …»
   const route = t.match(
-    /^(?:(?:проложи|построй|прокладі|проклади|побудуй)\s+)?(?:маршрут|поехали|поедем|едем|ехать|їдемо|поїхали|навигаци\w*|веди|как доехать|як доїхати)\s+(?:до|в|во|на|к|ко)\s+(.+)$/,
+    /^(?:(?:проложи|построй|прокладі|проклади|побудуй|включи|запусти|увімкни|ввімкни)\s+)?(?:маршрут|поехали|поедем|едем|ехать|їдемо|поїхали|навигаци[а-яё]*|веди|как доехать|як доїхати)\s+(?:до|в|во|на|к|ко)\s+(.+)$/,
   );
   if (route && route[1].length > 1) return { kind: 'tool', name: 'navigate_to', args: { destination: route[1] } };
 
   if (/^(поехали|начать движение|старт|почати рух|їдемо)$/.test(t)) return { kind: 'tool', name: 'start_navigation', args: {} };
   if (/(заверши|отмени|сбрось|скасуй|зупини) (маршрут|навигаци|навігаці)/.test(t)) return { kind: 'tool', name: 'stop_navigation', args: {} };
 
-  // Объекты по пути: «найди заправку», «где поесть», «заправки по пути»
-  if (/(найди|найти|где|покажи|знайди|де|ближайш|найближч|по пути|по дорозі|по маршруту)/.test(t)) {
-    for (const [re, cat] of POI_WORDS) if (re.test(t)) return { kind: 'tool', name: 'find_along_route', args: { category: cat } };
+  // Объекты по пути: «найди заправку», «где поесть», «заправки по пути»; «добавь заправку в маршрут» — остановка
+  // «де»/«где» — отдельными словами: как подстрока они встречаются почти везде.
+  if (/(найди|найти|покажи|знайди|ближайш|найближч|по пути|по дороге|по дорозі|по маршруту|добав|додай|заед|заїд|дозаправ|заправимся|заправимо)/.test(t) || /(^|\s)(где|де)(\s|$)/.test(t)) {
+    const asStop = /(добав|додай|заед|заїд|останов|зупинк|заехать|заїхати|дозаправ|заправимся|заправимо)/.test(t);
+    for (const [re, cat] of POI_WORDS) if (re.test(t)) return { kind: 'tool', name: asStop ? 'add_stop' : 'find_along_route', args: { category: cat } };
   }
 
   // Музыка

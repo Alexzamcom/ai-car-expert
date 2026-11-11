@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 // @ts-expect-error — модуль на JS без типов
-import { handle, validateBody, safeEqual, pickProvider, upstreamBody, __resetDaily } from '../../server/ai-proxy/src/handler.js';
+import { handle, validateBody, safeEqual, pickProvider, upstreamBody, __resetDaily, __resetModels, priceFor, costUsd, resolveModels } from '../../server/ai-proxy/src/handler.js';
 
 const env = { XAI_API_KEY: 'xai-secret', ACCESS_TOKEN: 'app-token', ALLOWED_ORIGINS: 'https://alexzamcom.github.io', GROK_MODEL: 'grok-test' };
 const body = { messages: [{ role: 'user', content: 'Привет' }], tools: [{ type: 'function', function: { name: 'navigate_to', description: 'x', parameters: { type: 'object' } } }] };
@@ -18,7 +18,10 @@ const req = (init: { origin?: string; token?: string; body?: unknown; method?: s
 const okUpstream = () =>
   vi.fn(async () => new Response(JSON.stringify({ model: 'grok-test', choices: [{ message: { role: 'assistant', content: 'Здравствуйте' } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 
-beforeEach(() => __resetDaily());
+beforeEach(() => {
+  __resetDaily();
+  __resetModels();
+});
 
 describe('ИИ-прокси: Grok', () => {
   it('пересылает запрос в xAI с ключом сервера и моделью из настроек', async () => {
@@ -58,7 +61,9 @@ describe('ИИ-прокси: Grok', () => {
     const res = await handle(req({ method: 'GET', path: '/health' }), env, okUpstream());
     const data = await res.json();
     expect(data).toMatchObject({ ok: true, model: 'grok-test', keyConfigured: true, defaultProvider: 'grok' });
-    expect(data.providers).toEqual({ openai: { configured: false, model: 'gpt-5-mini' }, grok: { configured: true, model: 'grok-test' } });
+    expect(data.providers.openai).toMatchObject({ configured: false, model: 'gpt-5-mini' });
+    expect(data.providers.grok).toMatchObject({ configured: true, model: 'grok-test' });
+    expect(data.limits).toMatchObject({ monthlyBudgetUsd: 5, persistent: false });
     expect(JSON.stringify(data)).not.toContain('secret');
   });
   it('ошибка авторизации xAI не раскрывается клиенту как 401', async () => {
@@ -135,7 +140,7 @@ describe('ИИ-прокси: OpenAI и выбор провайдера', () => {
     const e = { ...envBoth, DAILY_REQUEST_LIMIT: '1', USAGE };
     expect((await handle(req(), e, okOpenAi())).status).toBe(200);
     expect((await handle(req(), e, okOpenAi())).status).toBe(429);
-    expect([...kv.values()]).toEqual(['2']);
+    expect(kv.get(`requests:${new Date().toISOString().slice(0, 10)}`)).toBe('2');
   });
   it('ошибка OpenAI не пересылается дословно', async () => {
     const f = vi.fn(async () => new Response('{"error":{"message":"Incorrect API key sk-openai-secret"}}', { status: 401 }));
@@ -151,5 +156,89 @@ describe('ИИ-прокси: OpenAI и выбор провайдера', () => {
   it('недопустимый провайдер в теле', () => {
     expect(validateBody({ ...body, provider: 42 }).error).toBeTruthy();
     expect(validateBody({ ...body, provider: 'grok' }).provider).toBe('grok');
+  });
+});
+
+const kvStore = () => {
+  const kv = new Map<string, string>();
+  return { kv, USAGE: { get: async (k: string) => kv.get(k) ?? null, put: async (k: string, v: string) => void kv.set(k, v) } };
+};
+const openAiReply = (usage = { prompt_tokens: 4000, completion_tokens: 100 }, model = 'gpt-5-mini') =>
+  new Response(JSON.stringify({ model, choices: [{ message: { role: 'assistant', content: 'Ок' } }], usage }), { status: 200 });
+
+describe('ИИ-прокси: бюджет и модель', () => {
+  it('цены: известные модели, датированные версии, неизвестная — по завышенной цене', () => {
+    expect(priceFor('openai', 'gpt-5-mini', {})).toEqual([0.25, 2]);
+    expect(priceFor('openai', 'gpt-5-mini-2025-08-07', {})).toEqual([0.25, 2]);
+    expect(priceFor('openai', 'gpt-5.4-mini', {})).toEqual([0.75, 4.5]);
+    expect(priceFor('openai', 'gpt-9-ultra', {})).toEqual([3, 15]);
+    expect(priceFor('openai', 'gpt-5-mini', { OPENAI_PRICE_IN: '1', OPENAI_PRICE_OUT: '8' })).toEqual([1, 8]);
+    expect(costUsd([0.25, 2], { prompt_tokens: 4000, completion_tokens: 100 })).toBeCloseTo(0.0012);
+  });
+  it('месячный бюджет в KV: расход считается по usage и останавливает запросы', async () => {
+    const { kv, USAGE } = kvStore();
+    const e = { ...envBoth, OPENAI_MODEL: 'gpt-5-mini', MONTHLY_BUDGET_USD: '0.002', USAGE };
+    const f = vi.fn(async () => openAiReply());
+    expect((await handle(req(), e, f)).status).toBe(200); // 0.0012
+    expect((await handle(req(), e, f)).status).toBe(200); // 0.0024 — превышение на один запрос
+    const res = await handle(req(), e, f);
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toContain('Месячный бюджет');
+    expect(f).toHaveBeenCalledTimes(2);
+    expect(kv.get(`cost:${new Date().toISOString().slice(0, 7)}`)).toBe('2400');
+  });
+  it('расход сервера доступен только с токеном приложения', async () => {
+    const { USAGE } = kvStore();
+    const e = { ...envBoth, OPENAI_MODEL: 'gpt-5-mini', USAGE };
+    await handle(req(), e, vi.fn(async () => openAiReply()));
+    expect((await handle(req({ method: 'GET', path: '/usage', token: 'wrong' }), e)).status).toBe(401);
+    const data = await (await handle(req({ method: 'GET', path: '/usage' }), e)).json();
+    expect(data).toMatchObject({ spentUsd: 0.0012, budgetUsd: 5, requestsToday: 1, persistent: true });
+  });
+  it('REQUIRE_KV: без хранилища лимитов сервер не тратит деньги', async () => {
+    const f = vi.fn(async () => openAiReply());
+    const res = await handle(req(), { ...envBoth, REQUIRE_KV: '1' }, f);
+    expect(res.status).toBe(500);
+    expect(f).not.toHaveBeenCalled();
+  });
+  it('модель: первая доступная ключу из списка', async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'gpt-4.1-mini' }, { id: 'gpt-5.4-mini' }] }), { status: 200 }));
+    const env2 = { OPENAI_API_KEY: 'k', OPENAI_MODEL: 'gpt-5-mini, gpt-5.4-mini ,gpt-4.1-mini' };
+    expect(await resolveModels('openai', env2, f)).toEqual(['gpt-5.4-mini', 'gpt-4.1-mini', 'gpt-5-mini']);
+    await resolveModels('openai', env2, f);
+    expect(f).toHaveBeenCalledTimes(1); // кэш
+  });
+  it('провайдер не принял reasoning_effort — повтор без него; модель недоступна — следующая', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const f = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/models')) return new Response('{}', { status: 500 });
+      const b = JSON.parse(String(init!.body));
+      bodies.push(b);
+      if (b.reasoning_effort) return new Response(JSON.stringify({ error: { message: "Unsupported value: 'reasoning_effort'" } }), { status: 400 });
+      if (b.model === 'gpt-a') return new Response(JSON.stringify({ error: { message: 'The model `gpt-a` does not exist' } }), { status: 404 });
+      return openAiReply(undefined, b.model);
+    });
+    const res = await handle(req(), { ...envBoth, OPENAI_MODEL: 'gpt-a,gpt-b' }, f);
+    expect(res.status).toBe(200);
+    expect(bodies.map((b) => [b.model, Boolean(b.reasoning_effort)])).toEqual([
+      ['gpt-a', true],
+      ['gpt-a', false],
+      ['gpt-b', false],
+    ]);
+  });
+});
+
+describe('Конфигурация развёртывания', () => {
+  it('KV и REQUIRE_KV добавляются к wrangler.toml, секреты не появляются', async () => {
+    // @ts-expect-error — модуль на JS без типов
+    const { withKv } = await import('../../scripts/ai-proxy-config.mjs');
+    const fs = await import('node:fs');
+    const base = fs.readFileSync('server/ai-proxy/wrangler.toml', 'utf8');
+    const out = withKv(base, '0123456789abcdef0123456789abcdef');
+    expect(out).toMatch(/\[vars\]\nREQUIRE_KV = "1"/);
+    expect(out).toContain('binding = "USAGE"\nid = "0123456789abcdef0123456789abcdef"');
+    expect(out).toContain('MONTHLY_BUDGET_USD = "4.5"');
+    expect(out).not.toMatch(/OPENAI_API_KEY\s*=|ACCESS_TOKEN\s*=|sk-/);
+    expect(() => withKv(base, 'bad')).toThrow();
   });
 });

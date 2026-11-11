@@ -1,30 +1,34 @@
-# Cloudflare Worker: прокси AI Car Expert → OpenAI и/или xAI Grok.
-# Секреты (НЕ хранить в репозитории, НЕ вводить в приложении):
-#   npx wrangler secret put OPENAI_API_KEY   # ключ из platform.openai.com → API keys
-#   npx wrangler secret put XAI_API_KEY      # (необязательно) ключ из console.x.ai — Grok как альтернатива
-#   npx wrangler secret put ACCESS_TOKEN     # длинная случайная строка; её же ввести в приложении
+# Cloudflare Worker: ИИ-прокси AI Car Expert → OpenAI и/или xAI Grok.
+# Секреты задаются в Cloudflare (Workers & Pages → ai-car-expert-ai → Settings → Variables and Secrets),
+# НЕ в репозитории и НЕ в приложении:
+#   OPENAI_API_KEY — ключ OpenAI;  XAI_API_KEY — (необязательно) ключ xAI для Grok;
+#   ACCESS_TOKEN   — длинная случайная строка; её же вводят в приложении.
+# Развёртывание из GitHub Actions: .github/workflows/ai-proxy.yml (создаёт KV для лимитов и включает REQUIRE_KV).
 name = "ai-car-expert-ai"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
+workers_dev = true
 
 [vars]
 ALLOWED_ORIGINS = "https://alexzamcom.github.io"
 # Провайдер по умолчанию, если приложение не указало другой: openai или grok.
 DEFAULT_PROVIDER = "openai"
-# Идентификаторы моделей проверьте у провайдера (platform.openai.com/docs/models, console.x.ai → Models):
-# названия моделей меняются. Для машины важны скорость и цена — подойдёт небольшая модель.
-OPENAI_MODEL = "gpt-5-mini"
-# Для моделей с рассуждением: minimal — быстрее и дешевле. Удалите строку для моделей без рассуждения.
+# Экономичные модели с вызовом функций, по порядку предпочтения: сервер берёт первую, доступную ключу.
+OPENAI_MODEL = "gpt-5-mini,gpt-5.4-mini,gpt-4.1-mini"
+# Быстрее и дешевле для коротких ответов; если модель не принимает параметр, сервер повторит запрос без него.
 OPENAI_REASONING_EFFORT = "minimal"
 GROK_MODEL = "grok-4"
 # Короткие ответы удобнее в машине и дешевле.
-MAX_TOKENS = "700"
-RATE_LIMIT_PER_MIN = "30"
-# Жёсткий суточный предел запросов к платному API (защита бюджета, даже если токен приложения утёк).
-DAILY_REQUEST_LIMIT = "300"
+MAX_TOKENS = "600"
+RATE_LIMIT_PER_MIN = "20"
+# Не больше запросов в сутки ко всем провайдерам.
+DAILY_REQUEST_LIMIT = "150"
+# Денежный бюджет сервера в месяц по ценам из handler.js (или OPENAI_PRICE_IN/OUT).
+# 4.5 — с запасом под $5: оценка по прейскуранту, а не счёт OpenAI. Жёсткий потолок — предоплата в OpenAI.
+MONTHLY_BUDGET_USD = "4.5"
 
-# Необязательно: общий для всех экземпляров счётчик суточного лимита (Cloudflare KV).
-#   npx wrangler kv namespace create USAGE   → вставить id ниже и раскомментировать
+# Хранилище счётчиков (KV) подключает workflow развёртывания. Для ручного развёртывания:
+#   wrangler kv namespace create ai-car-expert-usage → вставить id и раскомментировать
 # [[kv_namespaces]]
 # binding = "USAGE"
 # id = "<id>"
