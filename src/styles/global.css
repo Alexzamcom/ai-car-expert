@@ -753,6 +753,9 @@ textarea.input { padding: 14px 16px; resize: none; }
 }
 .mode-line .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--warn); flex: none; }
 .mode-line.is-online .dot { background: var(--ok); }
+.mode-text { display: flex; flex-direction: column; min-width: 0; }
+.usage-line { color: var(--muted); font-size: 0.72rem; }
+.msg-source.is-cloud { color: var(--accent); font-weight: 600; }
 
 .chat { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; overscroll-behavior: contain; }
 .chat-empty { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; max-width: 760px; }
@@ -1418,3 +1421,16 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ============ ИИ: настройки и напоминания ============ */
+.subsection { font-size: 1rem; margin-top: 8px; color: var(--text-2); }
+.usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.usage-grid > div { display: flex; flex-direction: column; padding: 10px 14px; border-radius: 14px; background: var(--panel-2); }
+.usage-grid strong { font-size: 1.35rem; }
+.usage-grid small { color: var(--muted); font-size: 0.78rem; }
+.reminder-row { display: flex; align-items: center; gap: 10px; min-height: 56px; border-bottom: 1px solid var(--line); }
+.reminder-row svg { color: var(--accent); flex: none; }
+.reminder-row.is-due svg { color: var(--warn); }
+.reminder-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.reminder-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; margin-top: 8px; }
+@media (max-width: 640px) { .reminder-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .reminder-form #reminder-text { grid-column: 1 / -1; } }

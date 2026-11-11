@@ -6,15 +6,13 @@ import { settingsStore, openSection } from '../lib/state';
 import { listen, speechRecognitionSupported, stopSpeaking, speak } from '../lib/speech';
 import { openArticle } from '../lib/manualNav';
 import { ChatGptButton } from '../components/ChatGpt';
+import { usageStore, currentUsage, cloudBlock, fmtUsd, PROVIDER_LABEL } from '../lib/ai/usage';
+import { blockNote } from '../lib/assistant';
 
-const SUGGESTIONS = [
-  'Маршрут до ближайшей заправки',
-  'Как работает режим AUTO климата?',
-  'Включи радио',
-  'Какое масло нужно для моего мотора?',
-  'Когда следующее ТО?',
-  'Что значит код P0171?',
-];
+const SUGGESTIONS: Record<'ru' | 'uk', string[]> = {
+  ru: ['Заедем на заправку', 'Как работает режим AUTO климата?', 'Включи радио', 'Какое масло нужно для моего мотора?', 'Когда следующее ТО?', 'Что значит код P0171?'],
+  uk: ['Заїдемо на заправку', 'Як працює режим AUTO клімату?', 'Увімкни радіо', 'Яке мастило потрібне для мого мотора?', 'Коли наступне ТО?', 'Що означає код P0171?'],
+};
 
 export function Assistant() {
   const messages = useStore(chatStore);
@@ -24,7 +22,12 @@ export function Assistant() {
   const [listening, setListening] = useState(false);
   const stopRef = useRef<(() => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  useStore(usageStore);
+  const usage = currentUsage();
+  const block = cloudBlock();
   const remote = Boolean(settings.aiEndpoint);
+  const provider = PROVIDER_LABEL[settings.aiProvider];
+  const uk = settings.speechLang.startsWith('uk');
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -62,9 +65,19 @@ export function Assistant() {
 
   return (
     <div className="section assistant">
-      <div className={`mode-line ${remote ? 'is-online' : 'is-offline'}`}>
+      <div className={`mode-line ${!block ? 'is-online' : 'is-offline'}`}>
         <span className="dot" />
-        {remote ? 'Grok подключён через ваш сервер' : 'Grok не подключён — работают команды и встроенная база'}
+        <span className="mode-text">
+          {!block ? `${provider} · гибридный режим` : `${blockNote(block)} — работают команды и встроенная база`}
+          {remote && (
+            <small className="usage-line">
+              Сегодня {usage.dayRequests}
+              {settings.aiDailyLimit ? ` из ${settings.aiDailyLimit}` : ''} · за месяц {fmtUsd(usage.monthCostUsd)}
+              {usage.costUnknown ? '+' : ''}
+              {settings.aiMonthlyBudgetUsd ? ` из ${fmtUsd(settings.aiMonthlyBudgetUsd)}` : ''}
+            </small>
+          )}
+        </span>
         <span className="spacer" />
         <button
           className="icon-btn"
@@ -91,11 +104,15 @@ export function Assistant() {
             <div className="chat-empty-icon">
               <Icon name="spark" size="3rem" />
             </div>
-            <h2>Чем помочь в дороге?</h2>
-            <p className="muted">Скажите или напишите: маршрут, музыка, вопрос о вашем автомобиле.</p>
+            <h2>{uk ? 'Чим допомогти в дорозі?' : 'Чем помочь в дороге?'}</h2>
+            <p className="muted">
+              {uk
+                ? 'Скажіть або напишіть: маршрут, зупинка, музика, питання про ваш автомобіль. Прості команди виконуються на пристрої безкоштовно.'
+                : 'Скажите или напишите: маршрут, остановка, музыка, вопрос о вашем автомобиле. Простые команды выполняются на устройстве бесплатно.'}
+            </p>
             <ChatGptButton variant="card" />
             <div className="chips">
-              {SUGGESTIONS.map((s) => (
+              {SUGGESTIONS[uk ? 'uk' : 'ru'].map((s) => (
                 <button key={s} className="chip" onClick={() => submit(s)}>
                   {s}
                 </button>
@@ -119,7 +136,7 @@ export function Assistant() {
             )}
             {m.role === 'assistant' && (
               <div className="msg-meta">
-                <span>{m.source === 'ai' ? 'Grok' : 'Встроенная база'}</span>
+                <span className={`msg-source ${m.source === 'ai' ? 'is-cloud' : 'is-local'}`}>{m.source === 'ai' ? PROVIDER_LABEL[m.provider ?? 'grok'] : 'На устройстве'}</span>
                 <button className="link-btn" onClick={() => speak(m.text, settings.speechLang)}>
                   <Icon name="speaker" size="1.1em" /> Озвучить
                 </button>
@@ -158,7 +175,7 @@ export function Assistant() {
           className="input input-xl"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={listening ? 'Слушаю…' : 'Спросите Grok'}
+          placeholder={listening ? (uk ? 'Слухаю…' : 'Слушаю…') : uk ? 'Запитайте помічника' : 'Спросите помощника'}
           enterKeyHint="send"
           autoComplete="off"
         />

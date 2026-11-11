@@ -17,10 +17,20 @@ import { restoreNavSession, navStore } from './lib/nav';
 import { YouTubeMusicFallback } from './components/YouTubeMusic';
 import { ytmFallbackStore } from './lib/music/youtube';
 import { openSection, toast } from './lib/state';
+import { activeReminders, isDue, reminderLabel } from './lib/reminders';
 
 export function App() {
   const layout = useStore(layoutStore);
   const settings = useStore(settingsStore);
+
+  // Сервисные напоминания со сроком — один раз при запуске.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const due = activeReminders().filter((r) => isDue(r));
+      if (due.length) toast(`Напоминание: ${reminderLabel(due[0])}${due.length > 1 ? ` и ещё ${due.length - 1}` : ''}. Раздел «Сервис».`, 'warn');
+    }, 3000);
+    return () => clearTimeout(t);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.scale = settings.textScale;

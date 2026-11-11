@@ -5,7 +5,8 @@ import { settingsStore, vehicleName, openSection, toast } from '../lib/state';
 import { geoStore, navStore, navLang } from '../lib/nav';
 import { fmtDistance } from '../lib/routing';
 import { playerStore, togglePlay } from '../lib/player';
-import { isRemoteConfigured } from '../lib/assistant';
+import { isRemoteConfigured, blockNote } from '../lib/assistant';
+import { cloudBlock, PROVIDER_LABEL } from '../lib/ai/usage';
 import { musicStore } from '../lib/music/sources';
 import { YouTubeMusicLink } from './YouTubeMusic';
 import { themeStore, cycleThemeMode, THEME_MODE_LABEL, type ThemeMode } from '../lib/theme';
@@ -85,8 +86,11 @@ export function StatusBar() {
         )}
         <button
           className={`sb-icon ${isRemoteConfigured() ? 'is-ok' : 'is-off'}`}
-          onClick={() => toast(isRemoteConfigured() ? 'Grok подключён через ваш сервер.' : 'Grok не подключён — помощник работает на встроенной базе. Подключение: Настройки → Помощник.', 'info')}
-          aria-label="Состояние Grok"
+          onClick={() => {
+            const b = cloudBlock();
+            toast(b ? `${blockNote(b)} — помощник выполняет команды и отвечает из встроенной базы. Настройки → ИИ-помощник.` : `${PROVIDER_LABEL[settingsStore.get().aiProvider]} подключён через ваш сервер. Простые команды выполняются на устройстве.`, 'info');
+          }}
+          aria-label="Состояние ИИ"
         >
           <Icon name="spark" size="1.25em" />
         </button>

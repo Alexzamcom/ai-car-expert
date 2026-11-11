@@ -1,3 +1,4 @@
+import { L } from './i18n';
 import { createStore, uid } from './store';
 import { setActiveSource } from './music/sources';
 
@@ -119,20 +120,20 @@ export async function playByQuery(query: string): Promise<{ ok: boolean; text: s
   const q = query.trim().toLowerCase();
   if (!q) {
     resume();
-    return { ok: true, text: 'Включаю радио.' };
+    return { ok: true, text: L('Включаю радио.', 'Вмикаю радіо.') };
   }
   const own = stationsStore.get().find((s) => s.name.toLowerCase().includes(q));
   if (own) {
     playStation(own);
-    return { ok: true, text: `Включаю ${own.name}.` };
+    return { ok: true, text: L(`Включаю ${own.name}.`, `Вмикаю ${own.name}.`) };
   }
   try {
     const found = await searchStations({ name: query });
-    if (!found.length) return { ok: false, text: `Станция «${query}» не найдена.` };
+    if (!found.length) return { ok: false, text: L(`Станция «${query}» не найдена.`, `Станцію «${query}» не знайдено.`) };
     playStation(found[0], found);
-    return { ok: true, text: `Включаю ${found[0].name}.` };
+    return { ok: true, text: L(`Включаю ${found[0].name}.`, `Вмикаю ${found[0].name}.`) };
   } catch {
-    return { ok: false, text: 'Каталог радиостанций недоступен.' };
+    return { ok: false, text: L('Каталог радиостанций недоступен.', 'Каталог радіостанцій недоступний.') };
   }
 }
 

@@ -3,7 +3,8 @@
    инструменты, что вызывает Grok. Всё, что не распознано, уходит помощнику. */
 import { runTool } from './tools';
 import { openSection, toast, settingsStore } from './state';
-import { sendToAssistant } from './assistant';
+import { sendToAssistant, chatStore } from './assistant';
+import { uid } from './store';
 import { isVehicleControlRequest } from './vehicleGuard';
 import { speak } from './speech';
 
@@ -45,6 +46,29 @@ export function parseCommand(raw: string): Command {
   // YouTube Music: «открой YouTube Music», «включи ютуб музыку», «відкрий YouTube Music»
   if (/(youtube ?music|ютуб ?(музык|музик|мьюзик|мюзик)|ю ?туб ?(музык|музик|мьюзик)|youtube ?(музык|музик))/.test(t)) {
     return { kind: 'tool', name: 'open_music_service', args: { service: 'youtube-music' } };
+  }
+
+  // Остановка по пути: «заедем на заправку», «добавь остановку Ашан», «додай зупинку на АЗС», «заїдемо в кафе»
+  const stop = t.match(/^(?:заедем|заехать|заехали бы|давай заедем|добавь остановку|добавить остановку|остановка|заїдемо|заїхати|додай зупинку|зупинка)\s*(?:на|в|во|до|к|у)?\s*(.*)$/);
+  if (stop) {
+    const what = stop[1].trim();
+    for (const [re, cat] of POI_WORDS) if (re.test(what)) return { kind: 'tool', name: 'add_stop', args: { category: cat } };
+    if (what.length > 1) return { kind: 'tool', name: 'add_stop', args: { query: what } };
+  }
+
+  // Напоминание: «напомни заменить масло через 5000 км», «нагадай перевірити шини»
+  const remind = t.match(/^(?:напомни|напомнить|нагадай|нагадати)(?:\s+мне|\s+мені)?\s+(?:про\s+|о\s+)?(.+?)(?:\s+через\s+(\d[\d ]*)\s*(?:км|километр\w*|кілометр\w*))?$/);
+  if (remind && remind[1].length > 2) {
+    const km = remind[2] ? parseInt(remind[2].replace(/\s/g, ''), 10) : null;
+    const odo = settingsStore.get().vehicle.odometerKm;
+    // Без известного пробега «через N км» не превращаем в выдуманный срок — пусть уточнит ИИ или пользователь.
+    if (km == null || odo != null) return { kind: 'tool', name: 'add_reminder', args: { text: remind[1], ...(km != null ? { due_km: odo! + km } : {}) } };
+  }
+
+  // Поиск места без маршрута: «найди Театр Сатиры», «знайди Хрещатик 22», «покажи на карте вокзал»
+  const find = t.match(/^(?:найди|найти|знайди|покажи на карте|покажи на мапі|где находится|де знаходиться)\s+(.+)$/);
+  if (find && !POI_WORDS.some(([re]) => re.test(find[1])) && !SECTION_WORDS.some(([re]) => re.test(find[1]) && find[1].split(' ').length <= 2)) {
+    return { kind: 'tool', name: 'search_places', args: { query: find[1] } };
   }
 
   // Назад к карте: «вернись к карте», «покажи карту», «повернись до карти», «до мапи»
@@ -111,11 +135,19 @@ export async function handleVoiceCommand(raw: string) {
   }
   const res = await runTool(cmd.name, cmd.args);
   toast(res.text, res.ok ? 'ok' : 'warn');
+  // Команда и результат — в истории диалога (видно, что было сделано голосом).
+  chatStore.set((l) =>
+    [
+      ...l,
+      { id: uid(), role: 'user' as const, text: raw.trim(), time: Date.now() },
+      { id: uid(), role: 'assistant' as const, text: res.text, source: 'local' as const, actions: res.ok ? [res.text] : undefined, time: Date.now() },
+    ].slice(-100),
+  );
   const s = settingsStore.get();
   // Озвучиваем результат для навигации и поиска, где важна обратная связь без взгляда на экран.
   // Отказ управлять YouTube Music тоже озвучиваем: водитель может не смотреть на экран.
   const spokenRefusal = cmd.name === 'media_control' && !res.ok;
-  if ((s.speakReplies || cmd.say) && (spokenRefusal || ['navigate_to', 'find_along_route', 'set_voice_replies', 'set_navigation_voice', 'play_radio', 'set_theme', 'open_music_service', 'play_music'].includes(cmd.name))) {
+  if ((s.speakReplies || cmd.say) && (spokenRefusal || ['navigate_to', 'search_places', 'add_stop', 'add_reminder', 'find_along_route', 'set_voice_replies', 'set_navigation_voice', 'play_radio', 'set_theme', 'open_music_service', 'play_music'].includes(cmd.name))) {
     speak(res.text, s.speechLang);
   }
 }

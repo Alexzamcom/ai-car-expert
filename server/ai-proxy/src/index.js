@@ -1,4 +1,4 @@
-// Точка входа Cloudflare Worker.
+// Точка входа Cloudflare Worker: ИИ-прокси (OpenAI / Grok).
 import { handle } from './handler.js';
 
 export default {
