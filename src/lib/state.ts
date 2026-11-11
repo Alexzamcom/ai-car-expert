@@ -55,10 +55,30 @@ export interface VehicleProfile {
   serviceIntervalMonths: number;
 }
 
+export type AiProvider = 'openai' | 'grok';
+
+export interface AiPrice {
+  /** Цена в долларах за 1 млн входных / выходных токенов; 0 — неизвестна (считаем только токены). */
+  inUsd: number;
+  outUsd: number;
+}
+
 export interface Settings {
   vehicle: VehicleProfile;
+  /** Адрес вашего ИИ-прокси (server/ai-proxy). Ключи OpenAI/xAI хранятся только на нём. */
   aiEndpoint: string;
+  /** Токен доступа к прокси (не ключ OpenAI/xAI). */
   aiToken: string;
+  aiProvider: AiProvider;
+  /** hybrid — простое локально, сложное в облако; local — никогда не обращаться к платному API. */
+  aiMode: 'hybrid' | 'local';
+  /** Предел запросов к облаку в сутки (на этом устройстве). 0 — без предела. */
+  aiDailyLimit: number;
+  /** Месячный бюджет в долларах (по оценке цены токенов). 0 — без предела. */
+  aiMonthlyBudgetUsd: number;
+  aiPrices: Record<AiProvider, AiPrice>;
+  /** Передавать ИИ координаты (округлённые до ~100 м). */
+  aiShareLocation: boolean;
   speechLang: string;
   speakReplies: boolean;
   /** Голосовые подсказки навигации. */
@@ -96,6 +116,12 @@ export const settingsStore = createStore<Settings>(
     },
     aiEndpoint: '',
     aiToken: '',
+    aiProvider: 'openai',
+    aiMode: 'hybrid',
+    aiDailyLimit: 60,
+    aiMonthlyBudgetUsd: 5,
+    aiPrices: { openai: { inUsd: 0, outUsd: 0 }, grok: { inUsd: 0, outUsd: 0 } },
+    aiShareLocation: true,
     speechLang: 'ru-RU',
     speakReplies: true,
     speakNavigation: true,

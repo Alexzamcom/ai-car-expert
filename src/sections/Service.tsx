@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { useStore } from '../lib/store';
+import { remindersStore, addReminder, completeReminder, deleteReminder, activeReminders, isDue, reminderLabel } from '../lib/reminders';
 import {
   serviceStore,
   settingsStore,
@@ -89,6 +90,8 @@ export function Service() {
           </div>
         </div>
       </div>
+
+      <Reminders />
 
       <div className="toolbar">
         <button className="btn btn-primary btn-lg" onClick={() => setDraft(emptyDraft())}>
@@ -202,6 +205,54 @@ export function Service() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** Сервисные напоминания: добавляются здесь или голосом («напомни заменить масло через 5000 км»). */
+function Reminders() {
+  useStore(remindersStore);
+  const list = activeReminders();
+  const [text, setText] = useState('');
+  const [date, setDate] = useState('');
+  const [km, setKm] = useState('');
+  return (
+    <div className="card reminders">
+      <h3 className="section-title">
+        <Icon name="clock" /> Напоминания
+      </h3>
+      {list.length === 0 && <p className="muted small">Нет напоминаний. Скажите помощнику: «Напомни заменить масло через 5000 км» — или добавьте ниже.</p>}
+      {list.map((r) => (
+        <div key={r.id} className={`reminder-row ${isDue(r) ? 'is-due' : ''}`}>
+          <Icon name={isDue(r) ? 'alert' : 'clock'} />
+          <span className="reminder-text">{reminderLabel(r)}</span>
+          {isDue(r) && <span className="badge badge-warn">срок</span>}
+          <button className="btn" onClick={() => completeReminder(r.id)}>
+            <Icon name="check" /> Готово
+          </button>
+          <button className="icon-btn" onClick={() => deleteReminder(r.id)} aria-label="Удалить напоминание">
+            <Icon name="trash" />
+          </button>
+        </div>
+      ))}
+      <form
+        className="reminder-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!text.trim()) return;
+          addReminder({ text, dueDate: date || null, dueKm: km ? parseInt(km.replace(/\D/g, ''), 10) || null : null });
+          setText('');
+          setDate('');
+          setKm('');
+        }}
+      >
+        <input id="reminder-text" className="input" placeholder="Что сделать" value={text} onChange={(e) => setText(e.target.value)} />
+        <input className="input" type="date" aria-label="Дата" value={date} onChange={(e) => setDate(e.target.value)} />
+        <input className="input" inputMode="numeric" placeholder="Пробег, км" aria-label="Пробег" value={km} onChange={(e) => setKm(e.target.value)} />
+        <button className="btn btn-primary" type="submit" disabled={!text.trim()}>
+          <Icon name="plus" /> Добавить
+        </button>
+      </form>
     </div>
   );
 }

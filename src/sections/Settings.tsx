@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { useStore } from '../lib/store';
-import { settingsStore, toast, type Settings as SettingsT, type VehicleProfile } from '../lib/state';
+import { settingsStore, toast, type Settings as SettingsT, type VehicleProfile, type AiProvider } from '../lib/state';
+import { usageStore, currentUsage, fmtUsd, resetUsage, PROVIDER_LABEL } from '../lib/ai/usage';
 import { wakeLockSupported } from '../lib/wakeLock';
 import { speechRecognitionSupported, listVoices, speak } from '../lib/speech';
 import { chatgptPrefsStore } from '../lib/chatgpt';
@@ -25,8 +26,6 @@ function isStandalone() {
 export function Settings() {
   const s = useStore(settingsStore);
   const [v, setV] = useState<VehicleProfile>(s.vehicle);
-  const [endpoint, setEndpoint] = useState(s.aiEndpoint);
-  const [token, setToken] = useState(s.aiToken);
   const [voices, setVoices] = useState(() => listVoices(s.speechLang));
   useEffect(() => {
     const update = () => setVoices(listVoices(s.speechLang));
@@ -106,46 +105,7 @@ export function Settings() {
         </button>
       </form>
 
-      <form
-        className="card"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const url = endpoint.trim();
-          if (url && !/^https:\/\//.test(url) && !/^http:\/\/localhost/.test(url)) {
-            toast('Адрес прокси должен начинаться с https://', 'warn');
-            return;
-          }
-          patch({ aiEndpoint: url, aiToken: token.trim() });
-          toast(url ? 'Адрес Grok сохранён' : 'Grok отключён — работает встроенная база', 'ok');
-        }}
-      >
-        <h3 className="section-title">
-          <Icon name="spark" /> Помощник Grok
-        </h3>
-        <p className="muted">
-          Grok подключается через ваш сервер-прокси (готовый код — в папке server/grok-proxy репозитория). Ключ xAI
-          хранится только на сервере. Здесь указываются адрес прокси и токен доступа к нему — это не ключ xAI.
-          Подписка Grok в приложении X или grok.com не даёт доступа к API: API оплачивается отдельно в console.x.ai.
-        </p>
-        <div className="form-grid">
-          <label className="field field-wide">
-            <span>Адрес прокси</span>
-            <input id="ai-endpoint" className="input" inputMode="url" placeholder="https://ai-car-expert-grok.<аккаунт>.workers.dev/chat" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} autoComplete="off" />
-          </label>
-          <label className="field field-wide">
-            <span>Токен доступа к прокси</span>
-            <input id="ai-token" className="input" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
-          </label>
-        </div>
-        <div className="toolbar">
-          <button className="btn btn-primary btn-lg" type="submit">
-            <Icon name="check" /> Сохранить
-          </button>
-          <button className="btn btn-lg" type="button" disabled={!endpoint.trim()} onClick={() => void checkProxy(endpoint.trim())}>
-            <Icon name="wifi" /> Проверить связь
-          </button>
-        </div>
-      </form>
+      <AiSettings />
 
       <ThemeSettings />
 
@@ -193,7 +153,7 @@ export function Settings() {
             </button>
           </div>
         </div>
-        <ToggleRow title="Голосовые ответы помощника" sub="Ответы Grok и результаты команд читаются вслух" on={s.speakReplies} onChange={(on) => patch({ speakReplies: on })} />
+        <ToggleRow title="Голосовые ответы помощника" sub="Ответы помощника и результаты команд читаются вслух" on={s.speakReplies} onChange={(on) => patch({ speakReplies: on })} />
         <ToggleRow title="Голосовые подсказки навигации" sub="«Через 200 метров поверните направо»" on={s.speakNavigation} onChange={(on) => patch({ speakNavigation: on })} />
         <ToggleRow title="Режим разговора" sub="После голосового ответа помощник снова слушает — без нажатия кнопки" on={s.conversationMode} onChange={(on) => patch({ conversationMode: on })} />
         <ToggleRow title="Подсказки о функциях автомобиля" sub="Короткий совет дня на панели «Поездка»" on={s.featureTips} onChange={(on) => patch({ featureTips: on })} />
@@ -388,18 +348,170 @@ const SAMPLE: Record<string, string> = {
   en: 'In two hundred meters, turn right.',
 };
 
-async function checkProxy(endpoint: string) {
+/** Проверка прокси: доступность, какие провайдеры настроены (ключи — только на сервере). */
+export async function checkProxy(endpoint: string, provider: AiProvider) {
   try {
     const url = new URL(endpoint);
     url.pathname = url.pathname.replace(/\/(chat)?$/, '') + '/health';
     const res = await fetch(url.toString());
-    const data = (await res.json()) as { ok?: boolean; model?: string; keyConfigured?: boolean };
-    if (data.ok && data.keyConfigured) toast(`Прокси отвечает. Модель: ${data.model}`, 'ok');
-    else if (data.ok) toast('Прокси отвечает, но ключ xAI на сервере не задан', 'warn');
-    else toast('Прокси ответил неожиданно', 'warn');
+    const data = (await res.json()) as { ok?: boolean; model?: string; keyConfigured?: boolean; providers?: Record<string, { configured: boolean; model: string }> };
+    if (!data.ok) return toast('Прокси ответил неожиданно', 'warn');
+    const p = data.providers?.[provider];
+    if (p?.configured) toast(`Прокси отвечает. ${PROVIDER_LABEL[provider]}: модель ${p.model}`, 'ok');
+    else if (p) toast(`Прокси отвечает, но ключ ${PROVIDER_LABEL[provider]} на сервере не задан`, 'warn');
+    else if (data.keyConfigured) toast(`Прокси старой версии (только Grok, модель ${data.model}). Обновите server/ai-proxy для OpenAI.`, 'warn');
+    else toast('Прокси отвечает, но ключ на сервере не задан', 'warn');
   } catch {
     toast('Прокси недоступен: проверьте адрес и разрешённые источники (ALLOWED_ORIGINS)', 'warn');
   }
+}
+
+function AiSettings() {
+  const s = useStore(settingsStore);
+  const u = useStore(usageStore);
+  void u;
+  const usage = currentUsage();
+  const [endpoint, setEndpoint] = useState(s.aiEndpoint);
+  const [token, setToken] = useState(s.aiToken);
+  const patch = (p: Partial<SettingsT>) => settingsStore.set((x) => ({ ...x, ...p }));
+  const price = s.aiPrices[s.aiProvider];
+  const setPrice = (k: 'inUsd' | 'outUsd', val: string) => {
+    const n = Math.max(0, Number(val.replace(',', '.')) || 0);
+    patch({ aiPrices: { ...s.aiPrices, [s.aiProvider]: { ...price, [k]: n } } });
+  };
+  const intVal = (val: string) => Math.max(0, parseInt(val.replace(/\D/g, ''), 10) || 0);
+  return (
+    <form
+      className="card ai-settings"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const url = endpoint.trim();
+        if (url && !/^https:\/\//.test(url) && !/^http:\/\/localhost/.test(url)) {
+          toast('Адрес прокси должен начинаться с https://', 'warn');
+          return;
+        }
+        patch({ aiEndpoint: url, aiToken: token.trim() });
+        toast(url ? 'Подключение ИИ сохранено' : 'Облачный ИИ отключён — работают команды и встроенная база', 'ok');
+      }}
+    >
+      <h3 className="section-title">
+        <Icon name="spark" /> ИИ-помощник
+      </h3>
+      <p className="muted">
+        Простые команды (маршрут, остановка, радио, разделы, тема, коды ошибок, срок ТО) выполняются на устройстве бесплатно.
+        Сложные вопросы уходят выбранному провайдеру через ваш сервер-прокси (код — server/ai-proxy). Ключи OpenAI и xAI
+        хранятся только в секретах сервера; здесь — адрес прокси и токен доступа к нему, это не ключ API. Подписки ChatGPT Plus и
+        Grok не дают доступа к API: API оплачивается отдельно.
+      </p>
+
+      <div className="setting-row">
+        <div>
+          <strong>Провайдер</strong>
+          <small>Grok — альтернатива; на сервере должен быть задан ключ выбранного провайдера</small>
+        </div>
+        <div className="seg" role="radiogroup" aria-label="Провайдер ИИ">
+          {(['openai', 'grok'] as AiProvider[]).map((p) => (
+            <button key={p} type="button" role="radio" aria-checked={s.aiProvider === p} className={`chip ${s.aiProvider === p ? 'is-active' : ''}`} onClick={() => patch({ aiProvider: p })}>
+              {PROVIDER_LABEL[p]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="setting-row">
+        <div>
+          <strong>Режим</strong>
+          <small>{s.aiMode === 'local' ? 'Платный API не используется совсем' : 'Простое — на устройстве, сложное — в облаке'}</small>
+        </div>
+        <div className="seg" role="radiogroup" aria-label="Режим ИИ">
+          {(
+            [
+              ['hybrid', 'Гибридный'],
+              ['local', 'Только на устройстве'],
+            ] as const
+          ).map(([m, label]) => (
+            <button key={m} type="button" role="radio" aria-checked={s.aiMode === m} className={`chip ${s.aiMode === m ? 'is-active' : ''}`} onClick={() => patch({ aiMode: m })}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="form-grid">
+        <label className="field field-wide">
+          <span>Адрес прокси</span>
+          <input id="ai-endpoint" className="input" inputMode="url" placeholder="https://ai-car-expert-ai.<аккаунт>.workers.dev/chat" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} autoComplete="off" />
+        </label>
+        <label className="field field-wide">
+          <span>Токен доступа к прокси (хранится только на этом устройстве)</span>
+          <input id="ai-token" className="input" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
+        </label>
+      </div>
+      <div className="toolbar">
+        <button className="btn btn-primary btn-lg" type="submit">
+          <Icon name="check" /> Сохранить
+        </button>
+        <button className="btn btn-lg" type="button" disabled={!endpoint.trim()} onClick={() => void checkProxy(endpoint.trim(), s.aiProvider)}>
+          <Icon name="wifi" /> Проверить связь
+        </button>
+      </div>
+
+      <h4 className="subsection">Расходы и ограничения</h4>
+      <div className="form-grid">
+        <label className="field">
+          <span>Запросов к ИИ в сутки (0 — без предела)</span>
+          <input id="ai-daily-limit" className="input" inputMode="numeric" value={s.aiDailyLimit} onChange={(e) => patch({ aiDailyLimit: intVal(e.target.value) })} />
+        </label>
+        <label className="field">
+          <span>Бюджет в месяц, $ (0 — без предела)</span>
+          <input id="ai-budget" className="input" inputMode="decimal" value={s.aiMonthlyBudgetUsd} onChange={(e) => patch({ aiMonthlyBudgetUsd: Math.max(0, Number(e.target.value.replace(',', '.')) || 0) })} />
+        </label>
+        <label className="field">
+          <span>{PROVIDER_LABEL[s.aiProvider]}: $ за 1 млн входных токенов</span>
+          <input id="ai-price-in" className="input" inputMode="decimal" value={price.inUsd} onChange={(e) => setPrice('inUsd', e.target.value)} />
+        </label>
+        <label className="field">
+          <span>$ за 1 млн выходных токенов</span>
+          <input id="ai-price-out" className="input" inputMode="decimal" value={price.outUsd} onChange={(e) => setPrice('outUsd', e.target.value)} />
+        </label>
+      </div>
+      <p className="muted small">
+        Цены смотрите на странице тарифов провайдера и указывайте для модели, заданной на сервере. Без цен считаются только запросы и токены, а
+        бюджет не ограничивает. Сервер дополнительно ограничивает запросы в минуту и в сутки (wrangler.toml) — это защита, даже если токен утёк.
+      </p>
+      <div className="usage-grid" aria-label="Расход ИИ">
+        <div>
+          <strong>{usage.dayRequests}</strong>
+          <small>запросов сегодня</small>
+        </div>
+        <div>
+          <strong>{usage.monthRequests}</strong>
+          <small>за месяц</small>
+        </div>
+        <div>
+          <strong>{Math.round((usage.monthTokensIn + usage.monthTokensOut) / 1000)}K</strong>
+          <small>токенов</small>
+        </div>
+        <div>
+          <strong>
+            {fmtUsd(usage.monthCostUsd)}
+            {usage.costUnknown ? '+' : ''}
+          </strong>
+          <small>оценка за месяц</small>
+        </div>
+      </div>
+      <ToggleRow
+        title="Передавать ИИ местоположение"
+        sub="Координаты округляются до ~100 м; маршрут, музыка и сервисная история передаются для ответов по делу"
+        on={s.aiShareLocation}
+        onChange={(on) => patch({ aiShareLocation: on })}
+      />
+      <div className="toolbar">
+        <button type="button" className="btn" onClick={() => { resetUsage(); toast('Счётчики расхода обнулены', 'ok'); }}>
+          Обнулить счётчики
+        </button>
+      </div>
+    </form>
+  );
 }
 
 function ToggleRow({ title, sub, on, onChange }: { title: string; sub: string; on: boolean; onChange: (on: boolean) => void }) {
@@ -416,7 +528,7 @@ function ToggleRow({ title, sub, on, onChange }: { title: string; sub: string; o
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: (on: boolean) => void; label?: string }) {
   return (
-    <button role="switch" aria-checked={on} aria-label={label} className={`toggle ${on ? 'is-on' : ''}`} onClick={() => onChange(!on)}>
+    <button type="button" role="switch" aria-checked={on} aria-label={label} className={`toggle ${on ? 'is-on' : ''}`} onClick={() => onChange(!on)}>
       <span />
     </button>
   );

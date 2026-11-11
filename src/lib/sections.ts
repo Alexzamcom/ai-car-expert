@@ -16,7 +16,7 @@ export interface SectionMeta {
 export const SECTIONS: Record<SectionId, SectionMeta> = {
   navigation: { id: 'navigation', title: 'Навигация', short: 'Карта', icon: 'map' },
   media: { id: 'media', title: 'Музыка и радио', short: 'Музыка', icon: 'music' },
-  assistant: { id: 'assistant', title: 'Помощник Grok', short: 'Grok', icon: 'spark' },
+  assistant: { id: 'assistant', title: 'ИИ-помощник', short: 'ИИ', icon: 'spark' },
   apps: { id: 'apps', title: 'Приложения', short: 'Прил.', icon: 'grid' },
   trip: { id: 'trip', title: 'Поездка', short: 'Поездка', icon: 'gauge' },
   vehicle: { id: 'vehicle', title: 'Мой автомобиль', short: 'Авто', icon: 'car' },

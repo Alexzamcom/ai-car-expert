@@ -1,0 +1,30 @@
+# Cloudflare Worker: прокси AI Car Expert → OpenAI и/или xAI Grok.
+# Секреты (НЕ хранить в репозитории, НЕ вводить в приложении):
+#   npx wrangler secret put OPENAI_API_KEY   # ключ из platform.openai.com → API keys
+#   npx wrangler secret put XAI_API_KEY      # (необязательно) ключ из console.x.ai — Grok как альтернатива
+#   npx wrangler secret put ACCESS_TOKEN     # длинная случайная строка; её же ввести в приложении
+name = "ai-car-expert-ai"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+ALLOWED_ORIGINS = "https://alexzamcom.github.io"
+# Провайдер по умолчанию, если приложение не указало другой: openai или grok.
+DEFAULT_PROVIDER = "openai"
+# Идентификаторы моделей проверьте у провайдера (platform.openai.com/docs/models, console.x.ai → Models):
+# названия моделей меняются. Для машины важны скорость и цена — подойдёт небольшая модель.
+OPENAI_MODEL = "gpt-5-mini"
+# Для моделей с рассуждением: minimal — быстрее и дешевле. Удалите строку для моделей без рассуждения.
+OPENAI_REASONING_EFFORT = "minimal"
+GROK_MODEL = "grok-4"
+# Короткие ответы удобнее в машине и дешевле.
+MAX_TOKENS = "700"
+RATE_LIMIT_PER_MIN = "30"
+# Жёсткий суточный предел запросов к платному API (защита бюджета, даже если токен приложения утёк).
+DAILY_REQUEST_LIMIT = "300"
+
+# Необязательно: общий для всех экземпляров счётчик суточного лимита (Cloudflare KV).
+#   npx wrangler kv namespace create USAGE   → вставить id ниже и раскомментировать
+# [[kv_namespaces]]
+# binding = "USAGE"
+# id = "<id>"

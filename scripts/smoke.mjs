@@ -28,7 +28,32 @@ const ROUTE_POS = [
   { latitude: 55.769, longitude: 37.6 },
 ];
 
+/* Имитация ИИ-прокси (server/ai-proxy) без ключей: OpenAI «вызывает» инструмент navigate_to, затем отвечает. */
+const aiCalls = [];
+const AI_CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS' };
+async function mockAiProxy(route) {
+  const r = route.request();
+  if (r.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: AI_CORS });
+  const reply = (body) => route.fulfill({ status: 200, contentType: 'application/json', headers: AI_CORS, body: JSON.stringify(body) });
+  if (r.url().endsWith('/health')) {
+    return reply({ ok: true, defaultProvider: 'openai', providers: { openai: { configured: true, model: 'gpt-test' }, grok: { configured: false, model: 'grok-4' } }, keyConfigured: true, model: 'gpt-test' });
+  }
+  const body = JSON.parse(r.postData() || '{}');
+  aiCalls.push(body);
+  const toolDone = body.messages?.some((m) => m.role === 'tool');
+  return reply(
+    toolDone
+      ? { provider: body.provider, choices: [{ message: { role: 'assistant', content: 'Маршрут до Театра Сатиры построен, около шести минут.' } }], usage: { prompt_tokens: 1500, completion_tokens: 15 } }
+      : {
+          provider: body.provider,
+          choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'navigate_to', arguments: '{"destination":"Театр Сатиры"}' } }] } }],
+          usage: { prompt_tokens: 1400, completion_tokens: 20 },
+        },
+  );
+}
+
 async function mockNetwork(ctx) {
+  await ctx.route('https://ai-proxy.test/**', mockAiProxy);
   // ChatGPT открывается во внешнем окне; в тесте отвечает заглушка (реальный сервис не нагружаем).
   await ctx.route('https://chatgpt.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<title>ChatGPT stub</title>' }));
   // YouTube Music тоже не нагружаем: отвечает заглушка.
@@ -287,7 +312,7 @@ async function checkYouTubeMusic(name, ctx, page, out, slug) {
     ways.length === 3 && (ios ? ways.join(' ').includes('Пункт управления') && ways.join(' ').includes('Siri') : ways.join(' ').includes('Шторка') && !ways.join(' ').includes('Siri')) && fake === 0,
     `способов: ${ways.length}, фиктивных кнопок: ${fake}`,
   );
-  await page.click('.dock [aria-label="Помощник Grok"]');
+  await page.click('.dock [aria-label="ИИ-помощник"]');
   for (const cmd of ['следующая', 'играй']) {
     const n = await page.locator('.msg-assistant .msg-bubble').count();
     await page.fill('#assistant-input', cmd);
@@ -300,7 +325,7 @@ async function checkYouTubeMusic(name, ctx, page, out, slug) {
   }
 
   // «Вернись к карте» — локальная команда без ИИ: развёрнутая панель уступает место карте.
-  await page.click('.dock [aria-label="Помощник Grok"]');
+  await page.click('.dock [aria-label="ИИ-помощник"]');
   await page.click('.panel-actions [aria-label="Развернуть панель"]');
   // Площадь карты: вертикально она растёт в высоту, горизонтально — в ширину.
   const area = async () => {
@@ -484,7 +509,7 @@ try {
   // Панели
   for (const [label, sel] of [
     ['Музыка и радио', '.now-playing'],
-    ['Помощник Grok', '.composer'],
+    ['ИИ-помощник', '.composer'],
     ['Приложения', '.app-grid'],
     ['Поездка', '.trip-stats'],
   ]) {
@@ -506,13 +531,15 @@ try {
   await page.click('.panel-actions [aria-label="Поменять карту и панель местами"]');
 
   // Помощник без Grok
-  await page.click('.panel-tabs [aria-label="Помощник Grok"]');
+  await page.click('.panel-tabs [aria-label="ИИ-помощник"]');
   const ask = async (q) => {
-    const n = await page.locator('.msg-assistant .msg-bubble').count();
+    // Индикатор «печатает…» — тоже пузырь помощника; ждём настоящий ответ.
+    const sel = '.msg-assistant .msg-bubble:not(.typing)';
+    const n = await page.locator(sel).count();
     await page.fill('#assistant-input', q);
     await page.click('.composer button[type=submit]');
-    await page.waitForFunction((k) => document.querySelectorAll('.msg-assistant .msg-bubble').length > k, n, { timeout: 15000 });
-    return page.locator('.msg-assistant .msg-bubble').last().innerText();
+    await page.waitForFunction(([k, s]) => document.querySelectorAll(s).length > k && !document.querySelector('.msg-bubble.typing'), [n, sel], { timeout: 20000 });
+    return page.locator(sel).last().innerText();
   };
   check('Помощник: код ошибки', (await ask('Что значит P0420?')).includes('каталитического'));
   check('Помощник: не изображает управление климатом', (await ask('включи кондиционер')).includes('не могу'));
@@ -537,6 +564,53 @@ try {
     if (title === 'Мой автомобиль') await page.screenshot({ path: `${out}/05-ipad-vehicle.png` });
     await page.click('.page-back');
   }
+
+  // ИИ-помощник: подключение прокси (имитация), гибридная маршрутизация, вызов инструментов, учёт расхода
+  await page.click('.dock [aria-label="Ещё разделы"]');
+  await page.click('.more-item:has-text("Настройки")');
+  await page.fill('#ai-endpoint', 'https://ai-proxy.test/chat');
+  await page.fill('#ai-token', 'smoke-token');
+  await page.click('.ai-settings [role=radio]:has-text("OpenAI")');
+  await page.click('.ai-settings button[type=submit]');
+  await page.click('.ai-settings button:has-text("Проверить связь")');
+  await page.waitForSelector('.toast:has-text("Прокси отвечает")', { timeout: 5000 }).catch(() => {});
+  check('ИИ: проверка прокси показывает провайдера и модель', await page.locator('.toast:has-text("OpenAI: модель gpt-test")').isVisible().catch(() => false));
+  await page.locator('.ai-settings').scrollIntoViewIfNeeded();
+  problems = await layoutProblems(page);
+  check('ИИ: настройки без наложений', !problems.length && (await page.locator('#ai-daily-limit').isVisible()), problems.join('; '));
+  await page.locator('.ai-settings').screenshot({ path: `${out}/04b-ipad-ai-settings.png` });
+  await page.click('.page-back');
+  await page.click('.panel-tabs [aria-label="ИИ-помощник"]');
+  check('ИИ: строка режима — OpenAI, гибридный', (await page.locator('.mode-line').innerText()).includes('OpenAI · гибридный'), await page.locator('.mode-line').innerText());
+  const aiBefore = aiCalls.length;
+  const theme = await ask('ночная тема');
+  const localMeta = await page.locator('.msg-assistant .msg-meta').last().innerText();
+  check('ИИ: простая команда выполняется на устройстве, без запроса к облаку', aiCalls.length === aiBefore && theme.includes('ночная') && localMeta.includes('На устройстве'), `${theme} · запросов: ${aiCalls.length - aiBefore}`);
+  await ask('тема авто');
+  const cloud = await ask('Отвези меня в театр, где играют сатиру, и скажи, сколько ехать');
+  const cloudMeta = await page.locator('.msg-assistant .msg-meta').last().innerText();
+  const first = aiCalls[aiBefore];
+  check(
+    'ИИ: сложный запрос → OpenAI через прокси → инструмент navigate_to → маршрут',
+    aiCalls.length - aiBefore === 2 && cloud.includes('Театра Сатиры') && cloudMeta.includes('OpenAI') && (await page.locator('.route-card').count()) === 1,
+    `${cloud} · запросов: ${aiCalls.length - aiBefore}`,
+  );
+  check(
+    'ИИ: в запросе — провайдер, инструменты и контекст поездки',
+    first?.provider === 'openai' && first?.tools?.some((t) => t.function.name === 'add_stop') && /Текущее состояние:[\s\S]*Положение:[\s\S]*Автомобиль: Peugeot 3008/.test(first?.messages?.[0]?.content ?? ''),
+  );
+  check('ИИ: ключей API нет в запросе приложения', !JSON.stringify(first ?? {}).match(/sk-|xai-|api[_-]?key/i));
+  check('ИИ: расход учтён', (await page.locator('.usage-line').innerText()).includes('Сегодня 2'), await page.locator('.usage-line').innerText());
+  problems = await layoutProblems(page);
+  check('ИИ: диалог без наложений', !problems.length, problems.join('; '));
+  await page.screenshot({ path: `${out}/04c-ipad-ai-cloud.png` });
+  await page.locator('.route-card button[aria-label="Сбросить маршрут"]').click().catch(() => {});
+  // Отключаем облако для остальных сценариев.
+  await page.click('.dock [aria-label="Ещё разделы"]');
+  await page.click('.more-item:has-text("Настройки")');
+  await page.fill('#ai-endpoint', '');
+  await page.click('.ai-settings button[type=submit]');
+  await page.click('.page-back');
 
   // Радио
   await page.click('.panel-tabs [aria-label="Музыка и радио"]');

@@ -17,6 +17,7 @@ import { poiAlongRoute, poiNearby, type Poi, type PoiCategory } from './poi';
 import { settingsStore } from './state';
 import { speak } from './speech';
 import { recordFix } from './trip';
+import { L } from './i18n';
 import { searchPlaces as geoSearch, reverseGeocode, coordsPlace, type Place } from './geo/geocode';
 
 export type { Place };
@@ -471,15 +472,23 @@ export function placeFromPoi(p: Poi): Place {
 export async function navigateToQuery(query: string): Promise<{ ok: boolean; text: string }> {
   try {
     const results = await searchPlaces(query, currentPos() ?? undefined);
-    if (!results.length) return { ok: false, text: `Не нашёл «${query}».` };
+    if (!results.length) return { ok: false, text: L(`Не нашёл «${query}».`, `Не знайшов «${query}».`) };
     await setDestination(results[0]);
     const s = navStore.get();
     if (s.route) {
-      return { ok: true, text: `Маршрут до «${results[0].name}»: ${fmtDistance(s.route.distance)}, около ${Math.round(s.route.duration / 60)} мин без учёта пробок.${s.routes.length > 1 ? ` Есть вариантов: ${s.routes.length}.` : ''}` };
+      const min = Math.round(s.route.duration / 60);
+      const alt = s.routes.length > 1 ? L(` Вариантов: ${s.routes.length}.`, ` Варіантів: ${s.routes.length}.`) : '';
+      return {
+        ok: true,
+        text: L(
+          `Маршрут до «${results[0].name}»: ${fmtDistance(s.route.distance)}, около ${min} мин без учёта пробок.${alt}`,
+          `Маршрут до «${results[0].name}»: ${fmtDistance(s.route.distance, 'uk')}, близько ${min} хв без урахування заторів.${alt}`,
+        ),
+      };
     }
-    return { ok: true, text: `Нашёл «${results[0].name}». ${s.error ?? ''}`.trim() };
+    return { ok: true, text: `${L('Нашёл', 'Знайшов')} «${results[0].name}». ${s.error ?? ''}`.trim() };
   } catch (e) {
-    return { ok: false, text: navigator.onLine ? (e as Error).message : 'Нет интернета для поиска адреса.' };
+    return { ok: false, text: navigator.onLine ? (e as Error).message : L('Нет интернета для поиска адреса.', 'Немає інтернету для пошуку адреси.') };
   }
 }
 
