@@ -173,7 +173,8 @@ try {
 
   r = await say(page, 'Хочу перед театром заскочить на АЗС.');
   const via = await page.locator('.via-line').isVisible().catch(() => false);
-  check('iPad · GPT → add_stop → остановка добавлена в маршрут', via && r.tools.some((t) => t.startsWith('add_stop')), describe(r));
+  // Простые просьбы теперь выполняются на устройстве — это тоже правильный путь (без расходов).
+  check(`iPad · ${r.calls ? 'GPT → add_stop' : 'на устройстве'} → остановка добавлена в маршрут`, via && (r.calls === 0 || r.tools.some((t) => t.startsWith('add_stop'))), describe(r));
   await page.locator('.via-line .link-btn').click().catch(() => {});
   await page.waitForTimeout(800);
   r = await say(page, 'Добавь заправку в маршрут как остановку');
@@ -182,7 +183,8 @@ try {
 
   r = await say(page, 'Поставь какое-нибудь спокойное радио, например эмбиент.');
   const radio = r.toolResults.some((t) => /Включаю|Вмикаю/.test(t));
-  check('iPad · GPT → play_radio → радио включается', r.tools.some((t) => t.startsWith('play_radio')) && radio, `${describe(r)}; результат: ${r.toolResults.join(' ').slice(0, 120)}`);
+  const radioLocal = r.calls === 0 && /Включаю|Вмикаю/.test(r.spoken);
+  check(`iPad · ${r.calls ? 'GPT → play_radio' : 'на устройстве'} → радио включается`, radioLocal || (r.tools.some((t) => t.startsWith('play_radio')) && radio), `${describe(r)}; результат: ${r.toolResults.join(' ').slice(0, 120)}`);
 
   r = await say(page, 'Какое давление в шинах обычно рекомендуют для моей машины зимой?');
   const words = r.spoken.split(/\s+/).filter(Boolean).length;

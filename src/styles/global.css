@@ -711,6 +711,20 @@ textarea.input { padding: 14px 16px; resize: none; }
 .voice-hints { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 820px; color: var(--muted); font-size: 0.9rem; }
 .voice-hints button { min-height: 52px; padding: 0 18px; border: 1px solid var(--line-2); border-radius: 999px; color: var(--text-2); }
 .voice-hints button:active { background: var(--panel-3); }
+.voice-orb { flex: none; aspect-ratio: 1; }
+.voice-quick { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 42vw), 1fr)); gap: 12px; width: min(820px, 100%); }
+/* Телефон: окно голоса помещается целиком, кнопка микрофона не сжимается и не заходит под «Закрыть». */
+@media (max-width: 600px) {
+  .voice-overlay { gap: 16px; padding: calc(96px + var(--safe-t)) 16px 24px; justify-content: flex-start; overflow-y: auto; }
+  .voice-overlay .voice-orb { width: 120px; height: 120px; }
+  .voice-overlay .voice-orb svg { width: 3.2rem; height: 3.2rem; }
+  .voice-overlay .voice-close { width: 64px; height: 64px; }
+  .voice-quick .btn { min-height: 64px; font-size: 1.05rem; padding: 0 10px; }
+  .voice-transcript { min-height: 1.4em; }
+}
+.voice-quick .btn { min-height: 72px; font-size: 1.15rem; justify-content: center; }
+.voice-examples { max-width: 760px; text-align: center; font-size: 0.85rem; }
+@media (max-height: 520px) { .voice-quick { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); } .voice-quick .btn { min-height: 56px; } .voice-examples { display: none; } }
 
 /* ============ Автомобиль ============ */
 
@@ -1436,3 +1450,7 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 @media (max-width: 640px) { .reminder-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .reminder-form #reminder-text { grid-column: 1 / -1; } }
 .server-usage { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line-2); }
 .server-usage small { color: var(--muted); }
+.home-work { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; padding: 12px 16px 4px; }
+.home-work .btn { justify-content: center; }
+.saved-line { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+.saved-line .link-btn { gap: 4px; }
