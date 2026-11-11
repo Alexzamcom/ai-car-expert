@@ -31,6 +31,8 @@ import {
   routeToPick,
   addPickAsStop,
   selectRoute,
+  savedPlacesStore,
+  setSavedPlace,
   type Place,
 } from '../lib/nav';
 import { LongPressDetector } from '../lib/geo/longpress';
@@ -91,6 +93,7 @@ export function Navigation() {
   const navQuery = useStore(navQueryStore);
   const favorites = useStore(favoritesStore);
   const recents = useStore(recentsStore);
+  const saved = useStore(savedPlacesStore);
   const theme = useStore(themeStore);
 
   const [follow, setFollow] = useState(true);
@@ -429,6 +432,20 @@ export function Navigation() {
               })}
               {!results && !searching && (
                 <>
+                  {(saved.home || saved.work) && (
+                    <div className="home-work">
+                      {saved.home && (
+                        <button className="btn btn-lg btn-primary" onClick={() => selectPlace(saved.home!)}>
+                          <Icon name="home" /> Домой
+                        </button>
+                      )}
+                      {saved.work && (
+                        <button className="btn btn-lg" onClick={() => selectPlace(saved.work!)}>
+                          <Icon name="flag" /> На работу
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div className="poi-chips">
                     {(Object.keys(POI_CATEGORIES) as PoiCategory[]).map((c) => (
                       <button
@@ -611,6 +628,7 @@ export function Navigation() {
                                 ? `${fmtDistance(straight, lang)} по прямой`
                                 : nav.dest.address}
                         </div>
+                        <SavedPlaceLinks dest={nav.dest} home={saved.home} work={saved.work} />
                         {nav.via && (
                           <div className="via-line">
                             <Icon name="flag" size="1em" /> через {nav.via.name}
@@ -702,6 +720,34 @@ export function Navigation() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+const samePlace = (a: Place | null, b: Place) => !!a && Math.abs(a.lat - b.lat) < 1e-5 && Math.abs(a.lon - b.lon) < 1e-5;
+
+/** «Сделать домом / работой»: дальше «едем домой» и кнопка «Домой» — без поиска адреса. */
+function SavedPlaceLinks({ dest, home, work }: { dest: Place; home: Place | null; work: Place | null }) {
+  const isHome = samePlace(home, dest);
+  const isWork = samePlace(work, dest);
+  if (isHome || isWork) {
+    return (
+      <div className="saved-line">
+        <Icon name={isHome ? 'home' : 'flag'} size="1em" /> {isHome ? 'Дом' : 'Работа'}
+        <button className="link-btn" onClick={() => setSavedPlace(isHome ? 'home' : 'work', null)}>
+          убрать
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="saved-line">
+      <button className="link-btn" onClick={() => { setSavedPlace('home', dest); toast('Сохранено как «Дом». Скажите «едем домой».', 'ok'); }}>
+        <Icon name="home" size="1em" /> Сделать домом
+      </button>
+      <button className="link-btn" onClick={() => { setSavedPlace('work', dest); toast('Сохранено как «Работа». Скажите «поехали на работу».', 'ok'); }}>
+        <Icon name="flag" size="1em" /> Сделать работой
+      </button>
     </div>
   );
 }

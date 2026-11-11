@@ -98,8 +98,13 @@ export function listVoices(lang: string): SpeechSynthesisVoice[] {
   return window.speechSynthesis.getVoices().filter((v) => v.lang.replace('_', '-').toLowerCase().startsWith(prefix));
 }
 
+let lastSpoken = '';
+/** Последняя озвученная фраза — для команды «повтори» (ответ помощника или подсказка навигации). */
+export const lastSpokenText = () => lastSpoken;
+
 export function speak(text: string, lang: string, opts: { onEnd?: () => void } = {}) {
-  if (!('speechSynthesis' in window)) {
+  if (text.trim()) lastSpoken = text;
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
     opts.onEnd?.();
     return;
   }

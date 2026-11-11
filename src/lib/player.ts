@@ -137,6 +137,50 @@ export async function playByQuery(query: string): Promise<{ ok: boolean; text: s
   }
 }
 
+/** Жанр (тег каталога) → своя станция с таким жанром или первая подходящая из каталога. */
+const GENRE_OWN: Record<string, RegExp> = {
+  chillout: /эмбиент|ambient|chill|лаунж|lounge|спокойн/i,
+  jazz: /джаз|jazz/i,
+  rock: /рок|rock/i,
+  pop: /поп|pop/i,
+  classical: /класс|classic/i,
+  dance: /электрон|dance|танц/i,
+  news: /новост|news/i,
+  retro: /ретро|retro|80|90/i,
+};
+export const GENRE_LABEL: Record<string, [string, string]> = {
+  jazz: ['джаз', 'джаз'], rock: ['рок', 'рок'], pop: ['поп-музыку', 'поп-музику'], classical: ['классику', 'класику'], chanson: ['шансон', 'шансон'],
+  dance: ['танцевальную музыку', 'танцювальну музику'], chillout: ['спокойную музыку', 'спокійну музику'], news: ['новости', 'новини'],
+  retro: ['ретро', 'ретро'], hiphop: ['хип-хоп', 'хіп-хоп'], blues: ['блюз', 'блюз'], country: ['кантри', 'кантрі'], metal: ['метал', 'метал'], kids: ['детское радио', 'дитяче радіо'],
+};
+
+export async function playByGenre(tag: string): Promise<{ ok: boolean; text: string }> {
+  const label = L(...(GENRE_LABEL[tag] ?? [tag, tag]));
+  const own = GENRE_OWN[tag] ? stationsStore.get().find((s) => GENRE_OWN[tag].test(`${s.genre ?? ''} ${s.name}`)) : undefined;
+  if (own) {
+    playStation(own);
+    return { ok: true, text: L(`Включаю ${label}: ${own.name}.`, `Вмикаю ${label}: ${own.name}.`) };
+  }
+  try {
+    const found = await searchStations({ tag });
+    if (!found.length) return { ok: false, text: L(`Не нашёл станций: ${label}.`, `Не знайшов станцій: ${label}.`) };
+    playStation(found[0], found);
+    return { ok: true, text: L(`Включаю ${label}: ${found[0].name}.`, `Вмикаю ${label}: ${found[0].name}.`) };
+  } catch {
+    return { ok: false, text: L('Каталог радиостанций недоступен.', 'Каталог радіостанцій недоступний.') };
+  }
+}
+
+/** Громкость голосом. На iPad/iPhone веб-приложение громкость не меняет — только кнопки устройства. */
+export function stepVolume(dir: 1 | -1): { ok: boolean; text: string } {
+  if (!volumeControllable) {
+    return { ok: false, text: L('Громкость на iPad меняется кнопками сбоку или на руле.', 'Гучність на iPad змінюється кнопками збоку або на кермі.') };
+  }
+  const v = Math.min(1, Math.max(0.1, Math.round((playerStore.get().volume + dir * 0.15) * 100) / 100));
+  setVolume(v);
+  return { ok: true, text: L(`Громкость ${Math.round(v * 100)}%.`, `Гучність ${Math.round(v * 100)}%.`) };
+}
+
 /* ---------- Каталог Radio Browser (radio-browser.info) ---------- */
 
 interface RbStation {

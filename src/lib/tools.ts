@@ -11,12 +11,16 @@ import {
   poiStore,
   startGuidance,
   addStop,
+  removeStop,
+  selectRoute,
+  routeSummary,
   placeFromPoi,
   searchPlaces,
   currentPos,
   pickPoint,
+  spokenDuration,
 } from './nav';
-import { playByQuery, pause, resume, next, prev, stop, playerStore } from './player';
+import { playByQuery, playByGenre, stepVolume, pause, resume, next, prev, stop, playerStore } from './player';
 import { findApp, launchApp, APPS } from './apps';
 import { openYouTubeMusic, ytmControlHint } from './music/youtube';
 import { setActiveSource, musicStore } from './music/sources';
@@ -47,15 +51,20 @@ export const TOOLS: ToolDef[] = [
     query: { type: 'string', description: 'Адрес или название (если не категория)' },
     category: { type: 'string', enum: POI_ENUM, description: 'Категория объекта по пути' },
   }),
+  fn('remove_stop', 'Убрать промежуточную остановку из маршрута.'),
+  fn('choose_route', 'Выбрать вариант маршрута (0 — основной, 1 — второй…), пока ведение не начато.', { index: { type: 'number' } }, ['index']),
   fn('start_navigation', 'Начать ведение по уже построенному маршруту.'),
   fn('stop_navigation', 'Завершить маршрут.'),
   fn('find_along_route', 'Найти объекты по маршруту (если он есть) или рядом и показать список.', { category: { type: 'string', enum: POI_ENUM } }, ['category']),
-  fn('play_radio', 'Включить интернет-радио. Без названия — продолжить последнюю станцию.', { station: { type: 'string', description: 'Название станции (необязательно)' } }),
+  fn('play_radio', 'Включить интернет-радио: по названию станции, по жанру или продолжить последнюю.', {
+    station: { type: 'string', description: 'Название станции (необязательно)' },
+    genre: { type: 'string', enum: ['jazz', 'rock', 'pop', 'classical', 'chanson', 'dance', 'chillout', 'news', 'retro', 'hiphop', 'blues', 'country', 'metal', 'kids'], description: 'Жанр (необязательно)' },
+  }),
   fn('open_music_service', 'Открыть музыкальный источник: встроенное интернет-радио или приложение YouTube Music. Выбрать трек в YouTube Music нельзя.', {
     service: { type: 'string', enum: ['radio', 'youtube-music'] },
   }, ['service']),
   fn('play_music', 'Включить музыку из предпочитаемого источника пользователя.'),
-  fn('media_control', 'Управление встроенным интернет-радио. YouTube Music этим не управляется — для него подскажи системные способы (Siri / Google Ассистент, Пункт управления / шторка, кнопки на руле).', { action: { type: 'string', enum: ['play', 'pause', 'next', 'previous', 'stop'] } }, ['action']),
+  fn('media_control', 'Управление встроенным интернет-радио. YouTube Music этим не управляется — для него подскажи системные способы (Siri / Google Ассистент, Пункт управления / шторка, кнопки на руле).', { action: { type: 'string', enum: ['play', 'pause', 'next', 'previous', 'stop', 'louder', 'quieter'] } }, ['action']),
   fn('open_section', 'Открыть раздел интерфейса.', {
     section: { type: 'string', enum: ['navigation', 'media', 'assistant', 'apps', 'trip', 'vehicle', 'manual', 'service', 'diagnostics', 'settings'] },
   }, ['section']),
@@ -77,7 +86,7 @@ export const TOOLS: ToolDef[] = [
   fn('set_theme', 'Тема оформления: день, ночь или автоматически по солнцу.', { mode: { type: 'string', enum: ['auto', 'day', 'night'] } }, ['mode']),
   fn('decode_dtc', 'Расшифровать код ошибки OBD-II.', { code: { type: 'string' } }, ['code']),
   fn('lookup_vehicle_knowledge', 'Поиск в базе знаний об автомобиле владельца. Возвращает факты со статусом достоверности.', { query: { type: 'string' } }, ['query']),
-  fn('get_status', 'Текущее состояние: маршрут, музыка, геопозиция.'),
+  fn('get_status', 'Текущее состояние коротко: маршрут (осталось, прибытие, ближайший манёвр) или музыка.', { topic: { type: 'string', enum: ['route', 'music', 'all'] } }),
 ];
 
 export type ToolResult = { ok: boolean; text: string };
@@ -149,6 +158,20 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
       await addStop(res[0]);
       return stopResult(res[0].name);
     }
+    case 'remove_stop': {
+      if (!navStore.get().via) return { ok: false, text: L('Остановки нет.', 'Зупинки немає.') };
+      await removeStop();
+      return { ok: true, text: L('Остановка убрана.', 'Зупинку прибрано.') };
+    }
+    case 'choose_route': {
+      const s = navStore.get();
+      const i = numArg('index') ?? 1;
+      if (s.status === 'guiding') return { ok: false, text: L('Во время ведения вариант не меняется.', 'Під час ведення варіант не змінюється.') };
+      if (!s.routes[i]) return { ok: false, text: s.routes.length > 1 ? L('Такого варианта нет.', 'Такого варіанту немає.') : L('Другого варианта нет.', 'Іншого варіанту немає.') };
+      selectRoute(i);
+      const r = s.routes[i];
+      return { ok: true, text: L(`Вариант ${i + 1}: ${fmtDistance(r.distance)}, ${spokenDuration(r.duration)}.`, `Варіант ${i + 1}: ${fmtDistance(r.distance, 'uk')}, ${spokenDuration(r.duration)}.`) };
+    }
     case 'start_navigation':
       if (!navStore.get().route) return { ok: false, text: L('Маршрут ещё не построен.', 'Маршрут ще не побудовано.') };
       startGuidance();
@@ -163,11 +186,15 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
       await findPoi(cat);
       const p = poiStore.get();
       if (p.error) return { ok: false, text: p.error };
-      const top = p.items.slice(0, 3).map((x) => `${x.name}${x.alongM != null ? ` ${L('через', 'через')} ${fmtDistance(Math.max(0, x.alongM))}` : x.distanceM != null ? ` ${L('в', 'за')} ${fmtDistance(x.distanceM)}` : ''}`);
-      return { ok: true, text: L(`Найдено ${p.items.length}. Ближайшие: ${top.join('; ')}. Список на карте.`, `Знайдено ${p.items.length}. Найближчі: ${top.join('; ')}. Список на мапі.`) };
+      // Для водителя — один ближайший вариант; остальные на карте.
+      const x = p.items[0];
+      const where = x.alongM != null ? ` ${L('через', 'через')} ${fmtDistance(Math.max(0, x.alongM))}` : x.distanceM != null ? ` ${L('в', 'за')} ${fmtDistance(x.distanceM)}` : '';
+      const more = p.items.length > 1 ? L(` Ещё ${p.items.length - 1} на карте.`, ` Ще ${p.items.length - 1} на мапі.`) : '';
+      return { ok: true, text: L(`Ближайшее: ${x.name}${where}.${more}`, `Найближче: ${x.name}${where}.${more}`) };
     }
     case 'play_radio':
       openSection('media');
+      if (str('genre') && !str('station')) return playByGenre(str('genre'));
       return playByQuery(str('station'));
     case 'open_music_service': {
       const svc = str('service');
@@ -190,6 +217,7 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
       if (musicStore.get().active === 'youtube-music' && !playerStore.get().playing) {
         return { ok: false, text: ytmControlHint() };
       }
+      if (a === 'louder' || a === 'quieter') return stepVolume(a === 'louder' ? 1 : -1);
       if (a === 'play') resume();
       else if (a === 'pause') pause();
       else if (a === 'next') next();
@@ -261,6 +289,13 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
       return { ok: true, text: facts.map((f) => `${f.title} [${STATUS_LABEL[f.status]}]: ${f.text}`).join('\n') };
     }
     case 'get_status': {
+      const topic = str('topic');
+      if (topic === 'route') return { ok: true, text: routeSummary() };
+      if (topic === 'music') {
+        const p = playerStore.get();
+        if (musicStore.get().active === 'youtube-music' && !p.playing) return { ok: true, text: L('Выбран YouTube Music — что в нём играет, приложение не видит.', 'Обрано YouTube Music — що в ньому грає, застосунок не бачить.') };
+        return { ok: true, text: p.current ? (p.playing ? L(`Играет ${p.current.title}.`, `Грає ${p.current.title}.`) : L(`На паузе: ${p.current.title}.`, `На паузі: ${p.current.title}.`)) : L('Музыка не играет.', 'Музика не грає.') };
+      }
       const n = navStore.get();
       const p = playerStore.get();
       return {

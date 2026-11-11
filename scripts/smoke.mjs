@@ -433,6 +433,17 @@ try {
       await chips.nth(0).click();
     }
     await page.screenshot({ path: `${out}/02b-ipad-route-alternatives.png` });
+    // «Сделать домом» и быстрые действия голосом
+    await page.click('.route-card button:has-text("Сделать домом")').catch(() => {});
+    check('«Сделать домом» сохраняет адрес', await page.locator('.route-card .saved-line:has-text("Дом")').isVisible().catch(() => false));
+    await page.click('.dock [aria-label="Голосовая команда"]');
+    await page.waitForSelector('.voice-quick .btn', { timeout: 5000 }).catch(() => {});
+    const qa = await page.locator('.voice-quick .btn').evaluateAll((els) => els.map((e) => [e.textContent?.trim(), Math.round(e.getBoundingClientRect().height)]));
+    check('Голос: быстрые действия по ситуации, крупные', qa.length >= 3 && qa[0][0] === 'Поехали' && qa.every(([, h]) => h >= 56), qa.map(([t, h]) => `${t} ${h}px`).join(', '));
+    await page.screenshot({ path: `${out}/02c-ipad-voice-quick.png` });
+    await page.click('.voice-quick .btn:has-text("Сколько ехать")');
+    await page.waitForSelector('.toast:has-text("Осталось")', { timeout: 5000 }).catch(() => {});
+    check('Голос: «Сколько ехать» в одно касание — остаток и прибытие', await page.locator('.toast:has-text("прибытие в")').isVisible().catch(() => false), (await page.locator('.toast').last().textContent().catch(() => '')) ?? '');
     // Остановка по пути долгим нажатием
     await longPress(cdp, page, await freeMapPoint(page, 0.3, 0.3));
     await page.waitForSelector('.pick-card button:has-text("Добавить остановку")', { timeout: 3000 }).catch(() => {});
@@ -444,6 +455,15 @@ try {
     check('Маршрут с остановкой без наложений', !problems.length, problems.join('; '));
     await page.locator('.route-card button[aria-label="Сбросить маршрут"]').click().catch(() => {});
   }
+
+  // «Домой» в одно касание
+  await page.click('#map-search');
+  const homeBtn = page.locator('.home-work button:has-text("Домой")');
+  const homeShown = await homeBtn.isVisible().catch(() => false);
+  if (homeShown) await homeBtn.click();
+  await page.waitForSelector('.route-card .btn-primary', { timeout: 15000 }).catch(() => {});
+  check('Кнопка «Домой» строит маршрут одним касанием', homeShown && (await page.locator('.route-card .saved-line:has-text("Дом")').isVisible().catch(() => false)));
+  await page.locator('.route-card button[aria-label="Сбросить маршрут"]').click().catch(() => {});
 
   // Маршрут через поиск
   await page.fill('#map-search', 'Театр Сатиры');
@@ -683,6 +703,18 @@ try {
     await ph.waitForTimeout(600);
     let pr = await layoutProblems(ph);
     check(`${name}: главный экран без наложений`, !pr.length, pr.join('; '));
+    await ph.click('.dock [aria-label="Голосовая команда"]');
+    await ph.waitForSelector('.voice-quick .btn', { timeout: 5000 }).catch(() => {});
+    const vq = await ph.evaluate(() => {
+      const b = [...document.querySelectorAll('.voice-quick .btn')].map((e) => e.getBoundingClientRect());
+      const orb = document.querySelector('.voice-orb').getBoundingClientRect();
+      const close = document.querySelector('.voice-close').getBoundingClientRect();
+      const hit = !(orb.right <= close.left || orb.left >= close.right || orb.bottom <= close.top || orb.top >= close.bottom);
+      return { n: b.length, minH: Math.min(...b.map((r) => r.height)), out: b.some((r) => r.right > innerWidth + 1 || r.left < -1), scroll: document.documentElement.scrollWidth > innerWidth + 1, round: Math.abs(orb.width - orb.height) < 2, orbOverClose: hit };
+    });
+    check(`${name}: окно голоса — быстрые действия видны, без выхода за экран`, vq.n >= 3 && vq.minH >= 48 && !vq.out && !vq.scroll && vq.round && !vq.orbOverClose, JSON.stringify(vq));
+    await ph.screenshot({ path: `${out}/08v-${name.replace(/\s+/g, '-').toLowerCase()}-voice.png` });
+    await ph.click('.voice-close');
     await checkLongPress(name, c, ph);
     await ph.click('.pick-card button:has-text("Отмена")').catch(() => {});
     await ph.fill('#map-search', 'Театр Сатиры');

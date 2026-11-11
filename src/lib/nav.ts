@@ -49,6 +49,56 @@ export const navQueryStore = createStore<{ query: string; nonce: number } | null
 
 export const favoritesStore = createStore<Place[]>([], 'favorites');
 export const recentsStore = createStore<Place[]>([], 'recents');
+/** «Дом» и «Работа» — для команд «едем домой», «на работу» и кнопок в одно касание. */
+export const savedPlacesStore = createStore<{ home: Place | null; work: Place | null }>({ home: null, work: null }, 'saved-places');
+
+export function setSavedPlace(kind: 'home' | 'work', place: Place | null) {
+  savedPlacesStore.set((s) => ({ ...s, [kind]: place ? { ...place, id: `${kind}:${place.lat},${place.lon}` } : null }));
+}
+
+/* ---------- Короткие фразы для озвучивания ---------- */
+
+const plural = (n: number, one: string, few: string, many: string) => {
+  const a = Math.abs(n) % 100;
+  const b = a % 10;
+  if (a > 10 && a < 20) return many;
+  if (b === 1) return one;
+  if (b >= 2 && b <= 4) return few;
+  return many;
+};
+
+/** «6 минут», «1 час 20 минут», «2 години 5 хвилин» — полными словами, чтобы синтез речи читал естественно. */
+export function spokenDuration(sec: number, lang: Lang = navLang()) {
+  const total = Math.max(1, Math.round(sec / 60));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  const uk = lang === 'uk';
+  const hs = h ? `${h} ${uk ? plural(h, 'година', 'години', 'годин') : plural(h, 'час', 'часа', 'часов')}` : '';
+  const ms = m ? `${m} ${uk ? plural(m, 'хвилина', 'хвилини', 'хвилин') : plural(m, 'минута', 'минуты', 'минут')}` : '';
+  return [hs, ms].filter(Boolean).join(' ');
+}
+
+const clock = (sec: number) => new Date(Date.now() + sec * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+
+/** Состояние маршрута одной-двумя фразами: «Осталось 12 км, 15 минут, прибытие в 14:30. Через 300 м поверните направо.» */
+export function routeSummary(): string {
+  const s = navStore.get();
+  const lang = navLang();
+  if (!s.dest) return L('Маршрута нет.', 'Маршруту немає.');
+  if (s.status === 'routing') return L('Строю маршрут.', 'Будую маршрут.');
+  if (!s.route) return s.error ?? L(`Маршрут до «${s.dest.name}» не построен.`, `Маршрут до «${s.dest.name}» не побудовано.`);
+  if (s.status === 'arrived') return L('Вы на месте.', 'Ви на місці.');
+  const remainM = s.progress?.remainingM ?? s.route.distance;
+  const remainS = s.route.duration * (remainM / Math.max(1, s.route.distance));
+  const head = L(
+    `Осталось ${fmtDistance(remainM)}, ${spokenDuration(remainS, lang)}, прибытие в ${clock(remainS)}.`,
+    `Залишилось ${fmtDistance(remainM, 'uk')}, ${spokenDuration(remainS, lang)}, прибуття о ${clock(remainS)}.`,
+  );
+  const p = s.progress;
+  const step = p ? s.route.steps[p.stepIndex] : null;
+  if (s.status === 'guiding' && step && p) return `${head} ${L('Через', 'Через')} ${fmtDistance(p.toStepM, lang)} ${stepText(step, lang)}.`;
+  return s.status === 'preview' ? `${head} ${L('Скажите «поехали», чтобы начать.', 'Скажіть «поїхали», щоб почати.')}` : head;
+}
 
 let watchId: number | null = null;
 let lastFix: LatLon | null = null;
@@ -469,24 +519,49 @@ export function placeFromPoi(p: Poi): Place {
 }
 
 /** Найти место по тексту и сразу построить маршрут (голос, Grok). */
+const HOME_WORDS = /^(дом|дім|домой|додому|home)$/;
+const WORK_WORDS = /^(работа|робота|на работу|на роботу|work)$/;
+
+/** Место без поиска: «дом», «работа», избранное или недавнее с таким названием. */
+export function knownPlace(query: string): Place | null | 'home-missing' | 'work-missing' {
+  const q = query.trim().toLowerCase().replace(/ё/g, 'е');
+  const saved = savedPlacesStore.get();
+  if (HOME_WORDS.test(q)) return saved.home ?? 'home-missing';
+  if (WORK_WORDS.test(q)) return saved.work ?? 'work-missing';
+  const norm = (n: string) => n.toLowerCase().replace(/ё/g, 'е');
+  // Падежи («до ашана», «в макдональдс»): совпадение по основе слова.
+  const stem = q.length > 4 ? q.slice(0, -1) : q;
+  return [...favoritesStore.get(), ...recentsStore.get()].find((p) => norm(p.name) === q || (stem.length > 3 && norm(p.name).startsWith(stem))) ?? null;
+}
+
 export async function navigateToQuery(query: string): Promise<{ ok: boolean; text: string }> {
   try {
-    const results = await searchPlaces(query, currentPos() ?? undefined);
-    if (!results.length) return { ok: false, text: L(`Не нашёл «${query}».`, `Не знайшов «${query}».`) };
-    await setDestination(results[0]);
+    const known = knownPlace(query);
+    if (known === 'home-missing' || known === 'work-missing') {
+      const home = known === 'home-missing';
+      return {
+        ok: false,
+        text: home
+          ? L('Адрес дома не сохранён. Постройте маршрут к дому и нажмите «Сделать домом» в карточке маршрута.', 'Адресу дому не збережено. Побудуйте маршрут до дому й натисніть «Зробити домом» у картці маршруту.')
+          : L('Адрес работы не сохранён. Постройте маршрут к работе и нажмите «Сделать работой» в карточке маршрута.', 'Адресу роботи не збережено. Побудуйте маршрут до роботи й натисніть «Зробити роботою» у картці маршруту.'),
+      };
+    }
+    const target = known ?? (await searchPlaces(query, currentPos() ?? undefined))[0];
+    if (!target) return { ok: false, text: L(`Не нашёл «${query}».`, `Не знайшов «${query}».`) };
+    await setDestination(target);
     const s = navStore.get();
     if (s.route) {
-      const min = Math.round(s.route.duration / 60);
-      const alt = s.routes.length > 1 ? L(` Вариантов: ${s.routes.length}.`, ` Варіантів: ${s.routes.length}.`) : '';
+      const lang = navLang();
+      const alt = s.routes.length > 1 ? L(' Есть другой вариант.', ' Є інший варіант.') : '';
       return {
         ok: true,
         text: L(
-          `Маршрут до «${results[0].name}»: ${fmtDistance(s.route.distance)}, около ${min} мин без учёта пробок.${alt}`,
-          `Маршрут до «${results[0].name}»: ${fmtDistance(s.route.distance, 'uk')}, близько ${min} хв без урахування заторів.${alt}`,
+          `Маршрут до «${target.name}»: ${fmtDistance(s.route.distance)}, ${spokenDuration(s.route.duration, lang)}.${alt}`,
+          `Маршрут до «${target.name}»: ${fmtDistance(s.route.distance, 'uk')}, ${spokenDuration(s.route.duration, lang)}.${alt}`,
         ),
       };
     }
-    return { ok: true, text: `${L('Нашёл', 'Знайшов')} «${results[0].name}». ${s.error ?? ''}`.trim() };
+    return { ok: true, text: `${L('Нашёл', 'Знайшов')} «${target.name}». ${s.error ?? ''}`.trim() };
   } catch (e) {
     return { ok: false, text: navigator.onLine ? (e as Error).message : L('Нет интернета для поиска адреса.', 'Немає інтернету для пошуку адреси.') };
   }
