@@ -1,7 +1,8 @@
 // Прокси AI Car Expert → OpenAI или xAI Grok (формат Chat Completions).
 // Ключи провайдеров хранятся только в секретах сервера (OPENAI_API_KEY, XAI_API_KEY) и никогда не попадают в браузер.
 // Доступ: только с разрешённых Origin и с токеном доступа приложения (ACCESS_TOKEN).
-// Расходы ограничивает сервер: модель, длина ответа, запросов в минуту и в сутки задаются здесь, а не клиентом.
+// Расходы ограничивает сервер: модель, длина ответа, запросов в минуту и в сутки и денежный бюджет в месяц
+// задаются здесь, а не клиентом. Счётчики — в Cloudflare KV (привязка USAGE), общие для всех экземпляров.
 
 const MAX_BODY = 96 * 1024;
 const MAX_MESSAGES = 40;
@@ -16,7 +17,9 @@ export const PROVIDERS = {
     url: 'https://api.openai.com/v1/chat/completions',
     keyEnv: 'OPENAI_API_KEY',
     modelEnv: 'OPENAI_MODEL',
-    defaultModel: 'gpt-5-mini',
+    // Список предпочтений: берётся первая модель, доступная ключу (по /v1/models). Экономичные модели с function calling.
+    defaultModel: 'gpt-5-mini,gpt-5.4-mini,gpt-4.1-mini',
+    modelsUrl: 'https://api.openai.com/v1/models',
   },
   grok: {
     label: 'Grok',
@@ -26,6 +29,70 @@ export const PROVIDERS = {
     defaultModel: 'grok-4',
   },
 };
+
+/* Цены, $ за 1 млн токенов (вход / выход) — для серверного бюджета. Сверяйте со страницей тарифов провайдера;
+   переопределяются переменными OPENAI_PRICE_IN/OUT, GROK_PRICE_IN/OUT. Неизвестная модель считается по
+   завышенной цене — бюджет срабатывает раньше, а не позже. */
+export const PRICES = {
+  'gpt-5-nano': [0.05, 0.4],
+  'gpt-5-mini': [0.25, 2.0],
+  'gpt-5.4-nano': [0.2, 1.25],
+  'gpt-5.4-mini': [0.75, 4.5],
+  'gpt-4.1-nano': [0.1, 0.4],
+  'gpt-4.1-mini': [0.4, 1.6],
+};
+const UNKNOWN_PRICE = [3, 15];
+
+export function priceFor(provider, model, env) {
+  const pre = provider === 'openai' ? 'OPENAI' : 'GROK';
+  const inEnv = Number(env[`${pre}_PRICE_IN`]);
+  const outEnv = Number(env[`${pre}_PRICE_OUT`]);
+  if (inEnv > 0 && outEnv > 0) return [inEnv, outEnv];
+  const base = Object.keys(PRICES)
+    .sort((a, b) => b.length - a.length)
+    .find((k) => model === k || model.startsWith(`${k}-`));
+  return base ? PRICES[base] : UNKNOWN_PRICE;
+}
+
+export function costUsd(price, usage) {
+  return ((Number(usage?.prompt_tokens) || 0) * price[0] + (Number(usage?.completion_tokens) || 0) * price[1]) / 1e6;
+}
+
+/** Модели-кандидаты из настройки (через запятую). */
+export function modelCandidates(provider, env) {
+  const p = PROVIDERS[provider];
+  return String(env[p.modelEnv] || p.defaultModel)
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+}
+
+/* Какая модель доступна ключу: один запрос к списку моделей, результат кэшируется на час в экземпляре. */
+const modelCache = new Map();
+export function __resetModels() {
+  modelCache.clear();
+}
+export async function resolveModels(provider, env, fetchImpl, now = Date.now()) {
+  const list = modelCandidates(provider, env);
+  const p = PROVIDERS[provider];
+  if (list.length < 2 || !p.modelsUrl) return list;
+  const hit = modelCache.get(provider);
+  if (hit && now - hit.at < 3600_000) return hit.list;
+  let ordered = list;
+  try {
+    const res = await fetchImpl(p.modelsUrl, { headers: { Authorization: `Bearer ${env[p.keyEnv]}` } });
+    if (res.ok) {
+      const ids = new Set(((await res.json())?.data ?? []).map((m) => m.id));
+      const available = list.filter((m) => ids.has(m));
+      // Доступные — первыми; остальные остаются запасными (вдруг список моделей неполный).
+      ordered = [...available, ...list.filter((m) => !ids.has(m))];
+    }
+  } catch {
+    /* список моделей недоступен — пробуем по порядку */
+  }
+  modelCache.set(provider, { at: now, list: ordered });
+  return ordered;
+}
 
 export function configuredProviders(env) {
   return Object.keys(PROVIDERS).filter((p) => Boolean(env[PROVIDERS[p].keyEnv]));
@@ -46,11 +113,10 @@ export function pickProvider(requested, env) {
 }
 
 /** Тело запроса к провайдеру. У OpenAI новые модели принимают max_completion_tokens и не принимают temperature. */
-export function upstreamBody(provider, env, v) {
-  const p = PROVIDERS[provider];
+export function upstreamBody(provider, env, v, model = modelCandidates(provider, env)[0], opts = {}) {
   const maxTokens = Number(env.MAX_TOKENS || 700);
   const base = {
-    model: env[p.modelEnv] || p.defaultModel,
+    model,
     messages: v.messages,
     ...(v.tools?.length ? { tools: v.tools, tool_choice: 'auto' } : {}),
   };
@@ -58,7 +124,7 @@ export function upstreamBody(provider, env, v) {
     return {
       ...base,
       max_completion_tokens: maxTokens,
-      ...(env.OPENAI_REASONING_EFFORT ? { reasoning_effort: env.OPENAI_REASONING_EFFORT } : {}),
+      ...(env.OPENAI_REASONING_EFFORT && !opts.noReasoning ? { reasoning_effort: env.OPENAI_REASONING_EFFORT } : {}),
     };
   }
   return { ...base, max_tokens: maxTokens, temperature: 0.4 };
@@ -165,6 +231,47 @@ export function __resetDaily() {
   daily.day = '';
   daily.count = 0;
   hits.clear();
+  memCost.month = '';
+  memCost.micro = 0;
+}
+
+/* Денежный бюджет сервера в месяц (MONTHLY_BUDGET_USD). Счёт в микродолларах по usage из ответа провайдера. */
+const memCost = { month: '', micro: 0 };
+export async function monthSpentUsd(env, now = new Date()) {
+  const month = now.toISOString().slice(0, 7);
+  if (env.USAGE?.get) return Number((await env.USAGE.get(`cost:${month}`)) || 0) / 1e6;
+  return memCost.month === month ? memCost.micro / 1e6 : 0;
+}
+export async function addSpend(env, usd, now = new Date()) {
+  const month = now.toISOString().slice(0, 7);
+  const micro = Math.ceil(usd * 1e6);
+  if (env.USAGE?.get && env.USAGE?.put) {
+    const cur = Number((await env.USAGE.get(`cost:${month}`)) || 0);
+    await env.USAGE.put(`cost:${month}`, String(cur + micro), { expirationTtl: 62 * 86400 });
+    return;
+  }
+  if (memCost.month !== month) {
+    memCost.month = month;
+    memCost.micro = 0;
+  }
+  memCost.micro += micro;
+}
+export async function requestsToday(env, now = new Date()) {
+  const day = now.toISOString().slice(0, 10);
+  if (env.USAGE?.get) return Number((await env.USAGE.get(`requests:${day}`)) || 0);
+  return daily.day === day ? daily.count : 0;
+}
+const budgetUsd = (env) => Number(env.MONTHLY_BUDGET_USD ?? 5);
+
+async function authorize(request, env, cors) {
+  if (!cors) return json(403, { error: 'Источник запроса не разрешён' });
+  if (!env.ACCESS_TOKEN) return json(500, { error: 'Сервер не настроен: нет ACCESS_TOKEN' }, cors);
+  const auth = request.headers.get('Authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!safeEqual(token, env.ACCESS_TOKEN)) return json(401, { error: 'Неверный токен доступа' }, cors);
+  // Без постоянного хранилища счётчики живут в одном экземпляре — бюджет не гарантирован. Можно запретить так работать.
+  if (env.REQUIRE_KV === '1' && !env.USAGE?.get) return json(500, { error: 'Сервер не настроен: нет хранилища лимитов (KV USAGE)' }, cors);
+  return null;
 }
 
 export async function handle(request, env, fetchImpl = fetch) {
@@ -178,7 +285,10 @@ export async function handle(request, env, fetchImpl = fetch) {
     const ready = configuredProviders(env);
     const def = pickProvider(undefined, env).provider ?? null;
     const providers = Object.fromEntries(
-      Object.entries(PROVIDERS).map(([id, p]) => [id, { configured: ready.includes(id), model: env[p.modelEnv] || p.defaultModel }]),
+      Object.keys(PROVIDERS).map((id) => [
+        id,
+        { configured: ready.includes(id), model: modelCache.get(id)?.list[0] ?? modelCandidates(id, env)[0], candidates: modelCandidates(id, env) },
+      ]),
     );
     return json(
       200,
@@ -189,19 +299,39 @@ export async function handle(request, env, fetchImpl = fetch) {
         // Совместимость с прежней версией приложения:
         keyConfigured: ready.length > 0,
         model: def ? providers[def].model : null,
-        limits: { maxTokens: Number(env.MAX_TOKENS || 700), perMinute: Number(env.RATE_LIMIT_PER_MIN || 30), perDay: Number(env.DAILY_REQUEST_LIMIT || 300) },
+        limits: {
+          maxTokens: Number(env.MAX_TOKENS || 700),
+          perMinute: Number(env.RATE_LIMIT_PER_MIN || 30),
+          perDay: Number(env.DAILY_REQUEST_LIMIT || 300),
+          monthlyBudgetUsd: budgetUsd(env),
+          persistent: Boolean(env.USAGE?.get),
+        },
       },
       cors || {},
     );
   }
 
-  if (request.method !== 'POST') return json(405, { error: 'Метод не поддерживается' }, cors || {});
-  if (!cors) return json(403, { error: 'Источник запроса не разрешён' });
-  if (!env.ACCESS_TOKEN) return json(500, { error: 'Сервер не настроен: нет ACCESS_TOKEN' }, cors);
+  // Расход сервера — только с токеном приложения.
+  if (request.method === 'GET' && url.pathname.endsWith('/usage')) {
+    const denied = await authorize(request, env, cors);
+    if (denied) return denied;
+    return json(
+      200,
+      {
+        month: new Date().toISOString().slice(0, 7),
+        spentUsd: Math.round((await monthSpentUsd(env)) * 1e4) / 1e4,
+        budgetUsd: budgetUsd(env),
+        requestsToday: await requestsToday(env),
+        dailyLimit: Number(env.DAILY_REQUEST_LIMIT || 300),
+        persistent: Boolean(env.USAGE?.get),
+      },
+      cors,
+    );
+  }
 
-  const auth = request.headers.get('Authorization') || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-  if (!safeEqual(token, env.ACCESS_TOKEN)) return json(401, { error: 'Неверный токен доступа' }, cors);
+  if (request.method !== 'POST') return json(405, { error: 'Метод не поддерживается' }, cors || {});
+  const denied = await authorize(request, env, cors);
+  if (denied) return denied;
 
   const ip = request.headers.get('CF-Connecting-IP') || 'local';
   if (rateLimited(ip, Number(env.RATE_LIMIT_PER_MIN || 30))) return json(429, { error: 'Слишком много запросов, подождите минуту' }, cors);
@@ -222,13 +352,30 @@ export async function handle(request, env, fetchImpl = fetch) {
   const provider = picked.provider;
   const p = PROVIDERS[provider];
 
+  const budget = budgetUsd(env);
+  if (budget > 0 && (await monthSpentUsd(env)) >= budget) return json(429, { error: 'Месячный бюджет сервера исчерпан' }, cors);
   if (await dailyLimitReached(env)) return json(429, { error: 'Суточный лимит запросов сервера исчерпан' }, cors);
 
-  const upstream = await fetchImpl(p.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env[p.keyEnv]}` },
-    body: JSON.stringify(upstreamBody(provider, env, v)),
-  });
+  // Модель: первая доступная из списка. Если провайдер не принял модель или параметр — следующая попытка.
+  const models = await resolveModels(provider, env, fetchImpl);
+  let upstream;
+  let model = models[0];
+  let noReasoning = false;
+  for (let attempt = 0, i = 0; attempt < 4 && i < models.length; attempt++) {
+    model = models[i];
+    upstream = await fetchImpl(p.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env[p.keyEnv]}` },
+      body: JSON.stringify(upstreamBody(provider, env, v, model, { noReasoning })),
+    });
+    if (upstream.ok || (upstream.status !== 400 && upstream.status !== 404)) break;
+    const err = String((await upstream.clone().json().catch(() => null))?.error?.message ?? '').toLowerCase();
+    if (!noReasoning && err.includes('reasoning')) noReasoning = true;
+    else if (upstream.status === 404 || err.includes('model')) {
+      i += 1;
+      modelCache.delete(provider);
+    } else break;
+  }
 
   if (!upstream.ok) {
     const status = upstream.status === 429 ? 429 : 502;
@@ -238,6 +385,7 @@ export async function handle(request, env, fetchImpl = fetch) {
   const data = await upstream.json();
   const msg = data?.choices?.[0]?.message ?? {};
   const u = data?.usage ?? {};
+  await addSpend(env, costUsd(priceFor(provider, String(data?.model || model), env), u));
   return json(
     200,
     {

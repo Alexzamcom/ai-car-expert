@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import osrm from '../fixtures/osrm-route.json';
 import nominatim from '../fixtures/nominatim.json';
-import { parseCommand } from '../../src/lib/voiceCommands';
+import { parseCommand, extractRelativeDate } from '../../src/lib/voiceCommands';
 import { decideRoute, sendToAssistant, chatStore, chatBusyStore, systemPrompt, answerLocally, speechText } from '../../src/lib/assistant';
 import { cloudBlock, currentUsage, recordUsage, usageStore, resetUsage, estimateCost } from '../../src/lib/ai/usage';
 import { buildContext } from '../../src/lib/ai/context';
@@ -79,6 +79,31 @@ describe('Новые локальные команды', () => {
     set({ vehicle: { ...base.vehicle, odometerKm: 150000 } });
     expect(tool('напомни заменить масло через 5 000 км')).toEqual(['add_reminder', { text: 'заменить масло', due_km: 155000 }]);
     expect(tool('нагадай замінити мастило через 5000 км')).toEqual(['add_reminder', { text: 'замінити мастило', due_km: 155000 }]);
+  });
+  it('напоминание с относительной датой (ru/uk)', () => {
+    const now = new Date(2026, 10, 11);
+    expect(extractRelativeDate('через тиждень перевірити тиск у шинах', now)).toEqual({ date: '2026-11-18', text: 'перевірити тиск у шинах' });
+    expect(extractRelativeDate('завтра заехать на мойку', now)).toEqual({ date: '2026-11-12', text: 'заехать на мойку' });
+    expect(extractRelativeDate('проверить шины через 3 дня', now)).toEqual({ date: '2026-11-14', text: 'проверить шины' });
+    expect(extractRelativeDate('через два місяці замінити фільтр', now)).toEqual({ date: '2027-01-11', text: 'замінити фільтр' });
+    expect(extractRelativeDate('проверить шины', now)).toEqual({ date: null, text: 'проверить шины' });
+    const [name, a] = tool('Нагадай мені через тиждень перевірити тиск у шинах') as [string, Record<string, unknown>];
+    expect(name).toBe('add_reminder');
+    expect(a.text).toBe('перевірити тиск у шинах');
+    expect(a.due_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // Непонятный срок — уточнит ИИ.
+    expect(tool('напомни через полгода после ТО проверить тормоза')).toEqual(['ask']);
+  });
+  it('«включи навигацию до …» (кириллица в регулярных выражениях)', () => {
+    expect(tool('включи навигацию до Одессы')).toEqual(['navigate_to', { destination: 'одессы' }]);
+  });
+  it('«добавь заправку в маршрут» — остановка, «найди заправку» — список', () => {
+    expect(tool('По пути хочу заправиться, добавь заправку в маршрут как остановку')).toEqual(['add_stop', { category: 'fuel' }]);
+    expect(tool('заправки по пути')).toEqual(['find_along_route', { category: 'fuel' }]);
+    expect(tool('давай дозаправимся по дороге')).toEqual(['add_stop', { category: 'fuel' }]);
+    expect(tool('где поесть')).toEqual(['find_along_route', { category: 'food' }]);
+    // «де» внутри слова — не вопрос «где»: решает ИИ.
+    expect(tool('надеюсь, кафе у театра работает допоздна')).toEqual(['ask']);
   });
 });
 
@@ -251,5 +276,16 @@ describe('Облачный ИИ через прокси', () => {
     const reply = await sendToAssistant('Как подготовить машину к зиме?');
     expect(f).not.toHaveBeenCalled();
     expect(reply!.source).toBe('local');
+  });
+});
+
+describe('Размер запроса к модели (стоимость)', () => {
+  it('промпт с контекстом и базой знаний и описания инструментов — в разумных пределах', () => {
+    const prompt = systemPrompt();
+    const tools = JSON.stringify(TOOLS);
+    // ≈4 символа на токен для латиницы, ≈2–3 для кириллицы — берём пессимистично 2.5.
+    const tokens = Math.round((prompt.length + tools.length) / 2.5);
+    console.info(`промпт ${prompt.length} символов, инструменты ${tools.length} символов, ≈${tokens} токенов`);
+    expect(tokens).toBeLessThan(9000);
   });
 });

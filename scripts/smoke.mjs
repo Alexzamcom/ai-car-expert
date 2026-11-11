@@ -38,6 +38,7 @@ async function mockAiProxy(route) {
   if (r.url().endsWith('/health')) {
     return reply({ ok: true, defaultProvider: 'openai', providers: { openai: { configured: true, model: 'gpt-test' }, grok: { configured: false, model: 'grok-4' } }, keyConfigured: true, model: 'gpt-test' });
   }
+  if (r.url().endsWith('/usage')) return reply({ month: '2026-11', spentUsd: 0.0123, budgetUsd: 4.5, requestsToday: aiCalls.length, dailyLimit: 150, persistent: true });
   const body = JSON.parse(r.postData() || '{}');
   aiCalls.push(body);
   const toolDone = body.messages?.some((m) => m.role === 'tool');
@@ -574,6 +575,8 @@ try {
   await page.click('.ai-settings button[type=submit]');
   await page.click('.ai-settings button:has-text("Проверить связь")');
   await page.waitForSelector('.toast:has-text("Прокси отвечает")', { timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('.server-usage strong', { timeout: 5000 }).catch(() => {});
+  check('ИИ: расход по данным сервера в настройках', (await page.locator('.server-usage').innerText().catch(() => '')).includes('$0.01 из $4.50'), await page.locator('.server-usage').innerText().catch(() => ''));
   check('ИИ: проверка прокси показывает провайдера и модель', await page.locator('.toast:has-text("OpenAI: модель gpt-test")').isVisible().catch(() => false));
   await page.locator('.ai-settings').scrollIntoViewIfNeeded();
   problems = await layoutProblems(page);

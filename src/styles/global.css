@@ -1434,3 +1434,5 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .reminder-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .reminder-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 8px; margin-top: 8px; }
 @media (max-width: 640px) { .reminder-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .reminder-form #reminder-text { grid-column: 1 / -1; } }
+.server-usage { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line-2); }
+.server-usage small { color: var(--muted); }
