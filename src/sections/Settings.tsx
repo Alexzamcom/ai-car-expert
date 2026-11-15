@@ -8,6 +8,8 @@ import { speechRecognitionSupported, listVoices, speak } from '../lib/speech';
 import { chatgptPrefsStore } from '../lib/chatgpt';
 import { themeStore, setThemeMode, THEME_MODE_LABEL, type ThemeMode } from '../lib/theme';
 import { MUSIC_SOURCES } from '../lib/music/sources';
+import { CAR_COLORS, carSvg, type CarColor } from '../lib/carMarker';
+import { geoStore, setNavigationVoice, restartGeo } from '../lib/nav';
 
 const FUELS: Record<VehicleProfile['fuel'], string> = {
   petrol: 'Бензин',
@@ -105,6 +107,10 @@ export function Settings() {
         </button>
       </form>
 
+      <CarOnMapSettings />
+
+      <GpsDiagnostics />
+
       <AiSettings />
 
       <ThemeSettings />
@@ -154,7 +160,7 @@ export function Settings() {
           </div>
         </div>
         <ToggleRow title="Голосовые ответы помощника" sub="Ответы помощника и результаты команд читаются вслух" on={s.speakReplies} onChange={(on) => patch({ speakReplies: on })} />
-        <ToggleRow title="Голосовые подсказки навигации" sub="«Через 200 метров поверните направо»" on={s.speakNavigation} onChange={(on) => patch({ speakNavigation: on })} />
+        <ToggleRow title="Голосовые подсказки навигации" sub="«Через 200 метров поверните направо». Быстро — кнопкой динамика на карте" on={s.speakNavigation} onChange={(on) => setNavigationVoice(on)} />
         <ToggleRow title="Режим разговора" sub="После голосового ответа помощник снова слушает — без нажатия кнопки" on={s.conversationMode} onChange={(on) => patch({ conversationMode: on })} />
         <ToggleRow title="Подсказки о функциях автомобиля" sub="Короткий совет дня на панели «Поездка»" on={s.featureTips} onChange={(on) => patch({ featureTips: on })} />
         <div className="setting-row">
@@ -601,5 +607,94 @@ function ResetButton() {
     <button className="btn btn-lg" onClick={() => setArmed(true)}>
       <Icon name="trash" /> Сбросить все данные
     </button>
+  );
+}
+
+function CarOnMapSettings() {
+  const s = useStore(settingsStore);
+  const patch = (p: Partial<SettingsT>) => settingsStore.set((x) => ({ ...x, ...p }));
+  return (
+    <div className="card car-on-map">
+      <h3 className="section-title">
+        <Icon name="car" /> Машинка на карте
+      </h3>
+      <div className="car-colors" role="radiogroup" aria-label="Цвет машинки">
+        {(Object.keys(CAR_COLORS) as CarColor[]).map((c) => (
+          <button
+            key={c}
+            type="button"
+            role="radio"
+            aria-checked={s.carColor === c}
+            aria-label={CAR_COLORS[c][0]}
+            className={`car-swatch ${s.carColor === c ? 'is-active' : ''}`}
+            onClick={() => patch({ carColor: c })}
+          >
+            <span dangerouslySetInnerHTML={{ __html: carSvg(c, 22) }} />
+            <small>{CAR_COLORS[c][0]}</small>
+          </button>
+        ))}
+      </div>
+      <ToggleRow
+        title="Полноэкранный режим при ведении"
+        sub="После «Поехали» на экране только карта, манёвр, прибытие и кнопка голоса. Свайп вверх по нижней полосе — управление"
+        on={s.minimalGuidance}
+        onChange={(on) => patch({ minimalGuidance: on })}
+      />
+    </div>
+  );
+}
+
+/** Живые данные GPS: для проверки на устройстве, если машинка показывается не там. */
+function GpsDiagnostics() {
+  const g = useStore(geoStore);
+  const [perm, setPerm] = useState<string>('—');
+  const [, tick] = useState(0);
+  useEffect(() => {
+    navigator.permissions
+      ?.query({ name: 'geolocation' as PermissionName })
+      .then((p) => {
+        setPerm(p.state);
+        p.onchange = () => setPerm(p.state);
+      })
+      .catch(() => setPerm('неизвестно'));
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const age = (t: number | null) => (t ? `${Math.max(0, Math.round((Date.now() - t) / 1000))} с назад` : '—');
+  const QUALITY = { precise: 'точная', approx: 'средняя', coarse: 'приблизительная (без GPS)' } as const;
+  const HELD = { stale: 'устаревшая точка', coarse: 'грубая точка', jump: 'скачок' } as const;
+  const rows: [string, string][] = [
+    ['Разрешение', { granted: 'разрешено', denied: 'запрещено', prompt: 'спросит' }[perm] ?? perm],
+    ['Состояние', { idle: 'не запущено', watching: 'слежение', denied: 'запрещено', unavailable: 'недоступно' }[g.status]],
+    ['Широта, долгота', g.lat != null && g.lon != null ? `${g.lat.toFixed(5)}, ${g.lon.toFixed(5)}` : '—'],
+    ['Точность', g.accuracy != null ? `±${Math.round(g.accuracy)} м — ${g.quality ? QUALITY[g.quality] : ''}` : '—'],
+    ['Точка получена', age(g.fixAt)],
+    ['Скорость', g.speedKmh != null ? `${Math.round(g.speedKmh)} км/ч` : '—'],
+    ['Курс', g.heading != null ? `${Math.round(g.heading)}°` : '— (стоим или мало данных)'],
+    ['Отброшена последняя', g.held ? HELD[g.held] : 'нет'],
+  ];
+  return (
+    <div className="card gps-diag">
+      <h3 className="section-title">
+        <Icon name="gps" /> Диагностика GPS
+      </h3>
+      <dl className="diag-list">
+        {rows.map(([k, v]) => (
+          <div key={k}>
+            <dt>{k}</dt>
+            <dd>{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="muted small">
+        Местоположение определяет только GPS устройства, без определения по IP. Точность в километрах — значит, выключена «Точная геопозиция»
+        (iPad: Настройки → Конфиденциальность → Службы геолокации) или нет сигнала спутников.
+      </p>
+      <div className="toolbar">
+        <button type="button" className="btn" onClick={() => { restartGeo(); toast('Запрашиваю свежую позицию', 'info'); }}>
+          <Icon name="locate" /> Обновить позицию
+        </button>
+      </div>
+    </div>
   );
 }

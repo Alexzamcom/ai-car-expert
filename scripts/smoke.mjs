@@ -144,6 +144,21 @@ async function checkLongPress(name, ctx, page, { full = false } = {}) {
   return cdp;
 }
 
+/** Координаты машинки и центра карты — по сетке тайлов (z/x/y в адресе тайла и его положение на экране). */
+const carLatLng = (page) =>
+  page.evaluate(() => {
+    const tile = [...document.querySelectorAll('.drive-map .leaflet-tile')].find((t) => /\/(\d+)\/(\d+)\/(\d+)/.test(t.src));
+    const car = document.querySelector('.map-car');
+    if (!tile || !car) return null;
+    const [, z, x, y] = tile.src.match(/\/(\d+)\/(\d+)\/(\d+)/).map(Number);
+    const r = tile.getBoundingClientRect();
+    const c = car.getBoundingClientRect();
+    const n = 2 ** z;
+    const fx = x + (c.left + c.width / 2 - r.left) / r.width;
+    const fy = y + (c.top + c.height / 2 - r.top) / r.height;
+    return { lat: (Math.atan(Math.sinh(Math.PI * (1 - (2 * fy) / n))) * 180) / Math.PI, lon: (fx / n) * 360 - 180 };
+  });
+
 /** Пересечения элементов поверх карты и горизонтальная прокрутка страницы. */
 async function layoutProblems(page) {
   return page.evaluate(() => {
@@ -408,6 +423,41 @@ try {
   check('Тайлы карты', (await page.locator('.leaflet-tile-loaded').count()) > 0);
   let problems = await layoutProblems(page);
   check('iPad: без наложений', !problems.length, problems.join('; '));
+
+  // GPS: машинка ровно там, где GPS; грубая точка после точной её не переносит
+  let car = await carLatLng(page);
+  const near = (a, b, m) => a && Math.hypot((a.lat - b.latitude) * 111320, (a.lon - b.longitude) * 111320 * Math.cos((b.latitude * Math.PI) / 180)) < m;
+  check('GPS: машинка в позиции GPS (широта и долгота не перепутаны)', near(car, ROUTE_POS[0], 15), car ? `${car.lat.toFixed(5)}, ${car.lon.toFixed(5)}` : 'нет машинки');
+  await ctx.setGeolocation({ latitude: ROUTE_POS[0].latitude + 0.03, longitude: ROUTE_POS[0].longitude + 0.05, accuracy: 3000 });
+  await page.waitForTimeout(1500);
+  car = await carLatLng(page);
+  const chip = (await page.locator('.geo-chip').first().textContent().catch(() => '')) ?? '';
+  check('GPS: грубая точка ±3 км не переносит машинку', near(car, ROUTE_POS[0], 15) && chip.includes('Слабый сигнал'), `${car ? `${car.lat.toFixed(5)}, ${car.lon.toFixed(5)}` : '—'} · ${chip}`);
+  await ctx.setGeolocation({ ...ROUTE_POS[0], accuracy: 10 });
+  await page.waitForTimeout(1200);
+  // Едем на восток — машинка поворачивается носом на восток (≈90°); стоим — не крутится
+  for (const k of [1, 2]) {
+    await ctx.setGeolocation({ latitude: ROUTE_POS[0].latitude, longitude: ROUTE_POS[0].longitude + 0.0006 * k, accuracy: 8 });
+    await page.waitForTimeout(1200);
+  }
+  const rotOf = () => page.evaluate(() => Number((document.querySelector('.map-car .car-rot')?.style.transform.match(/-?[\d.]+/) ?? ['NaN'])[0]));
+  const rot = await rotOf();
+  await ctx.setGeolocation({ latitude: ROUTE_POS[0].latitude + 0.00004, longitude: ROUTE_POS[0].longitude + 0.00118, accuracy: 8 });
+  await page.waitForTimeout(1200);
+  const rotStill = await rotOf();
+  check('Машинка поворачивается по курсу и не крутится на месте', Math.abs(((rot % 360) + 360) % 360 - 90) < 20 && rotStill === rot, `курс ${rot}° → стоим ${rotStill}°`);
+  await ctx.setGeolocation({ ...ROUTE_POS[0], accuracy: 10 });
+  await page.waitForTimeout(1500);
+  // Цвет машинки из настроек и диагностика GPS
+  await page.click('.dock [aria-label="Ещё разделы"]');
+  await page.click('.more-item:has-text("Настройки")');
+  await page.click('.car-swatch[aria-label="Красный"]');
+  const diag = (await page.locator('.gps-diag').innerText().catch(() => '')) ?? '';
+  check('Диагностика GPS: координаты и точность', diag.includes(`${ROUTE_POS[0].latitude.toFixed(5)}, ${ROUTE_POS[0].longitude.toFixed(5)}`) && /±\d+ м/.test(diag), diag.replace(/\n/g, ' · ').slice(0, 160));
+  await page.locator('.car-on-map').screenshot({ path: `${out}/01b-ipad-car-colors.png` }).catch(() => {});
+  await page.click('.page-back');
+  await page.waitForTimeout(300);
+  check('Цвет машинки меняется и сохраняется', (await page.locator('.map-car svg').innerHTML()).includes('#d8383b') && (await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings') || '{}').carColor)) === 'red');
   await page.screenshot({ path: `${out}/01-ipad-home.png` });
 
   // Выбор точки долгим нажатием и маршрут сюда
@@ -486,12 +536,60 @@ try {
     if (routed) {
       await page.click('.route-card .btn-primary');
       await page.waitForSelector('.maneuver', { timeout: 5000 });
-      const overviewBtn = await page.locator('.route-guiding button:has-text("К машине")').isVisible().catch(() => false);
+      // Полноэкранное ведение: только карта, манёвр, прибытие/остаток и голос
+      await page.waitForTimeout(400);
+      const mini = await page.evaluate(() => {
+        const vis = (sel) => [...document.querySelectorAll(sel)].some((e) => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+        const map = document.querySelector('.drive-map').getBoundingClientRect();
+        return {
+          minimal: document.querySelector('.app.is-minimal') != null,
+          hidden: !vis('.statusbar') && !vis('.dock') && !vis('.panel') && !vis('#map-search') && !vis('.map-controls .map-ctl') && !vis('.map-speed') && !vis('.route-card'),
+          shown: vis('.maneuver') && vis('.guide-eta') && vis('.guide-voice'),
+          full: map.height >= innerHeight - 2 && map.width >= innerWidth - 2,
+        };
+      });
+      check('«Поехали» → полноэкранное ведение без лишних элементов', mini.minimal && mini.hidden && mini.shown && mini.full, JSON.stringify(mini));
+      const overviewBtn = await page.locator('.recenter-pill').isVisible().catch(() => false);
+      await page.screenshot({ path: `${out}/03a-ipad-minimal-overview.png` });
       await page.waitForTimeout(3600);
-      const following = !(await page.locator('.route-guiding button:has-text("машине")').isVisible().catch(() => false));
+      const following = !(await page.locator('.recenter-pill').isVisible().catch(() => false));
       check('Начало ведения: обзор маршрута, затем следование за машиной', overviewBtn && following);
-      // Пользователь сдвинул карту — кнопка возврата к машине
-      const dp = await freeMapPoint(page, 0.5, 0.5);
+      problems = await layoutProblems(page);
+      check('Полноэкранное ведение без наложений', !problems.length, problems.join('; '));
+      await page.screenshot({ path: `${out}/03b-ipad-minimal.png` });
+      // Голос одним нажатием: динамик перечёркнут, состояние сохраняется, ведение продолжается
+      await page.click('.guide-voice');
+      const muted = await page.evaluate(() => ({
+        pressed: document.querySelector('.guide-voice').getAttribute('aria-pressed'),
+        stored: JSON.parse(localStorage.getItem('ace:settings') || '{}').speakNavigation,
+        guiding: document.querySelector('.maneuver') != null,
+      }));
+      check('Динамик: подсказки выключены одним нажатием, сохранено, ведение идёт', muted.pressed === 'true' && muted.stored === false && muted.guiding, JSON.stringify(muted));
+      await page.click('.guide-voice');
+      check('Динамик: повторное нажатие включает', (await page.locator('.guide-voice').getAttribute('aria-pressed')) === 'false');
+      // Свайп вверх по полосе — панель управления; свайп вниз — закрыть
+      const bar = await page.locator('.guide-bar').boundingBox();
+      const bx = bar.x + bar.width / 3;
+      const swipe = async (y0, y1) => {
+        await touch(cdp, 'touchStart', [[bx, y0]]);
+        for (let k = 1; k <= 5; k++) {
+          await page.waitForTimeout(16);
+          await touch(cdp, 'touchMove', [[bx, y0 + ((y1 - y0) * k) / 5]]);
+        }
+        await touch(cdp, 'touchEnd', []);
+        await page.waitForTimeout(300);
+      };
+      await swipe(bar.y + bar.height / 2, bar.y - 120);
+      const sheetOpen = await page.locator('.guide-sheet').isVisible().catch(() => false);
+      check('Свайп вверх открывает панель управления', sheetOpen && (await page.locator('.guide-sheet button:has-text("Завершить маршрут")').isVisible()));
+      problems = await layoutProblems(page);
+      check('Панель управления без наложений', !problems.length, problems.join('; '));
+      await page.screenshot({ path: `${out}/03c-ipad-minimal-sheet.png` });
+      const sh = await page.locator('.guide-sheet').boundingBox();
+      await swipe(sh.y + 40, sh.y + 200);
+      check('Свайп вниз закрывает панель', !(await page.locator('.guide-sheet').isVisible().catch(() => false)));
+      // Пользователь сдвинул карту — «К машине»
+      const dp = await freeMapPoint(page, 0.5, 0.4);
       await touch(cdp, 'touchStart', [dp]);
       for (let i = 1; i <= 6; i++) {
         await page.waitForTimeout(30);
@@ -499,11 +597,17 @@ try {
       }
       await touch(cdp, 'touchEnd', []);
       await page.waitForTimeout(400);
-      const back = page.locator('.route-guiding button:has-text("Вернуться к машине")');
+      const back = page.locator('.recenter-pill');
       const backShown = await back.isVisible().catch(() => false);
+      check('Сдвиг карты не открывает панель, а показывает «К машине»', backShown && !(await page.locator('.guide-sheet').isVisible().catch(() => false)));
       if (backShown) await back.click();
       await page.waitForTimeout(300);
-      check('Ведение: «Вернуться к машине» после сдвига карты', backShown && !(await back.isVisible().catch(() => false)));
+      check('Ведение: «К машине» возвращает камеру', backShown && !(await back.isVisible().catch(() => false)));
+      // Обычный интерфейс из панели
+      await page.locator('.guide-grabber').last().click();
+      await page.click('.guide-sheet button:has-text("Обычный интерфейс")');
+      await page.waitForTimeout(400);
+      check('«Обычный интерфейс» возвращает панели, ведение продолжается', !(await page.locator('.app.is-minimal').count()) && (await page.locator('.route-guiding').isVisible()) && (await page.locator('.dock').isVisible()));
       const instr = await page.locator('.maneuver-instr').textContent();
       check('Ведение: манёвр показан', Boolean(instr), instr);
       if (MOCK) check('Ведение: первый манёвр — поворот направо', instr?.includes('направо'), instr);
@@ -727,6 +831,24 @@ try {
     check(`${name}: маршрут без наложений`, !pr.length, pr.join('; '));
     const slug = name.replace(/\s+/g, '-').toLowerCase();
     await ph.screenshot({ path: `${out}/08-${slug}.png` });
+    // Полноэкранное ведение на телефоне
+    if (await ph.locator('.route-card .btn-primary:has-text("Поехали")').isVisible().catch(() => false)) {
+      await ph.click('.route-card .btn-primary:has-text("Поехали")');
+      await ph.waitForTimeout(600);
+      const m = await ph.evaluate(() => {
+        const r = (sel) => document.querySelector(sel)?.getBoundingClientRect();
+        const inView = (b) => !!b && b.width > 0 && b.left >= -1 && b.right <= innerWidth + 1 && b.top >= -1 && b.bottom <= innerHeight + 1;
+        const man = r('.maneuver');
+        const bar = r('.guide-bar');
+        return { minimal: !!document.querySelector('.app.is-minimal'), maneuver: inView(man), bar: inView(bar), voice: inView(r('.guide-voice')), apart: !!man && !!bar && man.bottom <= bar.top, scroll: document.documentElement.scrollWidth > innerWidth + 1 };
+      });
+      check(`${name}: полноэкранное ведение — манёвр, прибытие и голос видны`, m.minimal && m.maneuver && m.bar && m.voice && m.apart && !m.scroll, JSON.stringify(m));
+      await ph.screenshot({ path: `${out}/08m-${slug}-minimal.png` });
+      await ph.click('.guide-bar .guide-grabber');
+      await ph.click('.guide-sheet button:has-text("Завершить маршрут")');
+      await ph.waitForTimeout(300);
+      check(`${name}: «Завершить маршрут» из панели`, !(await ph.locator('.app.is-minimal').count()) && (await ph.locator('.dock').isVisible()));
+    }
     await ph.click('.dock [aria-label="Ещё разделы"]');
     await ph.click('.more-item:has-text("Настройки")');
     pr = await layoutProblems(ph);

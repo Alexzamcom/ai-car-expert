@@ -7,9 +7,9 @@ import { VoiceOverlay } from './components/VoiceOverlay';
 import { Toasts } from './components/Toasts';
 import { Navigation } from './sections/Navigation';
 import { useStore } from './lib/store';
-import { layoutStore, settingsStore, closePage } from './lib/state';
+import { layoutStore, settingsStore, closePage, driveUiStore } from './lib/state';
 import { setKeepAwake, retryWakeLockOnGesture } from './lib/wakeLock';
-import { startGeo } from './lib/nav';
+import { startGeo, restartGeo, geoStore } from './lib/nav';
 import { restorePlayer } from './lib/player';
 import { chatgptReturnMessage } from './lib/chatgpt';
 import { takeReturn } from './lib/handoff';
@@ -22,6 +22,7 @@ import { activeReminders, isDue, reminderLabel } from './lib/reminders';
 export function App() {
   const layout = useStore(layoutStore);
   const settings = useStore(settingsStore);
+  const ui = useStore(driveUiStore);
 
   // Сервисные напоминания со сроком — один раз при запуске.
   useEffect(() => {
@@ -54,6 +55,8 @@ export function App() {
     restoreNavSession();
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
+      // После фона iOS может отдать старую точку: перезапускаем слежение за свежей.
+      if (geoStore.get().status !== 'denied' && geoStore.get().status !== 'idle') restartGeo();
       const h = takeReturn();
       if (!h) return;
       if (h.app === 'chatgpt') toast(chatgptReturnMessage(h), 'ok');
@@ -75,7 +78,7 @@ export function App() {
   }, []);
 
   return (
-    <div className="app">
+    <div className={`app ${ui.minimal ? 'is-minimal' : ''}`}>
       <StatusBar />
       <main className={`drive order-${layout.order} panel-${layout.panelMode}`}>
         {/* Карта не размонтируется: маршрут и ведение продолжают работать в любом разделе. */}
