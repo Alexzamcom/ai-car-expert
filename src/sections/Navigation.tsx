@@ -25,6 +25,10 @@ import {
   geoHelp,
   navLang,
   currentPos,
+  readLastPos,
+  geoStatusText,
+  guidanceStartCount,
+  setNavigationVoice,
   pickStore,
   pickPoint,
   cancelPick,
@@ -37,6 +41,9 @@ import {
 } from '../lib/nav';
 import { LongPressDetector } from '../lib/geo/longpress';
 import { fmtCoords } from '../lib/geo/geocode';
+import { carSvg, unwrapAngle, type CarColor } from '../lib/carMarker';
+import { settingsStore, driveUiStore, setMinimal } from '../lib/state';
+import { startVoice } from '../lib/voice';
 import { stepText, stepIcon, fmtDistance, fmtDuration, haversine } from '../lib/routing';
 import { POI_CATEGORIES, type PoiCategory, type Poi } from '../lib/poi';
 import { toast } from '../lib/state';
@@ -47,7 +54,9 @@ const DEFAULT_CENTER: L.LatLngTuple = [55.7539, 37.6208];
 export const OSM_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 export const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">Участники OpenStreetMap</a>';
 
-const meIcon = L.divIcon({ className: 'map-me', html: '<div class="map-me-dot"><div class="map-me-cone"></div></div>', iconSize: [28, 28], iconAnchor: [14, 14] });
+/** Машинка: внешний элемент двигает Leaflet, внутренний (.car-rot) поворачиваем на курс. */
+const carIcon = (color: CarColor) =>
+  L.divIcon({ className: 'map-car', html: `<div class="car-rot">${carSvg(color)}</div>`, iconSize: [30, 52], iconAnchor: [15, 26] });
 const destIcon = L.divIcon({ className: 'map-dest', html: '<div class="map-dest-pin"></div>', iconSize: [36, 46], iconAnchor: [18, 44] });
 const pickIcon = L.divIcon({ className: 'map-dest', html: '<div class="map-dest-pin is-pick"></div>', iconSize: [36, 46], iconAnchor: [18, 44] });
 const viaIcon = L.divIcon({ className: 'map-dest', html: '<div class="map-dest-pin is-via"></div>', iconSize: [30, 40], iconAnchor: [15, 38] });
@@ -85,7 +94,7 @@ export function Navigation() {
   const themeOnly = useRef(false);
   const fitted = useRef<unknown>(null);
   const map = useRef<L.Map | null>(null);
-  const layers = useRef<{ me?: L.Marker; dest?: L.Marker; via?: L.Marker; pick?: L.Marker; route?: L.LayerGroup; poi?: L.LayerGroup }>({});
+  const layers = useRef<{ me?: L.Marker; acc?: L.Circle; dest?: L.Marker; via?: L.Marker; pick?: L.Marker; route?: L.LayerGroup; poi?: L.LayerGroup }>({});
   const pick = useStore(pickStore);
   const geo = useStore(geoStore);
   const nav = useStore(navStore);
@@ -95,6 +104,10 @@ export function Navigation() {
   const recents = useStore(recentsStore);
   const saved = useStore(savedPlacesStore);
   const theme = useStore(themeStore);
+  const settings = useStore(settingsStore);
+  const carColor = settings.carColor;
+  const ui = useStore(driveUiStore);
+  const geoStatus = geoStatusText(geo);
 
   const [follow, setFollow] = useState(true);
   const [query, setQuery] = useState('');
@@ -110,7 +123,9 @@ export function Navigation() {
   // Инициализация карты
   useEffect(() => {
     if (!mapEl.current || map.current) return;
-    const m = L.map(mapEl.current, { zoomControl: false, attributionControl: true }).setView(DEFAULT_CENTER, 13);
+    // Пока нет точки GPS — карта там, где была последняя точная позиция (машинку по ней не рисуем).
+    const last = readLastPos();
+    const m = L.map(mapEl.current, { zoomControl: false, attributionControl: true }).setView(last ? [last.lat, last.lon] : DEFAULT_CENTER, last ? 14 : 13);
     // Стандартный слой OpenStreetMap: без ключа, по правилам tile.openstreetmap.org
     // (атрибуция со ссылкой, браузер передаёт Referer). Ночью тайлы затемняются CSS-фильтром.
     // Прежний слой CARTO без договора и ключа отдавал тайлы с надписью «API KEY REQUIRED».
@@ -177,20 +192,40 @@ export function Navigation() {
     };
   }, []);
 
-  // Позиция пользователя
+  // Позиция пользователя: машинка, круг точности, камера
+  const carAngle = useRef(0);
   useEffect(() => {
     const m = map.current;
     if (!m || geo.lat == null || geo.lon == null) return;
     const ll: L.LatLngTuple = [geo.lat, geo.lon];
-    if (!layers.current.me) layers.current.me = L.marker(ll, { icon: meIcon, interactive: false, zIndexOffset: 1000 }).addTo(m);
-    else layers.current.me.setLatLng(ll);
-    const el = layers.current.me.getElement()?.querySelector<HTMLElement>('.map-me-cone');
-    if (el) {
-      el.style.display = geo.heading != null ? 'block' : 'none';
-      el.style.transform = `rotate(${geo.heading ?? 0}deg)`;
+    const l = layers.current;
+    if (!l.me) l.me = L.marker(ll, { icon: carIcon(carColor), interactive: false, zIndexOffset: 1000 }).addTo(m);
+    else l.me.setLatLng(ll);
+    // Круг точности — только когда она заметна: видно, что позиция приблизительная.
+    const acc = geo.accuracy ?? 0;
+    if (acc > 30) {
+      if (!l.acc) l.acc = L.circle(ll, { radius: acc, className: 'map-accuracy', interactive: false, weight: 1 }).addTo(m);
+      else l.acc.setLatLng(ll).setRadius(acc);
+    } else {
+      l.acc?.remove();
+      l.acc = undefined;
+    }
+    const rot = l.me.getElement()?.querySelector<HTMLElement>('.car-rot');
+    if (rot && geo.heading != null) {
+      carAngle.current = unwrapAngle(carAngle.current, geo.heading);
+      rot.style.transform = `rotate(${carAngle.current}deg)`;
     }
     if (follow) m.setView(ll, Math.max(m.getZoom(), guiding ? 17 : 15), { animate: true });
-  }, [geo.lat, geo.lon, geo.heading, follow, guiding]);
+  }, [geo.lat, geo.lon, geo.heading, geo.accuracy, follow, guiding, carColor]);
+
+  // Цвет машинки из настроек
+  useEffect(() => {
+    const me = layers.current.me;
+    if (!me) return;
+    me.setIcon(carIcon(carColor));
+    const rot = me.getElement()?.querySelector<HTMLElement>('.car-rot');
+    if (rot) rot.style.transform = `rotate(${carAngle.current}deg)`;
+  }, [carColor]);
 
   // Маршрут, цель и промежуточная точка
   useEffect(() => {
@@ -261,12 +296,16 @@ export function Navigation() {
 
   // Начало ведения: сначала весь маршрут, затем камера следует за машиной.
   const [overview, setOverview] = useState(false);
+  const shownStart = useRef(0);
   useEffect(() => {
     const m = map.current;
     if (!guiding) {
       setOverview(false);
       return;
     }
+    // Обзор — только после «Поехали», не после перестроения или добавления остановки.
+    if (guidanceStartCount() === shownStart.current) return;
+    shownStart.current = guidanceStartCount();
     const r = navStore.get().route;
     if (!m || !r) {
       setFollow(true);
@@ -275,13 +314,30 @@ export function Navigation() {
     setFollow(false);
     setOverview(true);
     const rb = L.latLngBounds(r.coords.map((c) => [c.lat, c.lon] as L.LatLngTuple));
-    requestAnimationFrame(() => fitVisible(m, rb, uiEl.current));
+    // Карта меняет размер при переходе в полный экран — обзор после перестроения раскладки.
+    const fit = setTimeout(() => {
+      m.invalidateSize();
+      fitVisible(m, rb, uiEl.current);
+    }, 120);
     const t = setTimeout(() => {
       setOverview(false);
       setFollow(true);
     }, OVERVIEW_MS);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(fit);
+    };
   }, [guiding]);
+
+  const showOverview = () => {
+    const m = map.current;
+    const r = navStore.get().route;
+    if (!m || !r) return;
+    setFollow(false);
+    fitVisible(m, L.latLngBounds(r.coords.map((c) => [c.lat, c.lon] as L.LatLngTuple)), uiEl.current);
+  };
+  // Во время перестроения (статус «строю») полноэкранный режим сохраняется.
+  const minimal = ui.minimal && !!nav.dest && (guiding || nav.status === 'routing');
 
   const recenter = () => {
     setOverview(false);
@@ -356,10 +412,19 @@ export function Navigation() {
     <div className="navigation">
       <div ref={mapEl} className="map" />
 
-      <div ref={uiEl} className={`map-ui ${(nav.dest && !guiding) || pick ? 'has-dest' : ''} ${nav.dest || poi.category || pick ? 'has-card' : ''}`}>
+      <div
+        ref={uiEl}
+        className={`map-ui ${(nav.dest && !guiding) || pick ? 'has-dest' : ''} ${nav.dest || poi.category || pick ? 'has-card' : ''} ${minimal ? 'is-minimal' : ''}`}
+      >
         {/* Верх: поиск или манёвр */}
         <div className="map-top">
-          {guiding && step && nav.progress ? (
+          {minimal && !(step && nav.progress) ? (
+            <div className="maneuver" role="status">
+              <div className="maneuver-text">
+                <div className="maneuver-instr">{nav.rerouting ? 'Перестраиваю маршрут…' : 'Ведение по маршруту'}</div>
+              </div>
+            </div>
+          ) : guiding && step && nav.progress ? (
             <div className="maneuver" role="status">
               <div className="maneuver-icon">
                 <Icon name={stepIcon(step)} size="2.6rem" stroke={2.2} />
@@ -491,16 +556,30 @@ export function Navigation() {
 
         {/* Справа: управление картой */}
         <div className="map-controls">
-          <button className="map-ctl" onClick={() => zoom(1)} aria-label="Приблизить">
+          <VoiceToggle className="map-ctl voice-ctl" />
+          <button className="map-ctl zoom-ctl" onClick={() => zoom(1)} aria-label="Приблизить">
             <Icon name="plus" size="1.7rem" />
           </button>
-          <button className="map-ctl" onClick={() => zoom(-1)} aria-label="Отдалить">
+          <button className="map-ctl zoom-ctl" onClick={() => zoom(-1)} aria-label="Отдалить">
             <span className="map-minus" />
           </button>
           <button className={`map-ctl ${follow ? 'is-active' : ''}`} onClick={recenter} aria-label="Моё местоположение">
             <Icon name="locate" size="1.7rem" />
           </button>
         </div>
+
+        {/* Полноэкранное ведение: только время прибытия, остаток и голос; свайп вверх — панель управления. */}
+        {minimal && nav.route && nav.progress && (
+          <GuideBar
+            eta={eta(remainingS ?? 0)}
+            remaining={fmtDistance(nav.progress.remainingM, lang)}
+            duration={fmtDuration(remainingS ?? 0, lang)}
+            sheet={ui.sheet}
+            follow={follow}
+            onRecenter={recenter}
+            onOverview={showOverview}
+          />
+        )}
 
         {/* Низ: скорость + карточка маршрута / объектов */}
         <div className="map-bottom">
@@ -510,10 +589,10 @@ export function Navigation() {
           </div>
 
           <div className="map-cards">
-            {(geo.status === 'denied' || geo.status === 'unavailable') && !nav.dest && (
-              <button className="geo-chip" onClick={() => toast(geoHelp(), 'warn')}>
-                <Icon name="alert" size="1.3em" />
-                {geo.status === 'denied' ? 'Нет доступа к геопозиции — как включить' : 'Геопозиция недоступна'}
+            {geoStatus && (
+              <button className={`geo-chip is-${geoStatus.tone}`} onClick={() => toast(geoStatus.help(), geoStatus.tone)} aria-live="polite">
+                <Icon name={geoStatus.tone === 'warn' ? 'alert' : 'gps'} size="1.3em" />
+                {geoStatus.text}
               </button>
             )}
 
@@ -602,6 +681,10 @@ export function Navigation() {
                       <small>осталось</small>
                     </div>
                     <span className="spacer" />
+                    <VoiceToggle className="icon-btn card-voice" />
+                    <button className="btn" onClick={() => setMinimal(true)} aria-label="Полноэкранный режим">
+                      <Icon name="expand" /> Полный экран
+                    </button>
                     {!follow && (
                       <button className="btn btn-primary" onClick={recenter}>
                         <Icon name="locate" /> {overview ? 'К машине' : 'Вернуться к машине'}
@@ -748,6 +831,109 @@ function SavedPlaceLinks({ dest, home, work }: { dest: Place; home: Place | null
       <button className="link-btn" onClick={() => { setSavedPlace('work', dest); toast('Сохранено как «Работа». Скажите «поехали на работу».', 'ok'); }}>
         <Icon name="flag" size="1em" /> Сделать работой
       </button>
+    </div>
+  );
+}
+
+/** Кнопка голосовых подсказок: перечёркнутый динамик — выключены. Музыку и радио не трогает. */
+function VoiceToggle({ className = '' }: { className?: string }) {
+  const on = useStore(settingsStore).speakNavigation;
+  return (
+    <button
+      className={`${className} ${on ? '' : 'is-muted'}`}
+      onClick={() => setNavigationVoice(!on)}
+      aria-pressed={!on}
+      aria-label={on ? 'Выключить голосовые подсказки' : 'Включить голосовые подсказки'}
+      title={on ? 'Голосовые подсказки включены' : 'Голосовые подсказки выключены'}
+    >
+      <Icon name={on ? 'speaker' : 'speakerOff'} size="1.6rem" />
+    </button>
+  );
+}
+
+/** Свайп по вертикали на элементе (а не на карте — с жестами карты не конфликтует). */
+function useVerticalSwipe(onUp: () => void, onDown: () => void) {
+  const start = useRef<{ y: number; t: number } | null>(null);
+  const swiped = useRef(false);
+  return {
+    onPointerDown: (e: React.PointerEvent) => {
+      start.current = { y: e.clientY, t: Date.now() };
+      swiped.current = false;
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      const s0 = start.current;
+      start.current = null;
+      if (!s0) return;
+      const dy = e.clientY - s0.y;
+      if (Math.abs(dy) >= 30 && Date.now() - s0.t < 800) {
+        swiped.current = true;
+        if (dy < 0) onUp();
+        else onDown();
+      }
+    },
+    onPointerCancel: () => (start.current = null),
+    /** Касание после свайпа не считается нажатием. */
+    wasSwipe: () => swiped.current,
+  };
+}
+
+function GuideBar(p: { eta: string; remaining: string; duration: string; sheet: boolean; follow: boolean; onRecenter: () => void; onOverview: () => void }) {
+  const open = () => driveUiStore.set((s) => ({ ...s, sheet: true }));
+  const close = () => driveUiStore.set((s) => ({ ...s, sheet: false }));
+  const barSwipe = useVerticalSwipe(open, close);
+  const sheetSwipe = useVerticalSwipe(() => {}, close);
+  const act = (fn: () => void) => () => {
+    close();
+    fn();
+  };
+  return (
+    <div className="guide-wrap">
+      {!p.follow && !p.sheet && (
+        <button className="btn btn-primary recenter-pill" onClick={p.onRecenter}>
+          <Icon name="locate" /> К машине
+        </button>
+      )}
+      {p.sheet && (
+        <div className="guide-sheet card-float" role="dialog" aria-label="Управление ведением" {...sheetSwipe}>
+          <button className="guide-grabber" onClick={() => !sheetSwipe.wasSwipe() && close()} aria-label="Свернуть панель">
+            <span />
+          </button>
+          <div className="guide-sheet-grid">
+            {!p.follow && (
+              <button className="btn btn-lg btn-primary" onClick={act(p.onRecenter)}>
+                <Icon name="locate" /> К машине
+              </button>
+            )}
+            <button className="btn btn-lg" onClick={act(p.onOverview)}>
+              <Icon name="route" /> Весь маршрут
+            </button>
+            <button className="btn btn-lg" onClick={act(() => void findPoi('fuel'))}>
+              <Icon name="fuel" /> АЗС по пути
+            </button>
+            <button className="btn btn-lg" onClick={act(startVoice)}>
+              <Icon name="mic" /> Голосовая команда
+            </button>
+            <button className="btn btn-lg" onClick={act(() => setMinimal(false))}>
+              <Icon name="collapse" /> Обычный интерфейс
+            </button>
+            <button className="btn btn-lg btn-danger" onClick={act(stopNavigation)}>
+              <Icon name="close" /> Завершить маршрут
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="guide-bar card-float" {...barSwipe}>
+        <button className="guide-grabber" onClick={() => !barSwipe.wasSwipe() && (p.sheet ? close() : open())} aria-label={p.sheet ? 'Свернуть панель' : 'Открыть панель управления'} aria-expanded={p.sheet}>
+          <span />
+        </button>
+        <div className="guide-stats" aria-label="Прибытие и остаток пути">
+          <strong className="guide-eta">{p.eta}</strong>
+          <span>
+            {p.remaining} · {p.duration}
+          </span>
+        </div>
+        <VoiceToggle className="guide-voice" />
+      </div>
     </div>
   );
 }

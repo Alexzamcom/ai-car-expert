@@ -19,6 +19,7 @@ import {
   currentPos,
   pickPoint,
   spokenDuration,
+  setNavigationVoice,
 } from './nav';
 import { playByQuery, playByGenre, stepVolume, pause, resume, next, prev, stop, playerStore } from './player';
 import { findApp, launchApp, APPS } from './apps';
@@ -265,7 +266,7 @@ export async function runTool(name: string, rawArgs: string | Record<string, unk
       settingsStore.set((s) => ({ ...s, speakReplies: Boolean(args.enabled) }));
       return { ok: true, text: args.enabled ? L('Голосовые ответы включены.', 'Голосові відповіді увімкнено.') : L('Голосовые ответы выключены.', 'Голосові відповіді вимкнено.') };
     case 'set_navigation_voice':
-      settingsStore.set((s) => ({ ...s, speakNavigation: Boolean(args.enabled) }));
+      setNavigationVoice(Boolean(args.enabled));
       return { ok: true, text: args.enabled ? L('Подсказки навигации включены.', 'Підказки навігації увімкнено.') : L('Подсказки навигации выключены.', 'Підказки навігації вимкнено.') };
     case 'set_theme': {
       const mode = str('mode') as 'auto' | 'day' | 'night';

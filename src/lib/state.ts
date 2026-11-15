@@ -1,3 +1,4 @@
+import type { CarColor } from './carMarker';
 import { createStore, uid } from './store';
 import { isPanel, type SectionId, type PanelId, type PageId } from './sections';
 
@@ -40,6 +41,16 @@ export function swapOrder() {
   layoutStore.set((s) => ({ ...s, order: s.order === 'map-first' ? 'panel-first' : 'map-first' }));
 }
 
+/* ---------- Полноэкранный режим ведения ---------- */
+
+/** minimal — чистая карта во время ведения; sheet — открыта нижняя панель управления (свайп вверх). */
+export const driveUiStore = createStore<{ minimal: boolean; sheet: boolean }>({ minimal: false, sheet: false });
+
+export function setMinimal(minimal: boolean) {
+  driveUiStore.set({ minimal, sheet: false });
+  if (minimal) layoutStore.set((s) => ({ ...s, page: null }));
+}
+
 /* ---------- Настройки ---------- */
 
 export interface VehicleProfile {
@@ -79,6 +90,10 @@ export interface Settings {
   aiPrices: Record<AiProvider, AiPrice>;
   /** Передавать ИИ координаты (округлённые до ~100 м). */
   aiShareLocation: boolean;
+  /** Цвет машинки на карте. */
+  carColor: CarColor;
+  /** Полноэкранный минималистичный режим во время ведения. */
+  minimalGuidance: boolean;
   speechLang: string;
   speakReplies: boolean;
   /** Голосовые подсказки навигации. */
@@ -122,6 +137,8 @@ export const settingsStore = createStore<Settings>(
     aiMonthlyBudgetUsd: 5,
     aiPrices: { openai: { inUsd: 0, outUsd: 0 }, grok: { inUsd: 0, outUsd: 0 } },
     aiShareLocation: true,
+    carColor: 'white',
+    minimalGuidance: true,
     speechLang: 'ru-RU',
     speakReplies: true,
     speakNavigation: true,

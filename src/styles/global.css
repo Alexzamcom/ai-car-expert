@@ -913,6 +913,13 @@ textarea.input { padding: 14px 16px; resize: none; }
   max-width: 100%;
 }
 .geo-chip svg { color: var(--warn); flex: none; }
+.geo-chip.is-info svg { color: var(--accent); }
+/* Машинка: Leaflet двигает .map-car, курс — поворот .car-rot (плавно, по кратчайшей дуге). */
+.map-car { pointer-events: none; }
+.map-car .car-rot { width: 30px; height: 52px; transition: transform 0.6s ease-out; transform-origin: 50% 50%; will-change: transform; }
+.map-car .car-svg { display: block; filter: drop-shadow(0 2px 3px var(--shadow)); }
+@media (prefers-reduced-motion: reduce) { .map-car .car-rot { transition: none; } }
+.leaflet-interactive.map-accuracy, path.map-accuracy { fill: var(--accent); fill-opacity: 0.12; stroke: var(--accent); stroke-opacity: 0.45; }
 
 .card-float {
   padding: 14px 16px;
@@ -968,7 +975,7 @@ textarea.input { padding: 14px 16px; resize: none; }
 
 /* Маленькая карта (телефон в горизонтали, развёрнутая панель): убираем второстепенное. */
 @container map (max-height: 430px) {
-  .map-controls .map-ctl:not(:last-child) { display: none; }
+  .map-controls .map-ctl:not(:last-child):not(.voice-ctl) { display: none; }
   .map-speed { width: 72px; height: 72px; }
   .map-speed-value { font-size: 1.5rem; }
   .card-float { max-height: 55cqh; }
@@ -1454,3 +1461,52 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .home-work .btn { justify-content: center; }
 .saved-line { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
 .saved-line .link-btn { gap: 4px; }
+
+/* ============ Полноэкранное ведение ============ */
+.map-ctl.is-muted, .guide-voice.is-muted, .card-voice.is-muted { color: var(--warn); }
+.app.is-minimal { grid-template-rows: minmax(0, 1fr); padding: 0; }
+.app.is-minimal > .statusbar, .app.is-minimal > .dock, .app.is-minimal .panel { display: none; }
+.app.is-minimal main.drive { grid-template-areas: 'map'; grid-template-rows: minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); padding: 0; gap: 0; }
+.app.is-minimal .drive-map { border-radius: 0; border: 0; }
+.map-ui.is-minimal {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-areas: 'top' 'mid' 'bottom' 'guide';
+  padding: calc(12px + var(--safe-t)) calc(12px + var(--safe-r)) calc(12px + var(--safe-b)) calc(12px + var(--safe-l));
+}
+.map-ui.is-minimal .map-search, .map-ui.is-minimal .map-panel, .map-ui.is-minimal .map-controls, .map-ui.is-minimal .map-speed,
+.map-ui.is-minimal .route-card, .map-ui.is-minimal .geo-chip.is-info { display: none; }
+.map-ui.is-minimal .map-bottom { grid-template-columns: minmax(0, 1fr); }
+.guide-wrap { grid-area: guide; display: flex; flex-direction: column; align-items: stretch; gap: 10px; width: min(760px, 100%); justify-self: center; pointer-events: none; }
+.guide-wrap > * { pointer-events: auto; }
+.recenter-pill { align-self: center; min-height: 56px; padding: 0 22px; border-radius: 999px; }
+.guide-bar { position: relative; display: flex; flex-direction: row; align-items: center; gap: 16px; padding: 18px 14px 12px 22px; touch-action: none; user-select: none; -webkit-user-select: none; }
+.guide-grabber { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 120px; height: 22px; display: grid; place-items: center; }
+.guide-grabber span { width: 44px; height: 5px; border-radius: 3px; background: var(--line-2); }
+.guide-stats { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.guide-eta { font-size: 1.9rem; font-weight: 700; }
+.guide-stats span { color: var(--text-2); font-size: 1.15rem; }
+.guide-voice { flex: none; width: 56px; height: 56px; display: grid; place-items: center; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--line-2); }
+.guide-sheet { position: relative; padding-top: 26px; touch-action: none; }
+.guide-sheet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 40vw), 1fr)); gap: 10px; }
+.guide-sheet-grid .btn { justify-content: center; min-height: 64px; white-space: normal; text-align: center; }
+@media (max-height: 520px) {
+  .guide-eta { font-size: 1.4rem; }
+  .guide-bar { padding: 14px 10px 8px 16px; }
+  .guide-sheet-grid .btn { min-height: 52px; }
+}
+.car-colors { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 8px; }
+.car-swatch { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 6px; min-height: 96px; border-radius: 14px; border: 2px solid var(--line); background: var(--panel-2); }
+.car-swatch.is-active { border-color: var(--accent); }
+.car-swatch small { font-size: 0.75rem; color: var(--text-2); }
+.diag-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 16px; margin: 0; }
+.diag-list div { display: flex; flex-direction: column; }
+.diag-list dt { font-size: 0.75rem; color: var(--muted); }
+.diag-list dd { margin: 0; font-variant-numeric: tabular-nums; }
+/* Карточка маршрута/объектов на невысокой карте: масштаб — щипком, остаются «Голос» и «Моё местоположение». */
+@container map (max-height: 900px) {
+  .map-ui.has-card .map-ctl.zoom-ctl { display: none; }
+}
+/* Динамик в карточке ведения — только на узкой карте, где колонка кнопок уступает место карточке. */
+.card-voice { display: none; }
+@container map (max-width: 520px) { .route-guiding .card-voice { display: grid; width: 52px; height: 52px; } }
