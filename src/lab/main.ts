@@ -143,6 +143,12 @@ $('.lab-follow').addEventListener('click', () => setMode(lastAuto));
 // Жест пользователя (сдвиг, поворот двумя пальцами, наклон) — свободный обзор до нажатия «Следовать».
 for (const ev of ['dragstart', 'rotatestart', 'pitchstart'] as const) map.on(ev, (e) => (e as { originalEvent?: Event }).originalEvent && mode !== 'free' && setMode('free'));
 map.on('zoomstart', (e) => (e as { originalEvent?: Event }).originalEvent && (userZoom = true));
+// Пока пальцы на карте, автоматическая камера не двигается — иначе она перебивает жест пользователя.
+let touching = 0;
+const canvasBox = map.getCanvasContainer();
+canvasBox.addEventListener('touchstart', (e) => (touching = e.touches.length), { passive: true });
+canvasBox.addEventListener('touchend', (e) => (touching = e.touches.length), { passive: true });
+canvasBox.addEventListener('touchcancel', () => (touching = 0), { passive: true });
 
 /* ---------- Плавное движение машинки между точками GPS (раз в ~1 с) ---------- */
 let from: LatLon | null = null;
@@ -162,7 +168,7 @@ function carPos(now: number): LatLon | null {
 }
 
 function follow(immediate = false) {
-  if (!to || mode === 'free') return;
+  if (!to || mode === 'free' || touching > 0) return;
   const size = map.getContainer().getBoundingClientRect();
   const course = mode === 'course';
   const heading = headingTarget ?? map.getBearing();

@@ -179,7 +179,7 @@ async function checkLab(name, device) {
   s1 = await st();
   check(`Карта 3D (${name}): север сверху`, s1.mode === 'north' && d(s1.bearing, 0) < 2 && s1.pitch < 2, JSON.stringify(s1));
   await page.click('.lab-modes [data-mode="course"]');
-  await page.waitForTimeout(1600);
+  await page.waitForFunction(() => window.__lab.state().pitch > 45, null, { timeout: 8000 }).catch(() => {});
   // Поворот двумя пальцами — свободный обзор, кнопка «Следовать»
   const box = await page.locator('.lab-map').boundingBox();
   const cx = box.x + box.width / 2;
@@ -199,7 +199,7 @@ async function checkLab(name, device) {
   await page.waitForTimeout(1500);
   const s3 = await st();
   check(`Карта 3D (${name}): в свободном обзоре камера не возвращается сама`, s3.mode === 'free' && d(s3.bearing, s2.bearing) < 1, `${Math.round(s2.bearing)}° → ${Math.round(s3.bearing)}°`);
-  await page.click('.lab-follow');
+  await page.locator('.lab-follow').click({ timeout: 5000 }).catch(() => {});
   await page.waitForTimeout(2000);
   const s4 = await st();
   check(`Карта 3D (${name}): «Следовать» восстанавливает карту по движению`, s4.mode === 'course' && d(s4.bearing, s4.heading) < 12 && !(await page.locator('.lab-follow').isVisible()), JSON.stringify({ mode: s4.mode, bearing: Math.round(s4.bearing), heading: Math.round(s4.heading) }));
