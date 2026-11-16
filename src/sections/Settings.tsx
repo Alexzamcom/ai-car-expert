@@ -634,6 +634,20 @@ function CarOnMapSettings() {
           </button>
         ))}
       </div>
+      <div className="setting-row">
+        <div>
+          <strong>Карта 3D — прототип (MapLibre GL)</strong>
+          <small>Карта по движению с наклоном, векторные тайлы OpenFreeMap, поворот двумя пальцами. Проверка на устройстве перед заменой рабочей карты. Маршрут берётся из приложения.</small>
+        </div>
+        <div className="seg">
+          <a className="btn" href="./lab.html">
+            Открыть
+          </a>
+          <a className="btn" href="./lab.html?sim=1&amp;hud=1">
+            Демо
+          </a>
+        </div>
+      </div>
       <ToggleRow
         title="Полноэкранный режим при ведении"
         sub="После «Поехали» на экране только карта, манёвр, прибытие и кнопка голоса. Свайп вверх по нижней полосе — управление"

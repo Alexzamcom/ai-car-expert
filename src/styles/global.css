@@ -68,7 +68,11 @@ html.theme-switching *::after {
 /* Ночная карта: тайлы OpenStreetMap затемняются фильтром. Надпись об авторских правах
    (атрибуция) не затрагивается — она в отдельном элементе и остаётся читаемой. */
 [data-theme='night'] .leaflet-tile-pane {
-  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9) saturate(0.55);
+  filter: invert(1) hue-rotate(180deg) brightness(0.86) contrast(0.88) saturate(0.4);
+}
+/* День: приглушённая карта — маршрут и машинка читаются лучше (минималистичный стиль автомобильной навигации). */
+[data-theme='day'] .leaflet-tile-pane {
+  filter: saturate(0.45) contrast(0.92) brightness(1.03);
 }
 .leaflet-container .leaflet-control-attribution { font-size: 11px; line-height: 1.5; padding: 2px 8px; border-radius: 8px 0 0 0; }
 

@@ -25,7 +25,7 @@
 | **OBD-II** | расшифровка кодов; подключение адаптера — следующий этап |
 | **Системы автомобиля** | **не управляются** — интеграции нет, интерфейс и помощник говорят об этом прямо |
 
-Подробнее: [аудит](docs/AUDIT.md) · [навигация](docs/NAVIGATION.md) · [план](docs/ROADMAP.md) · [архитектура и границы интеграции](docs/ARCHITECTURE.md) ·
+Подробнее: [аудит](docs/AUDIT.md) · [навигация](docs/NAVIGATION.md) · [движок карты и прототип 3D](docs/MAP-ENGINE.md) · [план](docs/ROADMAP.md) · [архитектура и границы интеграции](docs/ARCHITECTURE.md) ·
 [автомобильный режим iPadOS](docs/CAR-MODE.md) · [управление YouTube Music](docs/MEDIA-CONTROL.md) · [ИИ-помощник](docs/AI.md) · [подключение OpenAI / Grok](server/ai-proxy/README.md).
 
 ## Голосовые команды
