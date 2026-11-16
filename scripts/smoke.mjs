@@ -159,6 +159,59 @@ const carLatLng = (page) =>
     return { lat: (Math.atan(Math.sinh(Math.PI * (1 - (2 * fy) / n))) * 180) / Math.PI, lon: (fx / n) * 360 - 180 };
   });
 
+/* ---------- Прототип MapLibre (lab.html): карта по движению, север сверху, ручной поворот, возврат к следованию ---------- */
+async function checkLab(name, device) {
+  const ctx = await browser.newContext({ ...device, locale: 'ru-RU' });
+  // Офлайн и детерминированно: вместо стиля OpenFreeMap — минимальный векторный стиль из fixtures (живой стиль проверяет deploy.yml).
+  if (MOCK) await ctx.route('**/tiles.openfreemap.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: fixture('maplibre-style.json') }));
+  const page = await ctx.newPage();
+  page.on('pageerror', (e) => errors.push(`lab: ${e}`));
+  await page.goto(`${url}lab.html?sim=1&hud=1`, { waitUntil: 'load' });
+  await page.waitForFunction(() => window.__lab && window.__lab.state().heading != null, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForTimeout(4500);
+  const st = () => page.evaluate(() => window.__lab.state());
+  const d = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+  let s1 = await st();
+  check(`Карта 3D (${name}): по движению — машинка вверх, наклон, ниже центра`, s1.mode === 'course' && d(s1.bearing, s1.heading) < 12 && d(s1.carShown, s1.bearing) < 15 && s1.pitch > 40 && s1.car && s1.car.y > 0.6 && s1.car.y < 0.9 && Math.abs(s1.car.x - 0.5) < 0.1, JSON.stringify(s1));
+  await page.screenshot({ path: `${out}/lab-${name.replace(/\s+/g, '-').toLowerCase()}-course.png` });
+  await page.click('.lab-modes [data-mode="north"]');
+  await page.waitForFunction(() => window.__lab.state().pitch < 1, null, { timeout: 8000 }).catch(() => {});
+  s1 = await st();
+  check(`Карта 3D (${name}): север сверху`, s1.mode === 'north' && d(s1.bearing, 0) < 2 && s1.pitch < 2, JSON.stringify(s1));
+  await page.click('.lab-modes [data-mode="course"]');
+  await page.waitForTimeout(1600);
+  // Поворот двумя пальцами — свободный обзор, кнопка «Следовать»
+  const box = await page.locator('.lab-map').boundingBox();
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const cdp = await ctx.newCDPSession(page);
+  const two = (a) => [[cx + 120 * Math.cos(a), cy + 120 * Math.sin(a)], [cx - 120 * Math.cos(a), cy - 120 * Math.sin(a)]].map(([x, y], i) => ({ x, y, id: i + 1 }));
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: two(0) });
+  for (let k = 1; k <= 12; k++) {
+    await page.waitForTimeout(16);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: two((k * Math.PI) / 24) });
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(1200);
+  const s2 = await st();
+  const followShown = await page.locator('.lab-follow').isVisible();
+  check(`Карта 3D (${name}): поворот двумя пальцами — свободный обзор`, s2.mode === 'free' && followShown, JSON.stringify({ mode: s2.mode, bearing: Math.round(s2.bearing), followShown }));
+  await page.waitForTimeout(1500);
+  const s3 = await st();
+  check(`Карта 3D (${name}): в свободном обзоре камера не возвращается сама`, s3.mode === 'free' && d(s3.bearing, s2.bearing) < 1, `${Math.round(s2.bearing)}° → ${Math.round(s3.bearing)}°`);
+  await page.click('.lab-follow');
+  await page.waitForTimeout(2000);
+  const s4 = await st();
+  check(`Карта 3D (${name}): «Следовать» восстанавливает карту по движению`, s4.mode === 'course' && d(s4.bearing, s4.heading) < 12 && !(await page.locator('.lab-follow').isVisible()), JSON.stringify({ mode: s4.mode, bearing: Math.round(s4.bearing), heading: Math.round(s4.heading) }));
+  const before = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings') || '{}').speakNavigation);
+  await page.click('.lab-voice');
+  const after = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings') || '{}').speakNavigation);
+  check(`Карта 3D (${name}): кнопка голоса`, before !== false && after === false && (await page.locator('.lab-voice').getAttribute('aria-pressed')) === 'true');
+  const perf = await page.evaluate(() => window.__lab.stats());
+  check(`Карта 3D (${name}): кадров в секунду (программная отрисовка WebGL в CI, не GPU устройства)`, perf.fps > 0, JSON.stringify(perf));
+  await ctx.close();
+}
+
 /** Пересечения элементов поверх карты и горизонтальная прокрутка страницы. */
 async function layoutProblems(page) {
   return page.evaluate(() => {
@@ -250,7 +303,7 @@ async function checkThemes(name, page, out, slug) {
     const lum = await bgLuminance(page);
     const filter = await page.evaluate(() => getComputedStyle(document.querySelector('.leaflet-tile-pane')).filter);
     const pr = await layoutProblems(page);
-    const ok = active === mode && (mode === 'day' ? lum > 0.8 : lum < 0.1) && (mode === 'night' ? filter.includes('invert') : filter === 'none');
+    const ok = active === mode && (mode === 'day' ? lum > 0.8 : lum < 0.1) && (mode === 'night' ? filter.includes('invert') : !filter.includes('invert'));
     check(`${name}: тема «${mode === 'day' ? 'День' : 'Ночь'}»`, ok && !pr.length, `${active}, яркость фона ${lum.toFixed(2)}${pr.length ? '; ' + pr.join('; ') : ''}${switching ? ', плавно' : ''}`);
     await page.screenshot({ path: `${out}/theme-${slug}-${mode}.png` });
   }
@@ -859,6 +912,12 @@ try {
     await checkYouTubeMusic(name, c, ph, out, slug);
     await c.close();
   }
+
+  /* ---------- Прототип MapLibre ---------- */
+  await checkLab('iPad', { viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
+  await checkLab('iPad горизонтально', { viewport: { width: 1366, height: 1024 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
+  await checkLab('iPhone 15', devices['iPhone 15']);
+  await checkLab('Pixel 7', devices['Pixel 7']);
 
   /* ---------- Компьютер: правый клик ---------- */
   {

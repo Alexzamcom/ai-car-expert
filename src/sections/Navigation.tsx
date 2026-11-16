@@ -42,6 +42,7 @@ import {
 import { LongPressDetector } from '../lib/geo/longpress';
 import { fmtCoords } from '../lib/geo/geocode';
 import { carSvg, unwrapAngle, type CarColor } from '../lib/carMarker';
+import { lookAheadOffset, speedBand } from '../lib/camera';
 import { settingsStore, driveUiStore, setMinimal } from '../lib/state';
 import { startVoice } from '../lib/voice';
 import { stepText, stepIcon, fmtDistance, fmtDuration, haversine } from '../lib/routing';
@@ -194,6 +195,7 @@ export function Navigation() {
 
   // Позиция пользователя: машинка, круг точности, камера
   const carAngle = useRef(0);
+  const zoomBand = useRef<number | null>(null);
   useEffect(() => {
     const m = map.current;
     if (!m || geo.lat == null || geo.lon == null) return;
@@ -215,7 +217,26 @@ export function Navigation() {
       carAngle.current = unwrapAngle(carAngle.current, geo.heading);
       rot.style.transform = `rotate(${carAngle.current}deg)`;
     }
-    if (follow) m.setView(ll, Math.max(m.getZoom(), guiding ? 17 : 15), { animate: true });
+    if (follow) {
+      if (!guiding) {
+        m.setView(ll, Math.max(m.getZoom(), 15), { animate: true });
+      } else {
+        // Масштаб — по скорости, но только при смене полосы скорости: щипок пользователя не сбрасываем на каждой точке.
+        const band = speedBand(geo.speedKmh);
+        const zoom = band !== zoomBand.current ? band : m.getZoom();
+        zoomBand.current = band;
+        // Упреждение: машинка ниже центра по ходу движения — впереди видно больше дороги.
+        let target = L.latLng(ll);
+        if (geo.heading != null) {
+          const size = m.getSize();
+          const [dx, dy] = lookAheadOffset(geo.heading, size.x, size.y);
+          target = m.unproject(m.project(target, zoom).add([dx, dy]), zoom);
+        }
+        // Плавно и линейно, без рывков между точками GPS (раз в ~1 с).
+        if (zoom !== m.getZoom()) m.setView(target, zoom, { animate: true });
+        else m.panTo(target, { animate: true, duration: 0.9, easeLinearity: 1, noMoveStart: true });
+      }
+    }
   }, [geo.lat, geo.lon, geo.heading, geo.accuracy, follow, guiding, carColor]);
 
   // Цвет машинки из настроек
@@ -252,8 +273,8 @@ export function Navigation() {
       });
       l.route = L.layerGroup([
         ...altLines,
-        L.polyline(pts, { color: tk['route-casing'], weight: 11, opacity: 0.9, interactive: false }),
-        L.polyline(pts, { color: tk.route, weight: 7, opacity: 0.95, interactive: false, className: 'route-main' }),
+        L.polyline(pts, { color: tk['route-casing'], weight: 14, opacity: 0.9, interactive: false, lineCap: 'round', lineJoin: 'round' }),
+        L.polyline(pts, { color: tk.route, weight: 9, opacity: 1, interactive: false, className: 'route-main', lineCap: 'round', lineJoin: 'round' }),
       ]).addTo(m);
       // Камера подстраивается под новый набор вариантов, но не при выборе варианта или смене темы.
       if (nav.status === 'preview' && !themeOnly.current && fitted.current !== nav.routes) {
@@ -343,6 +364,7 @@ export function Navigation() {
     setOverview(false);
     setFollow(true);
     startGeo();
+    zoomBand.current = null; // масштаб по скорости — заново
     if (geo.lat != null && geo.lon != null) map.current?.setView([geo.lat, geo.lon], guiding ? 17 : 16);
     else if (geo.status === 'denied') toast(`Геопозиция запрещена. ${geoHelp()}`, 'warn');
     else toast('Ищу геопозицию…');

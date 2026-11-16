@@ -94,25 +94,78 @@ export function acceptFix(prev: (RawFix & { at: number }) | null, fix: RawFix, n
   return 'accept';
 }
 
+/* ---------- Курс машинки ---------- */
+
+export interface HeadingState {
+  /** Показанный курс, градусы от севера по часовой; null — ещё неизвестен. */
+  heading: number | null;
+  /** Точка, от которой считаем направление смещения. */
+  anchor: RawFix | null;
+  /** Время последнего обновления (coords timestamp). */
+  at: number | null;
+}
+/** Направление маршрута в месте машины и удаление от него. */
+export interface RoadHint {
+  bearing: number;
+  offRouteM: number;
+}
+
+/** Разность углов в диапазоне −180…180. */
+export const angleDiff = (a: number, b: number) => ((((a - b) % 360) + 540) % 360) - 180;
+const norm360 = (a: number) => ((a % 360) + 360) % 360;
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+const validDeg = (h: number | null | undefined): h is number => h != null && Number.isFinite(h) && h >= 0;
+
+/** Скорость, ниже которой курс не меняется (≈5 км/ч): на месте и в пробке GPS-шум крутит направление. */
+export const MIN_HEADING_SPEED = 1.5;
+
 /**
- * Курс для машинки. Без движения или при плохой точности — прежний (никакого хаотичного вращения).
- * Источник: курс устройства при скорости ≥ 2 м/с или направление смещения, если сдвинулись заметно больше погрешности.
+ * Курс машинки.
+ * - Стоим или ползём — последний достоверный курс (без маршрута и истории — направление дороги, если едем по маршруту).
+ * - Курс устройства (GPS course) — при уверенном движении (≥ 9 км/ч) и точности ≤ 30 м; иначе — направление между
+ *   двумя точными точками, разнесёнными больше погрешности, со свежей опорой (не через поворот).
+ * - Задний ход: на малой скорости направление движения, противоположное носу, не разворачивает машинку.
+ * - На маршруте курс сверяется с дорогой: поперёк дороги — шум GPS, берём направление дороги; сход с маршрута — верим GPS.
+ * - Плавность: зона нечувствительности 3°, ограничение скорости поворота.
  */
-export function nextHeading(prevHeading: number | null, from: RawFix | null, fix: RawFix): number | null {
-  const speed = fix.speed != null && fix.speed >= 0 ? fix.speed : null;
-  let raw: number | null = null;
-  if (fix.heading != null && !Number.isNaN(fix.heading) && fix.heading >= 0 && (speed ?? 0) >= 2 && fix.accuracy <= 50) raw = fix.heading;
-  else if (from && fix.accuracy <= 50) {
-    const d = haversine(from, fix);
-    const dt = Math.max(0.5, (fix.timestamp - from.timestamp) / 1000);
-    if (d >= Math.max(15, 1.5 * fix.accuracy) && (speed ?? d / dt) >= 2) raw = bearing(from, fix);
+export function updateHeading(st: HeadingState, fix: RawFix, road: RoadHint | null = null): HeadingState {
+  const prev = st.heading;
+  const at = fix.timestamp;
+  const dt = st.at != null ? clamp((fix.timestamp - st.at) / 1000, 0.2, 5) : 1;
+  let anchor = st.anchor;
+  // Опора старше 15 с — новая: иначе направление считается «через угол» после поворота.
+  if (anchor && fix.timestamp - anchor.timestamp > 15_000) anchor = null;
+  const moved = anchor ? haversine(anchor, fix) : 0;
+  const dtA = anchor ? Math.max(0.5, (fix.timestamp - anchor.timestamp) / 1000) : 1;
+  const speed = validDeg(fix.speed) ? fix.speed : anchor ? moved / dtA : null;
+  const onRoad = !!road && road.offRouteM <= Math.max(15, Math.min(fix.accuracy, 40));
+  const fallback = prev ?? (onRoad ? norm360(road!.bearing) : null);
+
+  if (speed == null || speed < MIN_HEADING_SPEED) return { heading: fallback, anchor: anchor ?? fix, at };
+
+  const farEnough = moved >= Math.max(12, 1.2 * fix.accuracy);
+  let c: number | null = null;
+  if (validDeg(fix.heading) && speed >= 2.5 && fix.accuracy <= 30) c = fix.heading;
+  else if (anchor && fix.accuracy <= 40 && farEnough) c = bearing(anchor, fix);
+  if (!anchor || farEnough) anchor = fix;
+  if (c == null) return { heading: fallback, anchor, at };
+
+  // Задний ход: медленно и «назад» относительно носа — нос не разворачиваем.
+  if (prev != null && speed < 4 && Math.abs(angleDiff(c, prev)) > 150) return { heading: prev, anchor, at };
+
+  if (onRoad) {
+    const d = angleDiff(c, road!.bearing);
+    if (Math.abs(d) <= 35) c = road!.bearing + d * 0.3;
+    else if (Math.abs(d) < 145) c = road!.bearing;
+    // ≥ 145° — едем против направления маршрута (разворот): верим GPS.
   }
-  if (raw == null) return prevHeading;
-  if (prevHeading == null) return raw;
-  // Сглаживание по кратчайшей дуге: резкий разворот принимаем, мелкий шум — гасим.
-  const delta = ((raw - prevHeading + 540) % 360) - 180;
-  const k = Math.abs(delta) > 60 ? 0.8 : 0.5;
-  return (prevHeading + k * delta + 360) % 360;
+  c = norm360(c);
+  if (prev == null) return { heading: c, anchor, at };
+  const delta = angleDiff(c, prev);
+  if (Math.abs(delta) < 3) return { heading: prev, anchor, at };
+  const k = Math.abs(delta) > 60 ? 0.6 : 0.35;
+  const maxStep = 90 * dt + 15;
+  return { heading: norm360(prev + clamp(k * delta, -maxStep, maxStep)), anchor, at };
 }
 
 /* Последняя точная позиция — только чтобы открыть карту в знакомом месте. Машинку по ней не рисуем. */
@@ -195,7 +248,20 @@ export function routeSummary(): string {
 let watchId: number | null = null;
 /** Последняя принятая точка (для фильтра) и точка, от которой считаем направление движения. */
 let acceptedFix: (RawFix & { at: number }) | null = null;
-let headingFrom: RawFix | null = null;
+let headingState: HeadingState = { heading: null, anchor: null, at: null };
+
+/** Направление маршрута в месте машины (отрезок не короче 10 м) — для проверки курса. */
+export function roadHint(pos: LatLon): RoadHint | null {
+  const s = navStore.get();
+  if (!s.route || !routeCache || s.route.coords.length < 2) return null;
+  const p = routeProgress(s.route, pos, routeCache, s.progress?.segIndex ?? 0);
+  const c = s.route.coords;
+  const a = c[p.segIndex];
+  let k = p.segIndex + 1;
+  while (k < c.length - 1 && haversine(a, c[k]) < 10) k++;
+  if (!c[k]) return null;
+  return { bearing: bearing(a, c[k]), offRouteM: p.offRouteM };
+}
 
 /** Направление движения (°) между двумя точками. */
 export function bearing(a: LatLon, b: LatLon) {
@@ -215,8 +281,8 @@ export function handleFix(fix: RawFix, now = Date.now()) {
     geoStore.set((s) => ({ ...s, status: 'watching', held: verdict }));
     return;
   }
-  const heading = nextHeading(geoStore.get().heading, headingFrom, fix);
-  if (!headingFrom || haversine(headingFrom, fix) >= Math.max(15, 1.5 * fix.accuracy)) headingFrom = fix;
+  headingState = updateHeading(headingState, fix, roadHint(fix));
+  const heading = headingState.heading;
   acceptedFix = { ...fix, at: now };
   const speedKmh = fix.speed != null && fix.speed >= 0 ? fix.speed * 3.6 : null;
   const quality = classifyAccuracy(fix.accuracy);
@@ -229,7 +295,7 @@ export function handleFix(fix: RawFix, now = Date.now()) {
 export function __resetGeo() {
   lastPosSaved = 0;
   acceptedFix = null;
-  headingFrom = null;
+  headingState = { heading: null, anchor: null, at: null };
   geoStore.set({ status: 'idle', lat: null, lon: null, accuracy: null, speedKmh: null, heading: null, updated: null, quality: null, held: null, fixAt: null });
 }
 

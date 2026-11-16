@@ -21,7 +21,8 @@ function serviceWorker(): Plugin {
     generateBundle(_options, bundle) {
       const files = [
         './',
-        ...Object.keys(bundle).filter((f) => !f.endsWith('.map')),
+        // Прототип карты (lab.html, MapLibre ~1,5 МБ) не кэшируется заранее: грузится только при открытии.
+        ...Object.keys(bundle).filter((f) => !f.endsWith('.map') && !/(^|\/)(lab[.-]|maplibre)/.test(f)),
         ...listPublic(path.resolve('public')),
       ];
       const template = fs.readFileSync(path.resolve('pwa/sw-template.js'), 'utf8');
@@ -42,7 +43,15 @@ export default defineConfig(({ mode }) => ({
   plugins: mode === 'artifact' ? [react()] : [react(), serviceWorker()],
   build: {
     target: 'safari16',
-    chunkSizeWarningLimit: 800,
+    chunkSizeWarningLimit: 1600,
+    ...(mode === 'artifact'
+      ? {}
+      : {
+          rollupOptions: {
+            input: { main: path.resolve('index.html'), lab: path.resolve('lab.html') },
+            output: { manualChunks: (id: string) => (id.includes('maplibre-gl') ? 'lab-maplibre' : undefined) },
+          },
+        }),
     ...(mode === 'artifact'
       ? {
           outDir: 'dist-artifact',

@@ -1,6 +1,6 @@
 /* Регрессия GPS: машинка не должна оказываться «неизвестно где». */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { acceptFix, classifyAccuracy, nextHeading, handleFix, geoStore, __resetGeo, geoStatusText, readLastPos, type RawFix } from '../../src/lib/nav';
+import { acceptFix, classifyAccuracy, updateHeading, angleDiff, handleFix, geoStore, __resetGeo, geoStatusText, readLastPos, type RawFix } from '../../src/lib/nav';
 import { unwrapAngle, carSvg, CAR_COLORS } from '../../src/lib/carMarker';
 
 const T0 = 1_800_000_000_000;
@@ -80,25 +80,75 @@ describe('Позиция на карте', () => {
   });
 });
 
+type HS = Parameters<typeof updateHeading>[0];
+const H0: HS = { heading: null, anchor: null, at: null };
+/** Проехать по точкам: [dx, dy] метров от Киева, шаг по времени 1 с. */
+function drive(points: [number, number][], opt: Partial<RawFix> & { start?: HS; road?: { bearing: number; offRouteM: number } | null } = {}) {
+  let st = opt.start ?? H0;
+  const out: (number | null)[] = [];
+  points.forEach(([dx, dy], i) => {
+    st = updateHeading(st, moved(dx, dy, { timestamp: T0 + i * 1000, accuracy: opt.accuracy ?? 8, speed: opt.speed ?? null, heading: opt.heading ?? null }), opt.road ?? null);
+    out.push(st.heading);
+  });
+  return { st, out, last: out[out.length - 1] };
+}
+const east = (n: number, step = 14): [number, number][] => Array.from({ length: n }, (_, i) => [i * step, 0]);
+
 describe('Курс машинки', () => {
-  it('стоим: шум GPS не вращает машинку', () => {
-    let h: number | null = 90;
-    const from = fix();
-    for (const [dx, dy] of [[5, -4], [-6, 3], [4, 6], [-3, -5]]) h = nextHeading(h, from, moved(dx, dy, { timestamp: T0 + 2000 }));
-    expect(h).toBe(90);
-    expect(nextHeading(null, from, moved(6, 6, { timestamp: T0 + 2000 }))).toBeNull();
+  it('стоим: шум GPS не вращает машинку, курс сохраняется', () => {
+    const r = drive([[0, 0], [5, -4], [-6, 3], [4, 6], [-3, -5], [2, 2]], { start: { heading: 90, anchor: null, at: null } });
+    expect(r.out.every((h) => h === 90)).toBe(true);
+    expect(drive([[0, 0], [6, 6]]).last).toBeNull();
   });
-  it('едем на восток — курс ≈ 90°', () => {
-    expect(nextHeading(null, fix(), moved(40, 0, { timestamp: T0 + 2000 }))).toBeCloseTo(90, 0);
+  it('едем на восток по точным точкам — курс сходится к 90°', () => {
+    expect(drive(east(8)).last).toBeCloseTo(90, 0);
   });
-  it('курс устройства — только в движении и при хорошей точности', () => {
-    expect(nextHeading(null, null, fix({ heading: 180, speed: 10 }))).toBe(180);
-    expect(nextHeading(null, null, fix({ heading: 180, speed: 0.5 }))).toBeNull();
-    expect(nextHeading(30, null, fix({ heading: 180, speed: 10, accuracy: 300 }))).toBe(30);
+  it('курс устройства — только при уверенном движении и хорошей точности', () => {
+    expect(updateHeading(H0, fix({ heading: 180, speed: 10 })).heading).toBe(180);
+    expect(updateHeading(H0, fix({ heading: 180, speed: 1 })).heading).toBeNull();
+    expect(updateHeading({ ...H0, heading: 30 }, fix({ heading: 180, speed: 10, accuracy: 60 })).heading).toBe(30);
   });
-  it('сглаживание и переход через север по кратчайшей дуге', () => {
-    const h = nextHeading(350, null, fix({ heading: 10, speed: 10 }))!;
-    expect(h).toBeCloseTo(0, 0); // 350 → 10: половина пути — 0°, а не 180°
+  it('iPad без GPS (Wi-Fi, ±65 м) на маршруте: курс по дороге, а не «на север»', () => {
+    const r = drive(east(4, 20), { accuracy: 65, road: { bearing: 90, offRouteM: 20 } });
+    expect(r.last).toBe(90);
+  });
+  it('на маршруте курс GPS поперёк дороги — шум: машинка по дороге', () => {
+    const r = drive(east(6), { heading: 0, speed: 10, road: { bearing: 90, offRouteM: 5 } });
+    expect(r.last).toBeCloseTo(90, 0);
+  });
+  it('реальный сход с маршрута — верим GPS, а не дороге', () => {
+    const r = drive(east(6), { road: { bearing: 0, offRouteM: 80 } });
+    expect(r.last).toBeCloseTo(90, 0);
+  });
+  it('небольшое расхождение с дорогой — плавно к дороге, но не насильно', () => {
+    const h = updateHeading(H0, fix({ heading: 100, speed: 10 }), { bearing: 90, offRouteM: 3 }).heading!;
+    expect(h).toBeCloseTo(93, 0);
+  });
+  it('задний ход: медленно назад — нос машинки не разворачивается', () => {
+    const r = drive([[0, 0], [-12, 0], [-24, 0], [-36, 0]], { speed: 2, heading: 270, start: { heading: 90, anchor: null, at: null } });
+    expect(r.out.every((h) => h === 90)).toBe(true);
+  });
+  it('разворот на скорости — плавный, без скачка на 180°', () => {
+    const r = drive([[0, 0], [-15, 0], [-30, 0], [-45, 0], [-60, 0], [-75, 0]], { speed: 10, heading: 270, start: { heading: 90, anchor: null, at: null } });
+    const steps = r.out.map((h, i) => Math.abs(angleDiff(h!, i ? r.out[i - 1]! : 90)));
+    expect(Math.max(...steps)).toBeLessThanOrEqual(105);
+    expect(Math.abs(angleDiff(r.last!, 270))).toBeLessThan(20);
+  });
+  it('поворот на 90° — без рывка: первый шаг не больше 60°', () => {
+    const h = updateHeading({ heading: 0, anchor: null, at: T0 }, fix({ heading: 90, speed: 10, timestamp: T0 + 1000 })).heading!;
+    expect(h).toBeGreaterThan(30);
+    expect(h).toBeLessThanOrEqual(60);
+  });
+  it('дрожание меньше 3° отсекается; переход через север — по кратчайшей дуге', () => {
+    expect(updateHeading({ heading: 90, anchor: null, at: T0 }, fix({ heading: 92, speed: 10, timestamp: T0 + 1000 })).heading).toBe(90);
+    const h = updateHeading({ heading: 350, anchor: null, at: T0 }, fix({ heading: 10, speed: 10, timestamp: T0 + 1000 })).heading!;
+    expect(Math.abs(angleDiff(h, 357))).toBeLessThan(1);
+  });
+  it('старая опора (> 15 с) не даёт курс «через угол»', () => {
+    const st = { heading: 0, anchor: fix({ timestamp: T0 - 60_000 }), at: T0 - 1000 };
+    const r = updateHeading(st, moved(40, 40, { timestamp: T0 }));
+    expect(r.heading).toBe(0);
+    expect(r.anchor?.timestamp).toBe(T0);
   });
   it('поворот иконки без «кувырка»', () => {
     expect(unwrapAngle(350, 10)).toBe(370);
