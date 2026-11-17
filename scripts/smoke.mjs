@@ -166,7 +166,7 @@ async function checkLab(name, device) {
   if (MOCK) await ctx.route('**/tiles.openfreemap.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: fixture('maplibre-style.json') }));
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(`lab: ${e}`));
-  await page.goto(`${url}lab.html?sim=1&hud=1`, { waitUntil: 'load' });
+  await page.goto(`${url}lab.html?sim=1&hud=1&test=1`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__lab && window.__lab.state().heading != null, null, { timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(4500);
   const st = () => page.evaluate(() => window.__lab.state());
@@ -174,6 +174,34 @@ async function checkLab(name, device) {
   let s1 = await st();
   check(`Карта 3D (${name}): по движению — машинка вверх, наклон, ниже центра`, s1.mode === 'course' && d(s1.bearing, s1.heading) < 12 && d(s1.carShown, s1.bearing) < 15 && s1.pitch > 40 && s1.car && s1.car.y > 0.6 && s1.car.y < 0.9 && Math.abs(s1.car.x - 0.5) < 0.1, JSON.stringify(s1));
   await page.screenshot({ path: `${out}/lab-${name.replace(/\s+/g, '-').toLowerCase()}-course.png` });
+  // 3D-машинка: видна на месте автомобиля (стёкла, шины — тёмные пиксели), цвет кузова из настроек, облегчённый вариант
+  const carPixels = () =>
+    page.evaluate(() => {
+      const s = window.__lab.state();
+      let dark = 0;
+      let red = 0;
+      for (let dx = -0.04; dx <= 0.04; dx += 0.005)
+        for (let dy = -0.07; dy <= 0.04; dy += 0.005) {
+          const p = window.__lab.pixelAt(s.carDrawn.x + dx, s.carDrawn.y + dy);
+          if (!p) continue;
+          if (p[0] < 70 && p[1] < 70 && p[2] < 85) dark++;
+          if (p[0] > 140 && p[1] < 90 && p[2] < 90) red++;
+        }
+      return { dark, red, car3d: s.car3d };
+    });
+  const white = await carPixels();
+  check(`3D-машинка (${name}): объёмная модель на карте`, white.car3d && white.dark > 3, JSON.stringify(white));
+  await page.evaluate(() => window.__lab.settings.set((x) => ({ ...x, carColor: 'red' })));
+  await page.waitForTimeout(600);
+  const red = await carPixels();
+  check(`3D-машинка (${name}): цвет кузова из настроек (белая → красная)`, red.red > 10 && red.red > white.red * 3, `белая ${white.red}, красная ${red.red} красных пикселей`);
+  await page.screenshot({ path: `${out}/lab-${name.replace(/\s+/g, '-').toLowerCase()}-red.png` });
+  await page.evaluate(() => window.__lab.settings.set((x) => ({ ...x, carColor: 'white', carStyle: 'flat' })));
+  await page.waitForTimeout(800);
+  const flat = await page.evaluate(() => ({ car3d: window.__lab.state().car3d, dom: !!document.querySelector('.lab-car svg') && document.querySelector('.lab-car').isConnected }));
+  check(`3D-машинка (${name}): облегчённый плоский вариант`, !flat.car3d && flat.dom, JSON.stringify(flat));
+  await page.evaluate(() => window.__lab.settings.set((x) => ({ ...x, carStyle: '3d' })));
+  await page.waitForTimeout(400);
   await page.click('.lab-modes [data-mode="north"]');
   await page.waitForFunction(() => window.__lab.state().pitch < 1, null, { timeout: 8000 }).catch(() => {});
   s1 = await st();

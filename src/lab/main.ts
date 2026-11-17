@@ -10,7 +10,8 @@ import '../styles/global.css';
 import './lab.css';
 import { startTheme, themeStore, THEMES } from '../lib/theme';
 import { settingsStore } from '../lib/state';
-import { carSvg, unwrapAngle } from '../lib/carMarker';
+import { carSvg, unwrapAngle, CAR_COLORS } from '../lib/carMarker';
+import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
 import { followZoom, lookAheadOffset, CAMERA_MODE_LABEL, type CameraMode } from '../lib/camera';
 import { updateHeading, type HeadingState, geoStore, navStore, startGeo, restartGeo, restoreNavSession, setNavigationVoice, navLang, readLastPos } from '../lib/nav';
 import { stepText, stepIcon, fmtDistance, fmtDuration, haversine, type LatLon } from '../lib/routing';
@@ -57,6 +58,8 @@ const map: MlMap = new maplibregl.Map({
   attributionControl: { compact: true },
   maxPitch: 70,
   fadeDuration: 150,
+  // Сглаживание краёв 3D-машинки; ?test=1 — сохранение кадра для проверки пикселей в автотестах.
+  canvasContextAttributes: { antialias: true, preserveDrawingBuffer: params.has('test') },
 });
 
 /** Ночь: та же векторная карта в тёмной палитре (меняем цвета слоёв, данные не трогаем). */
@@ -122,6 +125,25 @@ paintCar();
 settingsStore.subscribe(paintCar);
 // rotationAlignment 'map': поворот задаётся курсом относительно севера, карта поворачивается сама — без двойного вращения.
 const carMarker = new maplibregl.Marker({ element: carEl, rotationAlignment: 'map', pitchAlignment: 'map' });
+
+/* Объёмная машинка (WebGL-слой). Облегчённый вариант и запасной при ошибке WebGL — плоский маркер. */
+let carNow: { lon: number; lat: number; heading: number } | null = null;
+const car3d = createCar3dLayer(
+  () => (carNow ? { ...carNow, color: hexToRgb(CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
+  { sizePx: () => Math.min(76, Math.max(50, Math.min(innerWidth, innerHeight) * 0.095)) },
+);
+const use3d = () => settingsStore.get().carStyle !== 'flat' && !car3d.failed;
+function syncCarLayer() {
+  try {
+    const has = !!map.getLayer('car-3d');
+    if (use3d() && !has) map.addLayer(car3d);
+    if (!use3d() && has) map.removeLayer('car-3d');
+  } catch {
+    /* стиль ещё загружается — добавим по style.load */
+  }
+}
+map.on('style.load', syncCarLayer);
+settingsStore.subscribe(syncCarLayer);
 
 /* ---------- Камера ---------- */
 let mode: CameraMode = 'course';
@@ -196,7 +218,7 @@ function onFix(pos: LatLon, heading: number | null, speed: number | null) {
   t0 = now;
   speedKmh = speed;
   if (heading != null) headingTarget = heading;
-  if (!carMarker.getLngLat?.() || !(carMarker as unknown as { _map?: unknown })._map) carMarker.setLngLat([pos.lon, pos.lat]).addTo(map);
+  if (!use3d() && !(carMarker as unknown as { _map?: unknown })._map) carMarker.setLngLat([pos.lon, pos.lat]).addTo(map);
   follow();
 }
 
@@ -209,11 +231,17 @@ function frame(now: number) {
   lastFrame = now;
   const p = carPos(now);
   if (p) carMarker.setLngLat([p.lon, p.lat]);
+  if (use3d() && (carMarker as unknown as { _map?: unknown })._map) carMarker.remove();
+  if (!use3d() && p && !(carMarker as unknown as { _map?: unknown })._map) carMarker.setLngLat([p.lon, p.lat]).addTo(map);
   if (headingTarget != null) {
     // Поворот машинки — по кратчайшей дуге и с ограниченной скоростью: без рывков и «кувырков».
     const target = unwrapAngle(headingShown, headingTarget);
     headingShown += Math.max(-6, Math.min(6, (target - headingShown) * 0.15));
     carMarker.setRotation(headingShown);
+  }
+  if (p) {
+    carNow = { lon: p.lon, lat: p.lat, heading: ((headingShown % 360) + 360) % 360 };
+    if (use3d()) map.triggerRepaint();
   }
   requestAnimationFrame(frame);
 }
@@ -306,13 +334,24 @@ declare global {
     __lab: unknown;
   }
 }
+/** Цвет пикселя карты (RGB) в долях экрана — для автотестов (?test=1). */
+function pixelAt(fx: number, fy: number): [number, number, number] | null {
+  const c = map.getCanvas();
+  const g = c.getContext('webgl2') ?? c.getContext('webgl');
+  if (!g) return null;
+  const px = new Uint8Array(4);
+  g.readPixels(Math.round(fx * c.width), Math.round((1 - fy) * c.height), 1, 1, g.RGBA, g.UNSIGNED_BYTE, px);
+  return [px[0], px[1], px[2]];
+}
 window.__lab = {
+  pixelAt,
+  settings: settingsStore,
   stats,
   setMode,
   state: () => {
     const p = to ? map.project([to.lon, to.lat]) : null;
     const r = map.getContainer().getBoundingClientRect();
-    return { mode, bearing: map.getBearing(), pitch: map.getPitch(), heading: headingTarget, carShown: headingShown, car: p ? { x: p.x / r.width, y: p.y / r.height } : null, zoomBand: zoomBandShown };
+    return { mode, bearing: map.getBearing(), pitch: map.getPitch(), heading: headingTarget, carShown: headingShown, car: p ? { x: p.x / r.width, y: p.y / r.height } : null, zoomBand: zoomBandShown, car3d: use3d() && !!map.getLayer('car-3d'), car3dFailed: car3d.failed, carDrawn: carNow ? (({ x, y }) => ({ x: x / r.width, y: y / r.height }))(map.project([carNow.lon, carNow.lat])) : null };
   },
   map,
 };
