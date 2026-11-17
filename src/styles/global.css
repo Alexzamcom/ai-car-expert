@@ -1514,3 +1514,16 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 /* Динамик в карточке ведения — только на узкой карте, где колонка кнопок уступает место карточке. */
 .card-voice { display: none; }
 @container map (max-width: 520px) { .route-guiding .card-voice { display: grid; width: 52px; height: 52px; } }
+
+/* ============ Карта MapLibre ============ */
+/* CSS MapLibre подгружается позже и задаёт .maplibregl-map { position: relative } — карта сжималась до нулевой высоты. */
+.map.ml-map.maplibregl-map, .map.ml-map { position: absolute; inset: 0; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.ml-map .maplibregl-ctrl-attrib { background: var(--overlay); color: var(--muted); font-size: 11px; }
+.ml-map .maplibregl-ctrl-attrib a { color: var(--text-2); }
+.ml-pin { width: 36px; height: 46px; display: grid; place-items: start center; pointer-events: none; }
+.map-poi { width: 26px; height: 26px; display: grid; place-items: center; cursor: pointer; }
+.ml-car { width: 32px; height: 56px; pointer-events: none; }
+.ml-car svg { display: block; filter: drop-shadow(0 2px 3px var(--shadow)); }
+.cam-toggle { position: relative; }
+.cam-label { position: absolute; bottom: 4px; right: 6px; font-size: 0.6rem; font-weight: 700; color: var(--accent); }
+.guide-cam { margin-right: -6px; }

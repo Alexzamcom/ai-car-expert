@@ -3,12 +3,13 @@
    маршрут и голосовые подсказки — та же логика, другой движок отрисовки.
    ?sim=1 — демонстрационная поездка (без GPS); ?style=<url> — другой стиль; ?hud=1 — счётчик кадров. */
 import * as maplibregl from 'maplibre-gl';
-import type { GeoJSONSource, Map as MlMap, StyleSpecification } from 'maplibre-gl';
+import type { GeoJSONSource, Map as MlMap } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import '../styles/global.css';
 import './lab.css';
 import { startTheme, themeStore, THEMES } from '../lib/theme';
+import { paletteTransform, DEFAULT_STYLE_URL } from '../lib/mapStyle';
 import { settingsStore } from '../lib/state';
 import { carSvg, unwrapAngle, CAR_COLORS } from '../lib/carMarker';
 import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
@@ -22,7 +23,7 @@ startTheme();
 
 const params = new URLSearchParams(location.search);
 const SIM = params.has('sim');
-const STYLE_URL = params.get('style') ?? 'https://tiles.openfreemap.org/styles/positron';
+const STYLE_URL = params.get('style') ?? DEFAULT_STYLE_URL;
 const PITCH = 50;
 
 /* ---------- Разметка ---------- */
@@ -62,27 +63,6 @@ const map: MlMap = new maplibregl.Map({
   canvasContextAttributes: { antialias: true, preserveDrawingBuffer: params.has('test') },
 });
 
-/** Ночь: та же векторная карта в тёмной палитре (меняем цвета слоёв, данные не трогаем). */
-function nightPalette(style: StyleSpecification) {
-  for (const l of style.layers) {
-    const id = l.id;
-    const paint = ((l as { paint?: Record<string, unknown> }).paint ??= {});
-    if (l.type === 'background') paint['background-color'] = '#0b0f14';
-    else if (l.type === 'fill') paint['fill-color'] = /water/.test(id) ? '#0f1b27' : /park|wood|grass|landcover|landuse/.test(id) ? '#10171c' : /building/.test(id) ? '#161d25' : '#0e1318';
-    else if (l.type === 'line') {
-      if (/water|river|stream|canal/.test(id)) paint['line-color'] = '#0f1b27';
-      else if (/casing/.test(id)) paint['line-color'] = '#0b0f14';
-      else if (/boundary|admin/.test(id)) paint['line-color'] = '#2b3440';
-      else if (/motorway|trunk|primary/.test(id)) paint['line-color'] = '#3b4654';
-      else paint['line-color'] = '#262e37';
-    } else if (l.type === 'symbol') {
-      paint['text-color'] = '#8d99a8';
-      paint['text-halo-color'] = '#0b0f14';
-    }
-  }
-  return style;
-}
-
 function routeCoords(): LatLon[] {
   if (SIM) return DEMO_ROUTE;
   return navStore.get().route?.coords ?? [];
@@ -105,7 +85,7 @@ function addRoute() {
 /** Тема: для ночи — тот же стиль в тёмной палитре. */
 function applyTheme() {
   const night = themeStore.get().active === 'night';
-  map.setStyle(STYLE_URL, { diff: false, transformStyle: (_prev, next) => (night ? nightPalette(structuredClone(next)) : next) });
+  map.setStyle(STYLE_URL, { diff: false, transformStyle: paletteTransform(night ? 'night' : 'day') });
 }
 map.on('style.load', addRoute);
 let themeApplied = themeStore.get().active;

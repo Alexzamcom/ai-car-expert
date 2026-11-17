@@ -94,6 +94,10 @@ export interface Settings {
   carColor: CarColor;
   /** Машинка: объёмная (3D, карта MapLibre) или облегчённая плоская. */
   carStyle: '3d' | 'flat';
+  /** Движок карты: MapLibre (векторная, поворот, наклон 3D) или Leaflet (резерв). Маршрут общий. */
+  mapEngine: 'leaflet' | 'maplibre';
+  /** Ориентация карты при ведении на MapLibre (свободный обзор — жестом). */
+  cameraMode: 'course' | 'north';
   /** Полноэкранный минималистичный режим во время ведения. */
   minimalGuidance: boolean;
   speechLang: string;
@@ -141,6 +145,8 @@ export const settingsStore = createStore<Settings>(
     aiShareLocation: true,
     carColor: 'white',
     carStyle: '3d',
+    mapEngine: 'leaflet',
+    cameraMode: 'course',
     minimalGuidance: true,
     speechLang: 'ru-RU',
     speakReplies: true,

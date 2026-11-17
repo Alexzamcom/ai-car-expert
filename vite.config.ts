@@ -49,7 +49,7 @@ export default defineConfig(({ mode }) => ({
       : {
           rollupOptions: {
             input: { main: path.resolve('index.html'), lab: path.resolve('lab.html') },
-            output: { manualChunks: (id: string) => (id.includes('maplibre-gl') ? 'lab-maplibre' : undefined) },
+            output: { manualChunks: (id: string) => (id.includes('maplibre-gl') ? 'maplibre-gl' : undefined) },
           },
         }),
     ...(mode === 'artifact'

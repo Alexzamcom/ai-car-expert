@@ -636,6 +636,47 @@ function CarOnMapSettings() {
       </div>
       <div className="setting-row">
         <div>
+          <strong>Движок карты</strong>
+          <small>
+            MapLibre — векторная карта, поворот по движению, наклон 3D, объёмная машинка. Leaflet — прежняя карта (резерв).
+            Переключение не сбрасывает маршрут.
+          </small>
+        </div>
+        <div className="seg" role="radiogroup" aria-label="Движок карты">
+          {(
+            [
+              ['maplibre', 'MapLibre 3D'],
+              ['leaflet', 'Leaflet'],
+            ] as const
+          ).map(([v, label]) => (
+            <button key={v} type="button" role="radio" aria-checked={s.mapEngine === v} className={`chip ${s.mapEngine === v ? 'is-active' : ''}`} onClick={() => patch({ mapEngine: v })}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {s.mapEngine === 'maplibre' && (
+        <div className="setting-row">
+          <div>
+            <strong>Карта при ведении</strong>
+            <small>Сдвиг или поворот карты двумя пальцами — свободный обзор; «К машине» возвращает выбранный режим</small>
+          </div>
+          <div className="seg" role="radiogroup" aria-label="Ориентация карты">
+            {(
+              [
+                ['course', 'По движению'],
+                ['north', 'Север сверху'],
+              ] as const
+            ).map(([v, label]) => (
+              <button key={v} type="button" role="radio" aria-checked={s.cameraMode === v} className={`chip ${s.cameraMode === v ? 'is-active' : ''}`} onClick={() => patch({ cameraMode: v })}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="setting-row">
+        <div>
           <strong>Вид машинки</strong>
           <small>Объёмная — на карте 3D (MapLibre); облегчённая плоская — для слабых устройств. На карте Leaflet машинка всегда плоская.</small>
         </div>

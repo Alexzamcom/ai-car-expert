@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import type { MapApi } from './MapLibreMap';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Icon } from '../components/Icon';
@@ -51,6 +52,8 @@ import { toast } from '../lib/state';
 import { themeStore, THEMES } from '../lib/theme';
 
 const DEFAULT_CENTER: L.LatLngTuple = [55.7539, 37.6208];
+/** Карта MapLibre загружается только при выборе этого движка (1,5 МБ). */
+const MapLibreMap = lazy(() => import('./MapLibreMap').then((m) => ({ default: m.MapLibreMap })));
 
 export const OSM_TILES = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 export const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">Участники OpenStreetMap</a>';
@@ -107,6 +110,8 @@ export function Navigation() {
   const theme = useStore(themeStore);
   const settings = useStore(settingsStore);
   const carColor = settings.carColor;
+  const engine = settings.mapEngine;
+  const mlApi = useRef<MapApi | null>(null);
   const ui = useStore(driveUiStore);
   const geoStatus = geoStatusText(geo);
 
@@ -121,9 +126,9 @@ export function Navigation() {
   const guiding = nav.status === 'guiding';
   const lang = navLang();
 
-  // Инициализация карты
+  // Инициализация карты (Leaflet — резервный движок; MapLibre — отдельный компонент)
   useEffect(() => {
-    if (!mapEl.current || map.current) return;
+    if (engine !== 'leaflet' || !mapEl.current || map.current) return;
     // Пока нет точки GPS — карта там, где была последняя точная позиция (машинку по ней не рисуем).
     const last = readLastPos();
     const m = L.map(mapEl.current, { zoomControl: false, attributionControl: true }).setView(last ? [last.lat, last.lon] : DEFAULT_CENTER, last ? 14 : 13);
@@ -191,7 +196,22 @@ export function Navigation() {
       map.current = null;
       layers.current = {};
     };
-  }, []);
+  }, [engine]);
+
+  // MapLibre: камера при новом маршруте (обзор вариантов) и цели без маршрута; отрисовку делает MapLibreMap.
+  const mlFitted = useRef<unknown>(null);
+  useEffect(() => {
+    if (engine !== 'maplibre') return;
+    const api = mlApi.current;
+    if (nav.route && nav.status === 'preview' && mlFitted.current !== nav.routes) {
+      mlFitted.current = nav.routes;
+      setFollow(false);
+      requestAnimationFrame(() => mlApi.current?.fitPoints(nav.routes.flatMap((r) => r.coords), uiEl.current));
+    } else if (!nav.route && nav.dest && nav.status === 'preview' && api) {
+      setFollow(false);
+      api.centerOn(nav.dest, 15);
+    }
+  }, [engine, nav.route, nav.routes, nav.dest, nav.status]);
 
   // Позиция пользователя: машинка, круг точности, камера
   const carAngle = useRef(0);
@@ -328,6 +348,22 @@ export function Navigation() {
     if (guidanceStartCount() === shownStart.current) return;
     shownStart.current = guidanceStartCount();
     const r = navStore.get().route;
+    if (engine === 'maplibre' && r) {
+      setFollow(false);
+      setOverview(true);
+      const fit = setTimeout(() => {
+        mlApi.current?.resize();
+        mlApi.current?.fitPoints(r.coords, uiEl.current);
+      }, 120);
+      const t = setTimeout(() => {
+        setOverview(false);
+        setFollow(true);
+      }, OVERVIEW_MS);
+      return () => {
+        clearTimeout(t);
+        clearTimeout(fit);
+      };
+    }
     if (!m || !r) {
       setFollow(true);
       return;
@@ -353,6 +389,11 @@ export function Navigation() {
   const showOverview = () => {
     const m = map.current;
     const r = navStore.get().route;
+    if (r && engine === 'maplibre') {
+      setFollow(false);
+      mlApi.current?.fitPoints(r.coords, uiEl.current);
+      return;
+    }
     if (!m || !r) return;
     setFollow(false);
     fitVisible(m, L.latLngBounds(r.coords.map((c) => [c.lat, c.lon] as L.LatLngTuple)), uiEl.current);
@@ -365,7 +406,10 @@ export function Navigation() {
     setFollow(true);
     startGeo();
     zoomBand.current = null; // масштаб по скорости — заново
-    if (geo.lat != null && geo.lon != null) map.current?.setView([geo.lat, geo.lon], guiding ? 17 : 16);
+    if (geo.lat != null && geo.lon != null) {
+      if (engine === 'maplibre') mlApi.current?.centerOn({ lat: geo.lat, lon: geo.lon }, guiding ? undefined : 16);
+      else map.current?.setView([geo.lat, geo.lon], guiding ? 17 : 16);
+    }
     else if (geo.status === 'denied') toast(`Геопозиция запрещена. ${geoHelp()}`, 'warn');
     else toast('Ищу геопозицию…');
   };
@@ -432,7 +476,13 @@ export function Navigation() {
 
   return (
     <div className="navigation">
-      <div ref={mapEl} className="map" />
+      {engine === 'maplibre' ? (
+        <Suspense fallback={<div className="map" />}>
+          <MapLibreMap apiRef={mlApi} uiEl={uiEl} follow={follow} guiding={guiding} onUserMove={() => setFollow(false)} />
+        </Suspense>
+      ) : (
+        <div ref={mapEl} className="map" />
+      )}
 
       <div
         ref={uiEl}
@@ -579,6 +629,7 @@ export function Navigation() {
         {/* Справа: управление картой */}
         <div className="map-controls">
           <VoiceToggle className="map-ctl voice-ctl" />
+          {engine === 'maplibre' && guiding && <CameraModeToggle className="map-ctl voice-ctl" />}
           <button className="map-ctl zoom-ctl" onClick={() => zoom(1)} aria-label="Приблизить">
             <Icon name="plus" size="1.7rem" />
           </button>
@@ -954,8 +1005,27 @@ function GuideBar(p: { eta: string; remaining: string; duration: string; sheet: 
             {p.remaining} · {p.duration}
           </span>
         </div>
+        {settingsStore.get().mapEngine === 'maplibre' && <CameraModeToggle className="guide-voice guide-cam" />}
         <VoiceToggle className="guide-voice" />
       </div>
     </div>
+  );
+}
+
+/** Ориентация карты при ведении (MapLibre): по движению ⇄ север сверху. Свободный обзор — жестом, возврат — «К машине». */
+function CameraModeToggle({ className = '' }: { className?: string }) {
+  const mode = useStore(settingsStore).cameraMode;
+  const course = mode === 'course';
+  return (
+    <button
+      className={`${className} cam-toggle`}
+      onClick={() => settingsStore.set((x) => ({ ...x, cameraMode: course ? 'north' : 'course' }))}
+      aria-label={course ? 'Карта по движению — переключить на «Север сверху»' : 'Север сверху — переключить на «По движению»'}
+      data-mode={mode}
+      title={course ? 'По движению' : 'Север сверху'}
+    >
+      <Icon name={course ? 'navigate' : 'arrowUp'} size="1.5rem" />
+      <span className="cam-label">{course ? 'Курс' : 'С'}</span>
+    </button>
   );
 }
