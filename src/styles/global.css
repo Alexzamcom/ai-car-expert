@@ -1490,7 +1490,7 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .guide-stats { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
 .guide-eta { font-size: 1.9rem; font-weight: 700; }
 .guide-stats span { color: var(--text-2); font-size: 1.15rem; }
-.guide-voice { flex: none; width: 56px; height: 56px; display: grid; place-items: center; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--line-2); }
+.guide-voice, .guide-btn { flex: none; width: 56px; height: 56px; display: grid; place-items: center; border-radius: 50%; background: var(--panel-2); border: 1px solid var(--line-2); }
 .guide-sheet { position: relative; padding-top: 26px; touch-action: none; }
 .guide-sheet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 40vw), 1fr)); gap: 10px; }
 .guide-sheet-grid .btn { justify-content: center; min-height: 64px; white-space: normal; text-align: center; }
@@ -1527,3 +1527,4 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .cam-toggle { position: relative; }
 .cam-label { position: absolute; bottom: 4px; right: 6px; font-size: 0.6rem; font-weight: 700; color: var(--accent); }
 .guide-cam { margin-right: -6px; }
+

@@ -260,10 +260,13 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
     const cdp = await ctx.newCDPSession(page);
     const mb = await page.locator('.ml-map').boundingBox();
     const pt = [mb.x + mb.width * 0.62, mb.y + mb.height * 0.35];
-    await touch(cdp, 'touchStart', [pt]);
-    await page.waitForTimeout(900);
-    await touch(cdp, 'touchEnd', []);
-    await page.waitForSelector('.pick-card', { timeout: 4000 }).catch(() => {});
+    // Программный WebGL в CI бывает медленным: при неудаче — ещё одна попытка с более долгим нажатием.
+    for (const hold of [900, 1600]) {
+      await touch(cdp, 'touchStart', [pt]);
+      await page.waitForTimeout(hold);
+      await touch(cdp, 'touchEnd', []);
+      if (await page.waitForSelector('.pick-card', { timeout: 4000 }).then(() => true).catch(() => false)) break;
+    }
     check(`MapLibre (${name}): долгое нажатие выбирает точку`, (await page.locator('.pick-card').isVisible().catch(() => false)) && (await page.locator('.ml-pin .is-pick').count()) === 1);
     await page.click('.pick-card button:has-text("Отмена")').catch(() => {});
   }
@@ -293,13 +296,14 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   pr = await layoutProblems(page);
   check(`MapLibre (${name}): ведение без наложений`, !pr.length, pr.join('; '));
   await page.screenshot({ path: `${out}/ml-${slug}-guiding.png` });
+  await checkHud(page, ctx, name, slug, full);
   if (!full) return ctx.close();
   // Север сверху и обратно
-  await page.click('.guide-cam');
+  await page.click('.guide-cam:not(.guide-hud)');
   await page.waitForFunction(() => window.__aceMap.state().pitch < 1, null, { timeout: 8000 }).catch(() => {});
   s0 = await st();
   check(`MapLibre (${name}): «Север сверху»`, d(s0.bearing, 0) < 2 && s0.pitch < 2, JSON.stringify({ bearing: s0.bearing, pitch: s0.pitch }));
-  await page.click('.guide-cam');
+  await page.click('.guide-cam:not(.guide-hud)');
   await page.waitForFunction(() => window.__aceMap.state().pitch > 40, null, { timeout: 8000 }).catch(() => {});
   // Поворот двумя пальцами → свободный обзор → «К машине»
   const cdp2 = await ctx.newCDPSession(page);
@@ -347,6 +351,98 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   const back = await page.evaluate(() => ({ leaflet: !!document.querySelector('.leaflet-container'), route: !!document.querySelector('path.route-main'), guiding: !!document.querySelector('.route-guiding, .maneuver') }));
   check(`MapLibre (${name}): переключение на Leaflet без потери маршрута`, back.leaflet && back.route && back.guiding, JSON.stringify(back));
   await ctx.close();
+}
+
+/** HUD: предупреждение, четыре режима, зеркало, скорость, карта по курсу, восстановление, выход без потери маршрута. */
+async function checkHud(page, ctx, name, slug, full) {
+  const R = ROUTE_POS[0];
+  const d = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+  const inView = () =>
+    page.evaluate(() => {
+      const bad = [];
+      for (const sel of ['.hud-maneuver', '.hud-status', '.hud-eta', '.hud-speed', '.hud-exit', '.hud-controls']) {
+        for (const el of document.querySelectorAll(sel)) {
+          const r = el.getBoundingClientRect();
+          if (r.width && (r.left < -1 || r.top < -1 || r.right > innerWidth + 1 || r.bottom > innerHeight + 1)) bad.push(`${sel} ${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.right)},${Math.round(r.bottom)}`);
+        }
+      }
+      return bad;
+    });
+  const mode = (label) => page.evaluate(() => document.querySelector('.hud-stage').click()).then(() => page.click(`.hud-chip:has-text("${label}")`));
+  await page.click('.guide-hud');
+  await page.waitForSelector('.hud-warning', { timeout: 4000 }).catch(() => {});
+  check(`HUD (${name}): при первом включении — предупреждение о безопасности`, await page.locator('.hud-warning').isVisible().catch(() => false));
+  await page.click('.hud-warning button:has-text("Понятно")');
+  await page.waitForFunction(() => (document.querySelector('.hud-line')?.getAttribute('d') ?? '').split('L').length > 2, null, { timeout: 8000 }).catch(() => {});
+  const r1 = await page.evaluate(() => ({
+    mode: document.querySelector('.hud')?.dataset.mode,
+    transform: getComputedStyle(document.querySelector('.hud-stage')).transform,
+    line: (document.querySelector('.hud-line')?.getAttribute('d') ?? '').split('L').length - 1,
+    speed: document.querySelectorAll('.hud-speed').length,
+    dist: document.querySelector('.hud-dist')?.textContent ?? document.querySelector('.hud-status')?.textContent,
+    uiHidden: getComputedStyle(document.querySelector('.drive')).visibility === 'hidden',
+  }));
+  check(`HUD (${name}): «Маршрут» — дорога, маршрут, поворот; скорость скрыта; зеркально; интерфейс скрыт`, r1.mode === 'route' && r1.line >= 2 && r1.speed === 0 && /matrix\(-1, 0, 0, 1/.test(r1.transform) && !!r1.dist && r1.uiHidden, JSON.stringify(r1));
+  let bad = await inView();
+  check(`HUD (${name}): элементы в пределах экрана`, !bad.length, bad.join('; '));
+  await page.screenshot({ path: `${out}/hud-${slug}-route.png` });
+  // Маршрут + скорость
+  await mode('Маршрут + скорость');
+  const sp = await page.locator('.hud-speed strong').textContent({ timeout: 3000 }).catch(() => null);
+  check(`HUD (${name}): «Маршрут + скорость» — крупная скорость (число или «—», если GPS ненадёжен)`, sp != null && /^(\d+|—)$/.test(sp.trim()), String(sp));
+  // Полная карта: по движению, наклон, маршрут в цвете HUD
+  await mode('Полная карта');
+  await page.waitForFunction(() => window.__aceHud?.state?.().loaded, null, { timeout: 20000 }).catch(() => {});
+  for (let k = 5; k <= 7; k++) {
+    await ctx.setGeolocation({ latitude: R.latitude + 0.0005 * k, longitude: R.longitude - 0.0001 * k, accuracy: 6 });
+    await page.waitForTimeout(1100);
+  }
+  await page.waitForTimeout(1300);
+  const hm = await page.evaluate(() => window.__aceHud?.state?.() ?? null).catch(() => null);
+  check(`HUD (${name}): «Полная карта» — карта по курсу, наклон 3D, маршрут`, hm && hm.loaded && hm.route && hm.heading != null && d(hm.bearing, hm.heading) < 12 && hm.pitch > 40, JSON.stringify(hm));
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: `${out}/hud-${slug}-map.png` });
+  // Минимальный
+  await mode('Минимальный');
+  await page.waitForTimeout(300);
+  const mn = await page.evaluate(() => ({ arrow: !!document.querySelector('.hud-big-arrow svg') || !!document.querySelector('.hud-status'), map: !!document.querySelector('.hud-map'), route: !!document.querySelector('.hud-route') }));
+  check(`HUD (${name}): «Минимальный» — крупная стрелка без карты`, mn.arrow && !mn.map && !mn.route, JSON.stringify(mn));
+  bad = await inView();
+  check(`HUD (${name}): «Минимальный» — элементы в пределах экрана`, !bad.length, bad.join('; '));
+  await page.screenshot({ path: `${out}/hud-${slug}-minimal.png` });
+  if (full) {
+    // Зеркало выкл/вкл, цвет, яркость
+    await page.click('.hud-chip:has-text("Зеркально")');
+    const tr = await page.evaluate(() => getComputedStyle(document.querySelector('.hud-stage')).transform);
+    check(`HUD (${name}): зеркало отключается`, tr === 'none', tr);
+    await page.click('.hud-chip:has-text("Зеркально")');
+    await page.click('.hud-swatch[aria-label="Цвет: Зелёный"]');
+    await page.click('.hud-chip[aria-label="Темнее"]');
+    const st = await page.evaluate(() => ({ color: getComputedStyle(document.querySelector('.hud')).color, op: getComputedStyle(document.querySelector('.hud-stage')).opacity }));
+    check(`HUD (${name}): цвет и яркость оформления`, st.color === 'rgb(57, 255, 136)' && Math.abs(Number(st.op) - 0.75) < 0.01, JSON.stringify(st));
+    // Голос — кнопка доступна в HUD
+    await page.click('.hud-chip[aria-label*="голосовые"]');
+    const muted = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings')).speakNavigation === false);
+    await page.click('.hud-chip[aria-label*="голосовые"]');
+    check(`HUD (${name}): выключение голоса в HUD`, muted);
+    // Перезапуск приложения (iPadOS выгрузил вкладку): HUD и маршрут восстанавливаются, настройки сохранены
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForSelector('.hud[data-mode="minimal"]', { timeout: 8000 }).catch(() => {});
+    await page.waitForFunction(() => !!document.querySelector('.hud-dist'), null, { timeout: 25000 }).catch(() => {});
+    const rs = await page.evaluate(() => ({ mode: document.querySelector('.hud')?.dataset.mode, mirror: document.querySelector('.hud')?.dataset.mirror, dist: !!document.querySelector('.hud-dist'), warn: !!document.querySelector('.hud-warning') }));
+    check(`HUD (${name}): после перезапуска — HUD, режим и маршрут восстановлены`, rs.mode === 'minimal' && rs.mirror === '1' && rs.dist && !rs.warn, JSON.stringify(rs));
+    // После перезапуска курс неизвестен, пока машина не поедет.
+    for (let k = 8; k <= 10; k++) {
+      await ctx.setGeolocation({ latitude: R.latitude + 0.0005 * k, longitude: R.longitude - 0.0001 * k, accuracy: 6 });
+      await page.waitForTimeout(1100);
+    }
+    await mode('Маршрут');
+  }
+  // Выход одним касанием — обычная карта и ведение на месте
+  await page.click('.hud-exit');
+  await page.waitForTimeout(1500);
+  const ex = await page.evaluate(() => ({ hud: !!document.querySelector('.hud'), cls: document.querySelector('.app').classList.contains('is-hud'), points: window.__aceMap?.state().routePoints ?? 0, guiding: !!document.querySelector('.guide-bar, .route-guiding') }));
+  check(`HUD (${name}): выход одним касанием — карта и маршрут на месте`, !ex.hud && !ex.cls && ex.points > 2 && ex.guiding, JSON.stringify(ex));
 }
 
 /** Пересечения элементов поверх карты и горизонтальная прокрутка страницы. */

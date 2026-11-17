@@ -11,6 +11,7 @@ import { DEFAULT_STYLE_URL, paletteTransform } from '../lib/mapStyle';
 import { carSvg, unwrapAngle, CAR_COLORS } from '../lib/carMarker';
 import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
 import { autoZoom, lookAheadOffset } from '../lib/camera';
+import { hudUiStore } from '../lib/hud';
 import { LongPressDetector } from '../lib/geo/longpress';
 import type { LatLon } from '../lib/routing';
 
@@ -196,7 +197,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       let raf = 0;
       const frame = (now: number) => {
         const pos = carPos(now);
-        if (pos) {
+        // Пока открыт HUD, основная карта скрыта — не тратим на неё кадры.
+        if (pos && !hudUiStore.get().active) {
           if (headingTarget != null) {
             const target = unwrapAngle(headingShown, headingTarget);
             headingShown += Math.max(-6, Math.min(6, (target - headingShown) * 0.15));
@@ -228,7 +230,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       map.on('zoomstart', (e) => (e as { originalEvent?: Event }).originalEvent && (userZoom = true));
 
       camera.current = (immediate = false) => {
-        if (!to || !follow.current || touching > 0) return;
+        if (!to || !follow.current || touching > 0 || hudUiStore.get().active) return;
         const size = map.getContainer().getBoundingClientRect();
         const g = geoStore.get();
         if (!guiding.current) {
@@ -244,6 +246,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       };
       cleanups.push(
         settingsStore.subscribe(() => camera.current(true)),
+        // Выход из HUD — карта сразу на месте машинки.
+        hudUiStore.subscribe(() => !hudUiStore.get().active && (map.resize(), camera.current(true))),
         geoStore.subscribe(() => {
           const g = geoStore.get();
           drawAcc();
