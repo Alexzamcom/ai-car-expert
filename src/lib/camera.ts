@@ -38,3 +38,16 @@ export function nextCameraMode(m: CameraMode, courseAvailable: boolean): CameraM
   if (!courseAvailable) return 'north';
   return m === 'course' ? 'north' : 'course';
 }
+
+/**
+ * Автомасштаб при ведении: по скорости (на трассе — дальше), перед манёвром — плавное приближение перекрёстка.
+ * toStepM — расстояние до ближайшего манёвра (null — неизвестно).
+ */
+export function autoZoom(speedKmh: number | null, toStepM: number | null): number {
+  const base = followZoom(speedKmh) - 0.4; // по движению с наклоном видно дальше — чуть мельче, чем «север сверху»
+  if (toStepM == null) return base;
+  // Плавно (без рывков камеры): от 500 м до 120 м приближение растёт от 0 до 1,3 уровня.
+  const t = Math.min(1, Math.max(0, (500 - toStepM) / 380));
+  const smooth = t * t * (3 - 2 * t);
+  return Math.min(18.2, base + 1.3 * smooth);
+}

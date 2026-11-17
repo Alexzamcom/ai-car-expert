@@ -15,11 +15,19 @@ self.addEventListener('activate', (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE && k !== TILE_CACHE).map((k) => caches.delete(k))),
+        Promise.all(keys.filter((k) => k !== CACHE && k !== TILE_CACHE && k !== VECTOR_CACHE).map((k) => caches.delete(k))),
       )
       .then(() => self.clients.claim()),
   );
 });
+
+const VECTOR_CACHE = 'ace-vector-tiles';
+const VECTOR_LIMIT = 800;
+async function trimVector() {
+  const cache = await caches.open(VECTOR_CACHE);
+  const keys = await cache.keys();
+  for (let i = 0; i < keys.length - VECTOR_LIMIT; i++) await cache.delete(keys[i]);
+}
 
 async function trimTiles() {
   const cache = await caches.open(TILE_CACHE);
@@ -45,6 +53,22 @@ self.addEventListener('fetch', (event) => {
           return res;
         })
         .catch(() => caches.open(TILE_CACHE).then((c) => c.match(req)).then((hit) => hit || Response.error())),
+    );
+    return;
+  }
+
+  // Векторная карта OpenFreeMap (MapLibre): сначала сеть, копия просмотренного — для коротких пропаданий связи.
+  if (url.hostname === 'tiles.openfreemap.org') {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(VECTOR_CACHE).then((c) => c.put(req, copy)).then(trimVector);
+          }
+          return res;
+        })
+        .catch(() => caches.open(VECTOR_CACHE).then((c) => c.match(req)).then((hit) => hit || Response.error())),
     );
     return;
   }

@@ -37,3 +37,19 @@ describe('Камера навигации', () => {
     expect(nextCameraMode('course', false)).toBe('north');
   });
 });
+
+import { autoZoom } from '../../src/lib/camera';
+describe('Автомасштаб при ведении', () => {
+  it('на прямой — по скорости; перед манёвром — ближе, плавно', () => {
+    expect(autoZoom(30, 2000)).toBeCloseTo(16.6, 1);
+    expect(autoZoom(120, 2000)).toBeCloseTo(14.6, 1);
+    const far = autoZoom(40, 400);
+    const mid = autoZoom(40, 200);
+    const near = autoZoom(40, 80);
+    expect(mid).toBeGreaterThan(far);
+    expect(near).toBeGreaterThanOrEqual(mid);
+    expect(near).toBeLessThanOrEqual(18.2);
+    // Непрерывность: нет скачка на границе 300 м.
+    expect(Math.abs(autoZoom(40, 299) - autoZoom(40, 301))).toBeLessThan(0.05);
+  });
+});

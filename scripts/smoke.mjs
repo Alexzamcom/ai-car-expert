@@ -228,7 +228,8 @@ async function checkLab(name, device) {
   const s3 = await st();
   check(`Карта 3D (${name}): в свободном обзоре камера не возвращается сама`, s3.mode === 'free' && d(s3.bearing, s2.bearing) < 1, `${Math.round(s2.bearing)}° → ${Math.round(s3.bearing)}°`);
   await page.locator('.lab-follow').click({ timeout: 5000 }).catch(() => {});
-  await page.waitForTimeout(2000);
+  // Ждём условие, а не фиксированное время: в CI WebGL без видеокарты, анимация камеры медленнее.
+  await page.waitForFunction(() => { const s = window.__lab.state(); return s.mode === 'course' && Math.abs(((s.bearing - s.heading + 540) % 360) - 180) < 12; }, null, { timeout: 10000 }).catch(() => {});
   const s4 = await st();
   check(`Карта 3D (${name}): «Следовать» восстанавливает карту по движению`, s4.mode === 'course' && d(s4.bearing, s4.heading) < 12 && !(await page.locator('.lab-follow').isVisible()), JSON.stringify({ mode: s4.mode, bearing: Math.round(s4.bearing), heading: Math.round(s4.heading) }));
   const before = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings') || '{}').speakNavigation);
@@ -237,6 +238,114 @@ async function checkLab(name, device) {
   check(`Карта 3D (${name}): кнопка голоса`, before !== false && after === false && (await page.locator('.lab-voice').getAttribute('aria-pressed')) === 'true');
   const perf = await page.evaluate(() => window.__lab.stats());
   check(`Карта 3D (${name}): кадров в секунду (программная отрисовка WebGL в CI, не GPU устройства)`, perf.fps > 0, JSON.stringify(perf));
+  await ctx.close();
+}
+
+/* ---------- Основная навигация на движке MapLibre ---------- */
+async function checkMapLibreNav(name, device, { full = false } = {}) {
+  const { ctx, page } = await newPage(device);
+  if (MOCK) await ctx.route('**/tiles.openfreemap.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: fixture('maplibre-style.json') }));
+  await ctx.addInitScript(() => {
+    if (!localStorage.getItem('ace:settings')) localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre' }));
+  });
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForFunction(() => window.__aceMap && window.__aceMap.state().car && window.__aceMap.state().car3d, null, { timeout: 30000 }).catch(() => {});
+  const st = () => page.evaluate(() => window.__aceMap.state());
+  const d = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+  let s0 = await st().catch(() => null);
+  check(`MapLibre (${name}): карта и 3D-машинка в позиции GPS`, s0 && s0.car3d && Math.abs(s0.car.x - 0.5) < 0.1 && Math.abs(s0.car.y - 0.5) < 0.15, JSON.stringify(s0));
+  const slug = name.replace(/\s+/g, '-').toLowerCase();
+  if (full) {
+    // Долгое нажатие → «Маршрут сюда»
+    const cdp = await ctx.newCDPSession(page);
+    const mb = await page.locator('.ml-map').boundingBox();
+    const pt = [mb.x + mb.width * 0.62, mb.y + mb.height * 0.35];
+    await touch(cdp, 'touchStart', [pt]);
+    await page.waitForTimeout(900);
+    await touch(cdp, 'touchEnd', []);
+    await page.waitForSelector('.pick-card', { timeout: 4000 }).catch(() => {});
+    check(`MapLibre (${name}): долгое нажатие выбирает точку`, (await page.locator('.pick-card').isVisible().catch(() => false)) && (await page.locator('.ml-pin .is-pick').count()) === 1);
+    await page.click('.pick-card button:has-text("Отмена")').catch(() => {});
+  }
+  // Поиск → маршрут с вариантами
+  await page.fill('#map-search', 'Театр Сатиры');
+  await page.press('#map-search', 'Enter');
+  await page.locator('.map-panel .place-row').first().click({ timeout: 15000 }).catch(() => {});
+  await page.locator('.pick-card button:has-text("Маршрут сюда")').click({ timeout: 5000 }).catch(() => {});
+  await page.waitForSelector('.route-card .btn-primary', { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(1200);
+  s0 = await st();
+  check(`MapLibre (${name}): маршрут, метка цели${MOCK ? ', варианты' : ''}`, s0.routePoints > 2 && (await page.locator('.ml-pin').count()) >= 1 && (!MOCK || (await page.locator('.route-alt-chip').count()) === 2), JSON.stringify({ points: s0.routePoints, zoom: Math.round(s0.zoom) }));
+  let pr = await layoutProblems(page);
+  check(`MapLibre (${name}): предпросмотр без наложений`, !pr.length, pr.join('; '));
+  await page.screenshot({ path: `${out}/ml-${slug}-preview.png` });
+  // Поехали → по движению с наклоном
+  await page.click('.route-card .btn-primary:has-text("Поехали")');
+  await page.waitForTimeout(4200);
+  const R = ROUTE_POS[0];
+  for (let k = 1; k <= 4; k++) {
+    await ctx.setGeolocation({ latitude: R.latitude + 0.0005 * k, longitude: R.longitude - 0.0001 * k, accuracy: 6 });
+    await page.waitForTimeout(1100);
+  }
+  await page.waitForTimeout(1500);
+  s0 = await st();
+  check(`MapLibre (${name}): по движению — карта по курсу, наклон, машинка внизу`, (await page.locator('.app.is-minimal').count()) === 1 && s0.heading != null && d(s0.bearing, s0.heading) < 12 && s0.pitch > 40 && s0.car.y > 0.6 && s0.car.y < 0.9, JSON.stringify(s0));
+  pr = await layoutProblems(page);
+  check(`MapLibre (${name}): ведение без наложений`, !pr.length, pr.join('; '));
+  await page.screenshot({ path: `${out}/ml-${slug}-guiding.png` });
+  if (!full) return ctx.close();
+  // Север сверху и обратно
+  await page.click('.guide-cam');
+  await page.waitForFunction(() => window.__aceMap.state().pitch < 1, null, { timeout: 8000 }).catch(() => {});
+  s0 = await st();
+  check(`MapLibre (${name}): «Север сверху»`, d(s0.bearing, 0) < 2 && s0.pitch < 2, JSON.stringify({ bearing: s0.bearing, pitch: s0.pitch }));
+  await page.click('.guide-cam');
+  await page.waitForFunction(() => window.__aceMap.state().pitch > 40, null, { timeout: 8000 }).catch(() => {});
+  // Поворот двумя пальцами → свободный обзор → «К машине»
+  const cdp2 = await ctx.newCDPSession(page);
+  const mb2 = await page.locator('.ml-map').boundingBox();
+  const cx = mb2.x + mb2.width / 2;
+  const cy = mb2.y + mb2.height * 0.45;
+  const two = (a) => [[cx + 120 * Math.cos(a), cy + 120 * Math.sin(a)], [cx - 120 * Math.cos(a), cy - 120 * Math.sin(a)]].map(([x, y], i) => ({ x, y, id: i + 1 }));
+  await cdp2.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: two(0) });
+  for (let k = 1; k <= 12; k++) {
+    await page.waitForTimeout(16);
+    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: two((k * Math.PI) / 24) });
+  }
+  await cdp2.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(1200);
+  const pill = page.locator('.recenter-pill');
+  const free = await pill.isVisible().catch(() => false);
+  const sFree = await st();
+  check(`MapLibre (${name}): поворот двумя пальцами — свободный обзор`, free && d(sFree.bearing, sFree.heading) > 20, JSON.stringify({ bearing: Math.round(sFree.bearing), heading: Math.round(sFree.heading) }));
+  if (free) await pill.click();
+  await page.waitForFunction(() => { const s = window.__aceMap.state(); return s.pitch > 40 && Math.abs(((s.bearing - s.heading + 540) % 360) - 180) < 12; }, null, { timeout: 10000 }).catch(() => {});
+  s0 = await st();
+  check(`MapLibre (${name}): «К машине» — снова по движению`, d(s0.bearing, s0.heading) < 12 && s0.pitch > 40 && !(await pill.isVisible().catch(() => false)), JSON.stringify({ bearing: Math.round(s0.bearing), heading: Math.round(s0.heading) }));
+  // Голос
+  await page.click('.guide-voice:not(.guide-cam)');
+  check(`MapLibre (${name}): кнопка голоса`, (await page.locator('.guide-voice:not(.guide-cam)').getAttribute('aria-pressed')) === 'true');
+  await page.click('.guide-voice:not(.guide-cam)');
+  // Возврат из другого приложения: страница скрыта и снова показана — карта и ведение на месте
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForTimeout(1500);
+  s0 = await st();
+  check(`MapLibre (${name}): после возврата в приложение — ведение и карта на месте`, (await page.locator('.maneuver').isVisible()) && s0.routePoints > 2 && s0.pitch > 40, JSON.stringify({ points: s0.routePoints, pitch: Math.round(s0.pitch) }));
+  // Резерв: переключение на Leaflet во время ведения не сбрасывает маршрут
+  await page.click('.guide-bar .guide-grabber');
+  await page.click('.guide-sheet button:has-text("Обычный интерфейс")');
+  await page.click('.dock [aria-label="Ещё разделы"]');
+  await page.click('.more-item:has-text("Настройки")');
+  await page.click('[aria-label="Движок карты"] [role=radio]:has-text("Leaflet")');
+  await page.click('.page-back');
+  await page.waitForTimeout(1500);
+  const back = await page.evaluate(() => ({ leaflet: !!document.querySelector('.leaflet-container'), route: !!document.querySelector('path.route-main'), guiding: !!document.querySelector('.route-guiding, .maneuver') }));
+  check(`MapLibre (${name}): переключение на Leaflet без потери маршрута`, back.leaflet && back.route && back.guiding, JSON.stringify(back));
   await ctx.close();
 }
 
@@ -940,6 +1049,13 @@ try {
     await checkYouTubeMusic(name, c, ph, out, slug);
     await c.close();
   }
+
+  /* ---------- Основная навигация на MapLibre ---------- */
+  await checkMapLibreNav("iPad", ipad, { full: true });
+  await checkMapLibreNav("iPad горизонтально", { ...ipad, viewport: { width: 1366, height: 1024 } });
+  await checkMapLibreNav('iPhone 15', devices['iPhone 15']);
+  await checkMapLibreNav('iPhone 15 горизонтально', devices['iPhone 15 landscape']);
+  await checkMapLibreNav('Pixel 7', devices['Pixel 7']);
 
   /* ---------- Прототип MapLibre ---------- */
   await checkLab('iPad', { viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
