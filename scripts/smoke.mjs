@@ -428,6 +428,11 @@ async function checkHud(page, ctx, name, slug, full) {
     await page.waitForFunction(() => !!document.querySelector('.hud-dist'), null, { timeout: 25000 }).catch(() => {});
     const rs = await page.evaluate(() => ({ mode: document.querySelector('.hud')?.dataset.mode, mirror: document.querySelector('.hud')?.dataset.mirror, dist: !!document.querySelector('.hud-dist'), warn: !!document.querySelector('.hud-warning') }));
     check(`HUD (${name}): после перезапуска — HUD, режим и маршрут восстановлены`, rs.mode === 'minimal' && rs.mirror === '1' && rs.dist && !rs.warn, JSON.stringify(rs));
+    // После перезапуска курс неизвестен, пока машина не поедет.
+    for (let k = 8; k <= 10; k++) {
+      await ctx.setGeolocation({ latitude: R.latitude + 0.0005 * k, longitude: R.longitude - 0.0001 * k, accuracy: 6 });
+      await page.waitForTimeout(1100);
+    }
     await mode('Маршрут');
   }
   // Выход одним касанием — обычная карта и ведение на месте

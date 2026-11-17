@@ -23,6 +23,7 @@ import {
   type HudColor,
 } from '../lib/hud';
 import { Icon } from '../components/Icon';
+import '../styles/hud.css';
 
 const HudMap = lazy(() => import('./HudMap').then((m) => ({ default: m.HudMap })));
 
