@@ -67,8 +67,9 @@ describe('Позиция на карте', () => {
     expect(st.text).toBe('Приблизительно, ±3.2 км');
     expect(st.help()).toContain('Точная геопозиция');
   });
-  it('нет точки — «Ищу GPS…», запрет — подсказка', () => {
-    expect(geoStatusText(geoStore.get())?.text).toBe('Ищу GPS…');
+  it('нет точки — «Определяю местоположение…», запрет — подсказка', () => {
+    geoStore.set((s) => ({ ...s, status: 'watching' }));
+    expect(geoStatusText(geoStore.get())?.text).toBe('Определяю местоположение…');
     expect(geoStatusText({ ...geoStore.get(), status: 'denied' })?.text).toContain('Нет доступа');
   });
   it('последняя точная позиция сохраняется только для открытия карты', () => {

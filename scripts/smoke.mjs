@@ -445,6 +445,73 @@ async function checkHud(page, ctx, name, slug, full) {
   check(`HUD (${name}): выход одним касанием — карта и маршрут на месте`, !ex.hud && !ex.cls && ex.points > 2 && ex.guiding, JSON.stringify(ex));
 }
 
+/**
+ * Геопозиция «в здании»: слежение с высокой точностью не даёт точек (тайм-аут), устройство отдаёт только приблизительную
+ * позицию на запрос без высокой точности. Карта не ждёт GPS: позиция с кругом точности и честным статусом; затем точная
+ * точка уточняет позицию. Разрешение не выдано заранее — запуск при открытии карты (проверка и для MapLibre).
+ */
+async function checkIndoorGeo(name, device, engine) {
+  const { ctx, page } = await newPage(device, { permissions: [] });
+  if (MOCK) await ctx.route('**/tiles.openfreemap.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: fixture('maplibre-style.json') }));
+  await ctx.addInitScript((eng) => {
+    localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: eng }));
+    const calls = [];
+    const high = [];
+    const pos = (acc, dLat = 0) => ({ coords: { latitude: 55.757 + dLat, longitude: 37.6156, accuracy: acc, speed: null, heading: null, altitude: null, altitudeAccuracy: null }, timestamp: Date.now() });
+    let id = 0;
+    const fake = {
+      getCurrentPosition(ok, err, o = {}) {
+        calls.push({ kind: 'once', high: !!o.enableHighAccuracy, maxAge: o.maximumAge ?? 0 });
+        if (!o.enableHighAccuracy) setTimeout(() => ok(pos(140, 0.0009)), 300);
+      },
+      watchPosition(ok, err, o = {}) {
+        calls.push({ kind: 'watch', high: !!o.enableHighAccuracy, maxAge: o.maximumAge ?? 0 });
+        id++;
+        if (o.enableHighAccuracy) {
+          high.push(ok);
+          setTimeout(() => err({ code: 3, message: 'Timeout expired', PERMISSION_DENIED: 1, POSITION_UNAVAILABLE: 2, TIMEOUT: 3 }), 1500);
+        } else {
+          const t = setInterval(() => ok(pos(120, 0.0009)), 1500);
+          fake['t' + id] = t;
+        }
+        return id;
+      },
+      clearWatch(i) {
+        clearInterval(fake['t' + i]);
+      },
+    };
+    Object.defineProperty(navigator, 'geolocation', { configurable: true, get: () => fake });
+    window.__geoFake = { calls, giveHigh: (acc) => high.forEach((ok) => ok(pos(acc))) };
+  }, engine);
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForFunction(() => document.querySelector('.geo-chip')?.textContent?.includes('Приблизительно'), null, { timeout: 15000 }).catch(() => {});
+  if (engine === 'maplibre') await page.waitForFunction(() => window.__aceMap?.state?.().accuracyCircle > 100, null, { timeout: 15000 }).catch(() => {});
+  const r1 = await page.evaluate(() => ({
+    chip: document.querySelector('.geo-chip')?.textContent ?? '',
+    calls: window.__geoFake.calls,
+    car: !!document.querySelector('.leaflet-marker-icon.car-marker, .map-car, .ml-car') || !!window.__aceMap?.state?.().car,
+    circle: !!document.querySelector('path.map-accuracy') || window.__aceMap?.state?.().accuracyCircle > 100,
+  }));
+  const quick = r1.calls.find((c) => c.kind === 'once' && !c.high && c.maxAge > 0);
+  const highWatch = r1.calls.find((c) => c.kind === 'watch' && c.high);
+  check(`Геопозиция в здании (${name}): сразу быстрый запрос и слежение с высокой точностью`, !!quick && !!highWatch, JSON.stringify(r1.calls));
+  check(`Геопозиция в здании (${name}): приблизительная позиция с кругом точности, без «недоступна»`, /Приблизительно, ±1[24]0 м/.test(r1.chip) && r1.car && r1.circle && !/недоступн|открыт/i.test(r1.chip), JSON.stringify({ chip: r1.chip, car: r1.car, circle: r1.circle }));
+  await page.screenshot({ path: `${out}/geo-indoor-${name.replace(/\s+/g, '-').toLowerCase()}.png` });
+  // Вышли к окну: появилась точная точка — уточняем, приблизительный статус исчезает.
+  await page.evaluate(() => window.__geoFake.giveHigh(9));
+  await page.waitForFunction(() => !document.querySelector('.geo-chip')?.textContent?.includes('Приблизительно'), null, { timeout: 6000 }).catch(() => {});
+  const chip2 = await page.evaluate(() => document.querySelector('.geo-chip')?.textContent ?? '');
+  check(`Геопозиция в здании (${name}): точная точка уточняет позицию`, !chip2.includes('Приблизительно'), chip2);
+  // Диагностика в настройках
+  await page.click('.dock [aria-label="Ещё разделы"]');
+  await page.click('.more-item:has-text("Настройки")');
+  // Тайм-аут высокой точности в подделке — через 1,5 с после запроса; ждём его, а не фиксированное время.
+  await page.waitForFunction(() => /не успело/.test(document.querySelector('.gps-diag')?.textContent ?? ''), null, { timeout: 8000 }).catch(() => {});
+  const dl = await page.locator('.gps-diag').textContent().catch(() => '');
+  check(`Геопозиция в здании (${name}): диагностика — запрос, точность, возраст, разрешение, ошибка`, /слежение с высокой точностью/.test(dl) && /Возраст координат/.test(dl) && /Разрешение/.test(dl) && /не успело за отведённое время/.test(dl) && !/GPS устройства определяет/.test(dl), dl.slice(dl.indexOf('Точность'), dl.indexOf('Точность') + 320));
+  await ctx.close();
+}
+
 /** Пересечения элементов поверх карты и горизонтальная прокрутка страницы. */
 async function layoutProblems(page) {
   return page.evaluate(() => {
@@ -1152,6 +1219,8 @@ try {
   await checkMapLibreNav('iPhone 15', devices['iPhone 15']);
   await checkMapLibreNav('iPhone 15 горизонтально', devices['iPhone 15 landscape']);
   await checkMapLibreNav('Pixel 7', devices['Pixel 7']);
+  await checkIndoorGeo('Leaflet, Pixel 7', devices['Pixel 7'], 'leaflet');
+  await checkIndoorGeo('MapLibre, iPhone 15', devices['iPhone 15'], 'maplibre');
 
   /* ---------- Прототип MapLibre ---------- */
   await checkLab('iPad', { viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
