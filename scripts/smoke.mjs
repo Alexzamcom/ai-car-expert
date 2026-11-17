@@ -228,7 +228,8 @@ async function checkLab(name, device) {
   const s3 = await st();
   check(`Карта 3D (${name}): в свободном обзоре камера не возвращается сама`, s3.mode === 'free' && d(s3.bearing, s2.bearing) < 1, `${Math.round(s2.bearing)}° → ${Math.round(s3.bearing)}°`);
   await page.locator('.lab-follow').click({ timeout: 5000 }).catch(() => {});
-  await page.waitForTimeout(2000);
+  // Ждём условие, а не фиксированное время: в CI WebGL без видеокарты, анимация камеры медленнее.
+  await page.waitForFunction(() => { const s = window.__lab.state(); return s.mode === 'course' && Math.abs(((s.bearing - s.heading + 540) % 360) - 180) < 12; }, null, { timeout: 10000 }).catch(() => {});
   const s4 = await st();
   check(`Карта 3D (${name}): «Следовать» восстанавливает карту по движению`, s4.mode === 'course' && d(s4.bearing, s4.heading) < 12 && !(await page.locator('.lab-follow').isVisible()), JSON.stringify({ mode: s4.mode, bearing: Math.round(s4.bearing), heading: Math.round(s4.heading) }));
   const before = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings') || '{}').speakNavigation);
@@ -318,7 +319,7 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   const sFree = await st();
   check(`MapLibre (${name}): поворот двумя пальцами — свободный обзор`, free && d(sFree.bearing, sFree.heading) > 20, JSON.stringify({ bearing: Math.round(sFree.bearing), heading: Math.round(sFree.heading) }));
   if (free) await pill.click();
-  await page.waitForTimeout(2000);
+  await page.waitForFunction(() => { const s = window.__aceMap.state(); return s.pitch > 40 && Math.abs(((s.bearing - s.heading + 540) % 360) - 180) < 12; }, null, { timeout: 10000 }).catch(() => {});
   s0 = await st();
   check(`MapLibre (${name}): «К машине» — снова по движению`, d(s0.bearing, s0.heading) < 12 && s0.pitch > 40 && !(await pill.isVisible().catch(() => false)), JSON.stringify({ bearing: Math.round(s0.bearing), heading: Math.round(s0.heading) }));
   // Голос
