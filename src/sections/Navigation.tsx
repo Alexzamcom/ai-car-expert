@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { MapApi } from './MapLibreMap';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -47,6 +47,7 @@ import { lookAheadOffset, speedBand } from '../lib/camera';
 import { settingsStore, driveUiStore, setMinimal } from '../lib/state';
 import { startVoice } from '../lib/voice';
 import { openHud } from '../lib/hud';
+import { effectiveEngine, webglAvailable, mapRuntimeStore, engineFallback } from '../lib/mapEngine';
 import { stepText, stepIcon, fmtDistance, fmtDuration, haversine } from '../lib/routing';
 import { POI_CATEGORIES, type PoiCategory, type Poi } from '../lib/poi';
 import { toast } from '../lib/state';
@@ -111,7 +112,8 @@ export function Navigation() {
   const theme = useStore(themeStore);
   const settings = useStore(settingsStore);
   const carColor = settings.carColor;
-  const engine = settings.mapEngine;
+  const runtime = useStore(mapRuntimeStore);
+  const engine = effectiveEngine(settings.mapEngine, runtime.fallback, webglAvailable());
   const mlApi = useRef<MapApi | null>(null);
   const ui = useStore(driveUiStore);
   const geoStatus = geoStatusText(geo);
@@ -482,7 +484,9 @@ export function Navigation() {
     <div className="navigation">
       {engine === 'maplibre' ? (
         <Suspense fallback={<div className="map" />}>
-          <MapLibreMap apiRef={mlApi} uiEl={uiEl} follow={follow} guiding={guiding} onUserMove={() => setFollow(false)} />
+          <MapErrorBoundary>
+            <MapLibreMap apiRef={mlApi} uiEl={uiEl} follow={follow} guiding={guiding} onUserMove={() => setFollow(false)} />
+          </MapErrorBoundary>
         </Suspense>
       ) : (
         <div ref={mapEl} className="map" />
@@ -1021,7 +1025,7 @@ function GuideBar(p: { eta: string; remaining: string; duration: string; sheet: 
             {p.remaining} · {p.duration}
           </span>
         </div>
-        {settingsStore.get().mapEngine === 'maplibre' && <CameraModeToggle className="guide-voice guide-cam" />}
+        {effectiveEngine(settingsStore.get().mapEngine, mapRuntimeStore.get().fallback, webglAvailable()) === 'maplibre' && <CameraModeToggle className="guide-voice guide-cam" />}
         <HudButton className="guide-btn guide-cam guide-hud" />
         <VoiceToggle className="guide-voice" />
       </div>
@@ -1045,4 +1049,18 @@ function CameraModeToggle({ className = '' }: { className?: string }) {
       <span className="cam-label">{course ? 'Курс' : 'С'}</span>
     </button>
   );
+}
+
+/** Сбой загрузки или отрисовки MapLibre — резервная карта Leaflet; маршрут и ведение общие и не теряются. */
+class MapErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(e: unknown) {
+    engineFallback(e instanceof Error && /fetch|import|module|chunk/i.test(e.message) ? 'не загрузилась' : 'ошибка отрисовки', (t) => toast(t, 'warn'));
+  }
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
 }

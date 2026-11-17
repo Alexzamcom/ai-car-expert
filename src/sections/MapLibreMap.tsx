@@ -5,13 +5,14 @@ import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { GeoJSONSource, Map as MlMap, Marker } from 'maplibre-gl';
 import { useStore } from '../lib/store';
 import { geoStore, navStore, poiStore, pickStore, pickPoint, selectRoute, addStop, placeFromPoi, readLastPos, navLang } from '../lib/nav';
-import { settingsStore } from '../lib/state';
+import { settingsStore, toast } from '../lib/state';
 import { themeStore, THEMES } from '../lib/theme';
 import { DEFAULT_STYLE_URL, paletteTransform } from '../lib/mapStyle';
 import { carSvg, unwrapAngle, CAR_COLORS } from '../lib/carMarker';
 import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
 import { autoZoom, lookAheadOffset } from '../lib/camera';
 import { hudUiStore } from '../lib/hud';
+import { engineFallback } from '../lib/mapEngine';
 import { LongPressDetector } from '../lib/geo/longpress';
 import type { LatLon } from '../lib/routing';
 
@@ -66,26 +67,51 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
   useEffect(() => {
     let disposed = false;
     const cleanups: (() => void)[] = [];
+    const fail = (reason: string) => !disposed && engineFallback(reason, (t) => toast(t, 'warn'));
     void (async () => {
-      const ml = await import('maplibre-gl');
-      await import('maplibre-gl/dist/maplibre-gl.css');
-      const workerUrl = (await import('maplibre-gl/dist/maplibre-gl-worker.mjs?url')).default;
+      let ml: typeof import('maplibre-gl');
+      let workerUrl: string;
+      try {
+        ml = await import('maplibre-gl');
+        await import('maplibre-gl/dist/maplibre-gl.css');
+        workerUrl = (await import('maplibre-gl/dist/maplibre-gl-worker.mjs?url')).default;
+      } catch {
+        return fail('не загрузилась');
+      }
       if (disposed || !el.current) return;
       ml.setWorkerUrl(workerUrl);
       const start = readLastPos() ?? DEFAULT_CENTER;
       const styleUrl = DEFAULT_STYLE_URL;
       const palette = () => (themeStore.get().active === 'night' ? 'night' : 'day');
-      const map = new ml.Map({
-        container: el.current,
-        style: styleUrl,
-        center: [start.lon, start.lat],
-        zoom: readLastPos() ? 15 : 13,
-        // Авторы данных (OpenMapTiles, участники OpenStreetMap) указаны в самом стиле OpenFreeMap.
-        attributionControl: { compact: true },
-        maxPitch: 70,
-        fadeDuration: 150,
-        canvasContextAttributes: { antialias: true },
+      let map: MlMap;
+      try {
+        map = new ml.Map({
+          container: el.current,
+          style: styleUrl,
+          center: [start.lon, start.lat],
+          zoom: readLastPos() ? 15 : 13,
+          // Авторы данных (OpenMapTiles, участники OpenStreetMap) указаны в самом стиле OpenFreeMap.
+          attributionControl: { compact: true },
+          maxPitch: 70,
+          fadeDuration: 150,
+          canvasContextAttributes: { antialias: true },
+        });
+      } catch {
+        // Нет WebGL или он отключён/исчерпан (на iOS — слишком много контекстов).
+        return fail('WebGL недоступен');
+      }
+      // Стиль карты не загрузился (нет связи с сервером карты и нет кеша) — резервная карта.
+      let styleLoaded = false;
+      map.once('style.load', () => (styleLoaded = true));
+      map.on('error', (e) => {
+        // Ошибки отдельных тайлов, значков и шрифтов — не повод уходить с карты; важен только сам стиль.
+        const url = (e.error as { url?: string } | undefined)?.url;
+        if (styleLoaded || (url && !url.includes('/styles/'))) return;
+        console.warn('MapLibre', e.error);
+        fail('не загрузился стиль карты');
       });
+      const styleTimer = setTimeout(() => !styleLoaded && fail('сервер карты не отвечает'), 25_000);
+      cleanups.push(() => clearTimeout(styleTimer));
       if (palette() === 'night') map.setStyle(styleUrl, { diff: false, transformStyle: paletteTransform('night') });
       mapRef.current = map;
 
