@@ -257,7 +257,7 @@ export function Navigation() {
         else m.panTo(target, { animate: true, duration: 0.9, easeLinearity: 1, noMoveStart: true });
       }
     }
-  }, [geo.lat, geo.lon, geo.heading, geo.accuracy, follow, guiding, carColor]);
+  }, [geo.lat, geo.lon, geo.heading, geo.accuracy, follow, guiding, carColor, engine]);
 
   // Цвет машинки из настроек
   useEffect(() => {
@@ -266,7 +266,7 @@ export function Navigation() {
     me.setIcon(carIcon(carColor));
     const rot = me.getElement()?.querySelector<HTMLElement>('.car-rot');
     if (rot) rot.style.transform = `rotate(${carAngle.current}deg)`;
-  }, [carColor]);
+  }, [carColor, engine]);
 
   // Маршрут, цель и промежуточная точка
   useEffect(() => {
@@ -310,7 +310,7 @@ export function Navigation() {
       m.setView([nav.dest.lat, nav.dest.lon], 15);
     }
     themeOnly.current = false;
-  }, [nav.route, nav.routes, nav.routeIndex, nav.dest, nav.via, nav.status, theme.active]);
+  }, [nav.route, nav.routes, nav.routeIndex, nav.dest, nav.via, nav.status, theme.active, engine]);
 
   // Выбранная точка (долгое нажатие / результат поиска)
   useEffect(() => {
@@ -326,7 +326,7 @@ export function Navigation() {
     } else if (!m.getBounds().pad(-0.15).contains([pick.lat, pick.lon])) {
       m.panTo([pick.lat, pick.lon]);
     }
-  }, [pick?.lat, pick?.lon, pick?.origin, pick]);
+  }, [pick?.lat, pick?.lon, pick?.origin, pick, engine]);
 
   // Смена темы перерисовывает линию маршрута, но не двигает камеру.
   const prevTheme = useRef(theme.active);
@@ -426,7 +426,7 @@ export function Navigation() {
         L.marker([p.lat, p.lon], { icon: poiIcon(p.category), title: p.name }).on('click', () => void addStop(placeFromPoi(p))),
       ),
     ).addTo(m);
-  }, [poi.items]);
+  }, [poi.items, engine]);
 
   // Голосовой запрос «маршрут до …»
   useEffect(() => {

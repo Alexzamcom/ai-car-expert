@@ -248,7 +248,7 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
     if (!localStorage.getItem('ace:settings')) localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre' }));
   });
   await page.goto(url, { waitUntil: 'load' });
-  await page.waitForFunction(() => window.__aceMap && window.__aceMap.state().car, null, { timeout: 30000 }).catch(() => {});
+  await page.waitForFunction(() => window.__aceMap && window.__aceMap.state().car && window.__aceMap.state().car3d, null, { timeout: 30000 }).catch(() => {});
   const st = () => page.evaluate(() => window.__aceMap.state());
   const d = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
   let s0 = await st().catch(() => null);
