@@ -636,6 +636,24 @@ function CarOnMapSettings() {
       </div>
       <div className="setting-row">
         <div>
+          <strong>Вид машинки</strong>
+          <small>Объёмная — на карте 3D (MapLibre); облегчённая плоская — для слабых устройств. На карте Leaflet машинка всегда плоская.</small>
+        </div>
+        <div className="seg" role="radiogroup" aria-label="Вид машинки">
+          {(
+            [
+              ['3d', 'Объёмная'],
+              ['flat', 'Плоская'],
+            ] as const
+          ).map(([v, label]) => (
+            <button key={v} type="button" role="radio" aria-checked={s.carStyle === v} className={`chip ${s.carStyle === v ? 'is-active' : ''}`} onClick={() => patch({ carStyle: v })}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="setting-row">
+        <div>
           <strong>Карта 3D — прототип (MapLibre GL)</strong>
           <small>Карта по движению с наклоном, векторные тайлы OpenFreeMap, поворот двумя пальцами. Проверка на устройстве перед заменой рабочей карты. Маршрут берётся из приложения.</small>
         </div>

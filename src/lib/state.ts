@@ -92,6 +92,8 @@ export interface Settings {
   aiShareLocation: boolean;
   /** Цвет машинки на карте. */
   carColor: CarColor;
+  /** Машинка: объёмная (3D, карта MapLibre) или облегчённая плоская. */
+  carStyle: '3d' | 'flat';
   /** Полноэкранный минималистичный режим во время ведения. */
   minimalGuidance: boolean;
   speechLang: string;
@@ -138,6 +140,7 @@ export const settingsStore = createStore<Settings>(
     aiPrices: { openai: { inUsd: 0, outUsd: 0 }, grok: { inUsd: 0, outUsd: 0 } },
     aiShareLocation: true,
     carColor: 'white',
+    carStyle: '3d',
     minimalGuidance: true,
     speechLang: 'ru-RU',
     speakReplies: true,
