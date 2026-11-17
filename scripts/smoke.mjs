@@ -518,7 +518,8 @@ async function checkEngineDefault(device) {
   const engineOf = (page) =>
     page.evaluate(() => (document.querySelector('.ml-map') ? 'maplibre' : document.querySelector('.leaflet-container') ? 'leaflet' : 'none'));
   const open = async (stored, prep) => {
-    const { ctx, page } = await newPage(device, {}, null);
+    // Запросы service worker приложения Playwright не перехватывает — блокируем его, чтобы подмена сети работала.
+    const { ctx, page } = await newPage(device, { serviceWorkers: 'block' }, null);
     await styleOk(ctx);
     if (stored) await ctx.addInitScript((v) => localStorage.getItem('ace:settings') || localStorage.setItem('ace:settings', v), JSON.stringify(stored));
     if (prep) await prep(ctx);
