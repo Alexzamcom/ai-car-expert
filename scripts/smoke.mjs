@@ -260,10 +260,13 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
     const cdp = await ctx.newCDPSession(page);
     const mb = await page.locator('.ml-map').boundingBox();
     const pt = [mb.x + mb.width * 0.62, mb.y + mb.height * 0.35];
-    await touch(cdp, 'touchStart', [pt]);
-    await page.waitForTimeout(900);
-    await touch(cdp, 'touchEnd', []);
-    await page.waitForSelector('.pick-card', { timeout: 4000 }).catch(() => {});
+    // Программный WebGL в CI бывает медленным: при неудаче — ещё одна попытка с более долгим нажатием.
+    for (const hold of [900, 1600]) {
+      await touch(cdp, 'touchStart', [pt]);
+      await page.waitForTimeout(hold);
+      await touch(cdp, 'touchEnd', []);
+      if (await page.waitForSelector('.pick-card', { timeout: 4000 }).then(() => true).catch(() => false)) break;
+    }
     check(`MapLibre (${name}): долгое нажатие выбирает точку`, (await page.locator('.pick-card').isVisible().catch(() => false)) && (await page.locator('.ml-pin .is-pick').count()) === 1);
     await page.click('.pick-card button:has-text("Отмена")').catch(() => {});
   }
