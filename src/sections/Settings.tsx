@@ -1,7 +1,8 @@
+import { hudSettingsStore, HUD_MODES, HUD_COLORS, openHud, type HudSettings, type HudColor } from '../lib/hud';
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { useStore } from '../lib/store';
-import { settingsStore, toast, type Settings as SettingsT, type VehicleProfile, type AiProvider } from '../lib/state';
+import { settingsStore, toast, closePage, type Settings as SettingsT, type VehicleProfile, type AiProvider } from '../lib/state';
 import { usageStore, currentUsage, fmtUsd, resetUsage, PROVIDER_LABEL } from '../lib/ai/usage';
 import { wakeLockSupported } from '../lib/wakeLock';
 import { speechRecognitionSupported, listVoices, speak } from '../lib/speech';
@@ -9,7 +10,7 @@ import { chatgptPrefsStore } from '../lib/chatgpt';
 import { themeStore, setThemeMode, THEME_MODE_LABEL, type ThemeMode } from '../lib/theme';
 import { MUSIC_SOURCES } from '../lib/music/sources';
 import { CAR_COLORS, carSvg, type CarColor } from '../lib/carMarker';
-import { geoStore, setNavigationVoice, restartGeo } from '../lib/nav';
+import { geoStore, navStore, setNavigationVoice, restartGeo } from '../lib/nav';
 
 const FUELS: Record<VehicleProfile['fuel'], string> = {
   petrol: 'Бензин',
@@ -108,6 +109,7 @@ export function Settings() {
       </form>
 
       <CarOnMapSettings />
+      <HudSettingsCard />
 
       <GpsDiagnostics />
 
@@ -607,6 +609,101 @@ function ResetButton() {
     <button className="btn btn-lg" onClick={() => setArmed(true)}>
       <Icon name="trash" /> Сбросить все данные
     </button>
+  );
+}
+
+/** HUD — проекция на лобовое стекло: режим, зеркало, цвет, яркость оформления, контраст, масштаб. */
+function HudSettingsCard() {
+  const h = useStore(hudSettingsStore);
+  const guiding = useStore(navStore).status === 'guiding';
+  const patch = (p: Partial<HudSettings>) => hudSettingsStore.set((x) => ({ ...x, ...p }));
+  const seg = <T extends string | boolean>(label: string, value: T, opts: readonly (readonly [T, string])[], on: (v: T) => void) => (
+    <div className="seg" role="radiogroup" aria-label={label}>
+      {opts.map(([v, l]) => (
+        <button key={String(v)} type="button" role="radio" aria-checked={value === v} className={`chip ${value === v ? 'is-active' : ''}`} onClick={() => on(v)}>
+          {l}
+        </button>
+      ))}
+    </div>
+  );
+  return (
+    <div className="card hud-settings">
+      <h3 className="section-title">
+        <Icon name="hud" /> HUD — проекция на лобовое стекло
+      </h3>
+      <p className="muted">
+        Устройство кладётся под стекло, изображение отражается. Включается кнопкой HUD рядом с динамиком во время ведения; маршрут, GPS, перестроение и
+        голос продолжают работать. Системную яркость и постоянно включённый экран веб-приложение гарантировать не может.
+      </p>
+      <div className="setting-row">
+        <div>
+          <strong>Режим</strong>
+          <small>{HUD_MODES.find((m) => m.id === h.mode)?.hint}</small>
+        </div>
+        {seg('Режим HUD', h.mode, HUD_MODES.map((m) => [m.id, m.label] as const), (v) => patch({ mode: v }))}
+      </div>
+      <div className="setting-row">
+        <div>
+          <strong>Зеркальное отображение</strong>
+          <small>Отражает всю картинку по горизонтали, чтобы в стекле она читалась правильно</small>
+        </div>
+        {seg('Зеркало', h.mirror, [[true, 'Включено'], [false, 'Выключено']] as const, (v) => patch({ mirror: v }))}
+      </div>
+      <div className="setting-row">
+        <div>
+          <strong>Цвет</strong>
+        </div>
+        <div className="seg" role="radiogroup" aria-label="Цвет HUD">
+          {(Object.keys(HUD_COLORS) as HudColor[]).map((c) => (
+            <button key={c} type="button" role="radio" aria-checked={h.color === c} className={`chip hud-color-chip ${h.color === c ? 'is-active' : ''}`} onClick={() => patch({ color: c })}>
+              <span className="hud-dot" style={{ background: HUD_COLORS[c][1] }} /> {HUD_COLORS[c][0]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="setting-row">
+        <div>
+          <strong>Яркость оформления: {Math.round(h.brightness * 100)}%</strong>
+          <small>Ночью уменьшайте — меньше бликов и отвлечения</small>
+        </div>
+        <input type="range" min={30} max={100} step={5} value={Math.round(h.brightness * 100)} aria-label="Яркость оформления HUD" onChange={(e) => patch({ brightness: Number(e.target.value) / 100 })} />
+      </div>
+      <div className="setting-row">
+        <div>
+          <strong>Масштаб элементов: {Math.round(h.scale * 100)}%</strong>
+        </div>
+        <input type="range" min={80} max={160} step={10} value={Math.round(h.scale * 100)} aria-label="Масштаб элементов HUD" onChange={(e) => patch({ scale: Number(e.target.value) / 100 })} />
+      </div>
+      <div className="setting-row">
+        <div>
+          <strong>Контраст</strong>
+          <small>Высокий — толще линии и жирнее шрифт</small>
+        </div>
+        {seg('Контраст', h.contrast, [['high', 'Высокий'], ['normal', 'Обычный']] as const, (v) => patch({ contrast: v }))}
+      </div>
+      <div className="setting-row">
+        <div>
+          <strong>Скорость</strong>
+          <small>В режиме «Маршрут» не показывается. Если данные GPS устарели или неточны — вместо числа «—»</small>
+        </div>
+        {seg('Скорость в HUD', h.showSpeed, [[true, 'Показывать'], [false, 'Скрыть']] as const, (v) => patch({ showSpeed: v }))}
+      </div>
+      <div className="setting-row">
+        <div>
+          <strong>Время прибытия и остаток</strong>
+        </div>
+        {seg('Прибытие в HUD', h.showEta, [[true, 'Показывать'], [false, 'Скрыть']] as const, (v) => patch({ showEta: v }))}
+      </div>
+      <div className="setting-row">
+        <div>
+          <strong>Открыть HUD</strong>
+          <small>{guiding ? 'Выход — одно касание ×' : 'Доступно во время ведения по маршруту'}</small>
+        </div>
+        <button className="btn" disabled={!guiding} onClick={() => (closePage(), openHud())}>
+          <Icon name="hud" /> Открыть HUD
+        </button>
+      </div>
+    </div>
   );
 }
 

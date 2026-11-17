@@ -14,6 +14,8 @@ import { restorePlayer } from './lib/player';
 import { chatgptReturnMessage } from './lib/chatgpt';
 import { takeReturn } from './lib/handoff';
 import { restoreNavSession, navStore } from './lib/nav';
+import { Hud } from './sections/Hud';
+import { hudUiStore, hudActiveNow, closeHud } from './lib/hud';
 import { YouTubeMusicFallback } from './components/YouTubeMusic';
 import { ytmFallbackStore } from './lib/music/youtube';
 import { openSection, toast } from './lib/state';
@@ -23,6 +25,7 @@ export function App() {
   const layout = useStore(layoutStore);
   const settings = useStore(settingsStore);
   const ui = useStore(driveUiStore);
+  const hud = useStore(hudUiStore).active;
 
   // Сервисные напоминания со сроком — один раз при запуске.
   useEffect(() => {
@@ -53,6 +56,8 @@ export function App() {
     if (new URLSearchParams(location.search).get('mode') === 'car') closePage();
     // Возврат из ChatGPT (или другого приложения): подтверждаем, что маршрут и музыка на месте.
     restoreNavSession();
+    // HUD восстанавливается вместе с маршрутом, если был открыт недавно (iPadOS выгрузил приложение).
+    if (hudUiStore.get().active && !hudActiveNow()) closeHud();
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
       // После фона iOS может отдать старую точку: перезапускаем слежение за свежей.
@@ -78,7 +83,7 @@ export function App() {
   }, []);
 
   return (
-    <div className={`app ${ui.minimal ? 'is-minimal' : ''}`}>
+    <div className={`app ${ui.minimal ? 'is-minimal' : ''} ${hud ? 'is-hud' : ''}`}>
       <StatusBar />
       <main className={`drive order-${layout.order} panel-${layout.panelMode}`}>
         {/* Карта не размонтируется: маршрут и ведение продолжают работать в любом разделе. */}
@@ -92,6 +97,7 @@ export function App() {
       <VoiceOverlay />
       <YouTubeMusicFallback />
       <Toasts />
+      <Hud />
     </div>
   );
 }

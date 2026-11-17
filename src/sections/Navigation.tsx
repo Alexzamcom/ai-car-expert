@@ -46,6 +46,7 @@ import { carSvg, unwrapAngle, type CarColor } from '../lib/carMarker';
 import { lookAheadOffset, speedBand } from '../lib/camera';
 import { settingsStore, driveUiStore, setMinimal } from '../lib/state';
 import { startVoice } from '../lib/voice';
+import { openHud } from '../lib/hud';
 import { stepText, stepIcon, fmtDistance, fmtDuration, haversine } from '../lib/routing';
 import { POI_CATEGORIES, type PoiCategory, type Poi } from '../lib/poi';
 import { toast } from '../lib/state';
@@ -629,6 +630,7 @@ export function Navigation() {
         {/* Справа: управление картой */}
         <div className="map-controls">
           <VoiceToggle className="map-ctl voice-ctl" />
+          {guiding && <HudButton className="map-ctl voice-ctl" />}
           {engine === 'maplibre' && guiding && <CameraModeToggle className="map-ctl voice-ctl" />}
           <button className="map-ctl zoom-ctl" onClick={() => zoom(1)} aria-label="Приблизить">
             <Icon name="plus" size="1.7rem" />
@@ -755,6 +757,7 @@ export function Navigation() {
                     </div>
                     <span className="spacer" />
                     <VoiceToggle className="icon-btn card-voice" />
+                    <HudButton className="icon-btn card-voice" />
                     <button className="btn" onClick={() => setMinimal(true)} aria-label="Полноэкранный режим">
                       <Icon name="expand" /> Полный экран
                     </button>
@@ -924,6 +927,16 @@ function VoiceToggle({ className = '' }: { className?: string }) {
   );
 }
 
+/** Кнопка HUD (проекция на лобовое стекло) — рядом с динамиком во время ведения. */
+function HudButton({ className = '' }: { className?: string }) {
+  return (
+    <button className={`${className} hud-btn`} onClick={openHud} aria-label="Режим HUD — проекция на лобовое стекло" title="HUD">
+      <Icon name="hud" size="1.6rem" />
+      <span className="cam-label">HUD</span>
+    </button>
+  );
+}
+
 /** Свайп по вертикали на элементе (а не на карте — с жестами карты не конфликтует). */
 function useVerticalSwipe(onUp: () => void, onDown: () => void) {
   const start = useRef<{ y: number; t: number } | null>(null);
@@ -1006,6 +1019,7 @@ function GuideBar(p: { eta: string; remaining: string; duration: string; sheet: 
           </span>
         </div>
         {settingsStore.get().mapEngine === 'maplibre' && <CameraModeToggle className="guide-voice guide-cam" />}
+        <HudButton className="guide-btn guide-cam guide-hud" />
         <VoiceToggle className="guide-voice" />
       </div>
     </div>
