@@ -24,6 +24,7 @@ import {
 } from '../lib/hud';
 import { Icon } from '../components/Icon';
 import '../styles/hud.css';
+import { displayStore } from '../lib/matching/display';
 
 const HudMap = lazy(() => import('./HudMap').then((m) => ({ default: m.HudMap })));
 
@@ -244,7 +245,7 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
     let range = 300;
     let last = '';
     const onGeo = () => {
-      const g = geoStore.get();
+      const g = displayStore.get(); // отображаемая позиция (привязка к дороге)
       if (g.lat == null || g.lon == null) return;
       if (to && to.lat === g.lat && to.lon === g.lon && heading === g.heading) return;
       const now = performance.now();
@@ -263,7 +264,7 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
       return { lat: from.lat + (to.lat - from.lat) * k, lon: from.lon + (to.lon - from.lon) * k };
     };
     onGeo();
-    const unsub = geoStore.subscribe(onGeo);
+    const unsub = displayStore.subscribe(onGeo);
     let raf = 0;
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
