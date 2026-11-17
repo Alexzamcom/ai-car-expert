@@ -227,9 +227,10 @@ async function checkLab(name, device) {
   await page.waitForTimeout(1500);
   const s3 = await st();
   check(`Карта 3D (${name}): в свободном обзоре камера не возвращается сама`, s3.mode === 'free' && d(s3.bearing, s2.bearing) < 1, `${Math.round(s2.bearing)}° → ${Math.round(s3.bearing)}°`);
-  await page.locator('.lab-follow').click({ timeout: 5000 }).catch(() => {});
+  // Нажатие напрямую: при программном WebGL (1–3 кадра/с в CI) проверка «элемент неподвижен» в Playwright не успевает.
+  await page.evaluate(() => document.querySelector('.lab-follow')?.click());
   // Ждём условие, а не фиксированное время: в CI WebGL без видеокарты, анимация камеры медленнее.
-  await page.waitForFunction(() => { const s = window.__lab.state(); return s.mode === 'course' && Math.abs(((s.bearing - s.heading + 540) % 360) - 180) < 12; }, null, { timeout: 10000 }).catch(() => {});
+  await page.waitForFunction(() => { const s = window.__lab.state(); return s.mode === 'course' && Math.abs(((s.bearing - s.heading + 540) % 360) - 180) < 12; }, null, { timeout: 20000 }).catch(() => {});
   const s4 = await st();
   check(`Карта 3D (${name}): «Следовать» восстанавливает карту по движению`, s4.mode === 'course' && d(s4.bearing, s4.heading) < 12 && !(await page.locator('.lab-follow').isVisible()), JSON.stringify({ mode: s4.mode, bearing: Math.round(s4.bearing), heading: Math.round(s4.heading) }));
   const before = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings') || '{}').speakNavigation);
