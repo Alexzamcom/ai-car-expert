@@ -128,6 +128,10 @@ export function Navigation() {
   const lang = navLang();
 
   // Инициализация карты (Leaflet — резервный движок; MapLibre — отдельный компонент)
+  // Геопозиция запускается при открытии карты для любого движка (раньше — только из инициализации Leaflet,
+  // и с MapLibre при ещё не выданном разрешении позиция не запрашивалась вовсе).
+  useEffect(() => startGeo(), []);
+
   useEffect(() => {
     if (engine !== 'leaflet' || !mapEl.current || map.current) return;
     // Пока нет точки GPS — карта там, где была последняя точная позиция (машинку по ней не рисуем).
@@ -184,7 +188,6 @@ export function Navigation() {
 
     const ro = new ResizeObserver(() => m.invalidateSize());
     ro.observe(mapEl.current);
-    startGeo();
     return () => {
       ro.disconnect();
       lp.reset();

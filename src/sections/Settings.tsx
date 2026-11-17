@@ -10,7 +10,8 @@ import { chatgptPrefsStore } from '../lib/chatgpt';
 import { themeStore, setThemeMode, THEME_MODE_LABEL, type ThemeMode } from '../lib/theme';
 import { MUSIC_SOURCES } from '../lib/music/sources';
 import { CAR_COLORS, carSvg, type CarColor } from '../lib/carMarker';
-import { geoStore, navStore, setNavigationVoice, restartGeo } from '../lib/nav';
+import { geoStore, navStore, setNavigationVoice, restartGeo, locatorState, guidanceUse } from '../lib/nav';
+import { FIX_SOURCE_LABEL } from '../lib/geo/locator';
 
 const FUELS: Record<VehicleProfile['fuel'], string> = {
   petrol: 'Бензин',
@@ -817,36 +818,39 @@ function CarOnMapSettings() {
 /** Живые данные GPS: для проверки на устройстве, если машинка показывается не там. */
 function GpsDiagnostics() {
   const g = useStore(geoStore);
-  const [perm, setPerm] = useState<string>('—');
   const [, tick] = useState(0);
   useEffect(() => {
-    navigator.permissions
-      ?.query({ name: 'geolocation' as PermissionName })
-      .then((p) => {
-        setPerm(p.state);
-        p.onchange = () => setPerm(p.state);
-      })
-      .catch(() => setPerm('неизвестно'));
     const t = setInterval(() => tick((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, []);
-  const age = (t: number | null) => (t ? `${Math.max(0, Math.round((Date.now() - t) / 1000))} с назад` : '—');
-  const QUALITY = { precise: 'точная', approx: 'средняя', coarse: 'приблизительная (без GPS)' } as const;
-  const HELD = { stale: 'устаревшая точка', coarse: 'грубая точка', jump: 'скачок' } as const;
+  const ago = (t: number | null) => {
+    if (!t) return '—';
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    return s < 120 ? `${s} с назад` : `${Math.round(s / 60)} мин назад`;
+  };
+  const QUALITY = { precise: 'точная (≤ 30 м)', approx: 'средняя (≤ 200 м)', coarse: 'приблизительная (> 200 м)' } as const;
+  const HELD = { stale: 'устаревшая точка', coarse: 'заметно менее точная точка', jump: 'невозможный скачок' } as const;
+  const ERR = { denied: 'запрещено', unavailable: 'устройство не сообщает позицию', timeout: 'не успело за отведённое время', other: 'ошибка' } as const;
+  const ls = locatorState();
+  const use = g.accuracy != null ? guidanceUse(g.accuracy) : null;
   const rows: [string, string][] = [
-    ['Разрешение', { granted: 'разрешено', denied: 'запрещено', prompt: 'спросит' }[perm] ?? perm],
-    ['Состояние', { idle: 'не запущено', watching: 'слежение', denied: 'запрещено', unavailable: 'недоступно' }[g.status]],
+    ['Разрешение', { granted: 'разрешено', denied: 'запрещено', prompt: 'спросит', unknown: 'браузер не сообщает' }[g.permission]],
+    ['Состояние', { idle: 'не запущено', watching: 'определение и уточнение', denied: 'запрещено', unavailable: 'Geolocation API недоступен' }[g.status]],
+    ['Запросы', ls.running ? [ls.high && 'высокая точность', ls.low && 'запасной (обычная точность)'].filter(Boolean).join(' + ') || '—' : 'не запущены'],
+    ['Точка получена через', g.source ? FIX_SOURCE_LABEL[g.source] : '—'],
     ['Широта, долгота', g.lat != null && g.lon != null ? `${g.lat.toFixed(5)}, ${g.lon.toFixed(5)}` : '—'],
     ['Точность', g.accuracy != null ? `±${Math.round(g.accuracy)} м — ${g.quality ? QUALITY[g.quality] : ''}` : '—'],
-    ['Точка получена', age(g.fixAt)],
+    ['Для ведения', use === 'full' ? 'полностью' : use === 'progress' ? 'только прогресс и заблаговременные подсказки' : use === 'display' ? 'только показ на карте' : '—'],
+    ['Возраст координат', ago(g.fixAt)],
     ['Скорость', g.speedKmh != null ? `${Math.round(g.speedKmh)} км/ч` : '—'],
     ['Курс', g.heading != null ? `${Math.round(g.heading)}°` : '— (стоим или мало данных)'],
     ['Отброшена последняя', g.held ? HELD[g.held] : 'нет'],
+    ['Последняя ошибка', g.lastError ? `${ERR[g.lastError.kind]} (код ${g.lastError.code}${g.lastError.message ? `: ${g.lastError.message}` : ''}), ${ago(g.lastError.at)}` : 'нет'],
   ];
   return (
     <div className="card gps-diag">
       <h3 className="section-title">
-        <Icon name="gps" /> Диагностика GPS
+        <Icon name="gps" /> Диагностика геопозиции
       </h3>
       <dl className="diag-list">
         {rows.map(([k, v]) => (
@@ -857,8 +861,10 @@ function GpsDiagnostics() {
         ))}
       </dl>
       <p className="muted small">
-        Местоположение определяет только GPS устройства, без определения по IP. Точность в километрах — значит, выключена «Точная геопозиция»
-        (iPad: Настройки → Конфиденциальность → Службы геолокации) или нет сигнала спутников.
+        Координаты даёт браузер (Geolocation API), без определения по IP. Каким способом их определило устройство — спутники, Wi-Fi или сотовая
+        сеть, — браузер не сообщает и переключать не позволяет; видны только точность и возраст точки. Сначала показывается позиция, которую
+        устройство может дать сразу, затем она уточняется. Точность в километрах обычно значит, что выключена «Точная геопозиция» (iPhone/iPad:
+        Настройки → Конфиденциальность → Службы геолокации).
       </p>
       <div className="toolbar">
         <button type="button" className="btn" onClick={() => { restartGeo(); toast('Запрашиваю свежую позицию', 'info'); }}>

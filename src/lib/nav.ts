@@ -18,6 +18,7 @@ import { settingsStore, setMinimal, driveUiStore } from './state';
 import { speak, stopSpeaking } from './speech';
 import { recordFix } from './trip';
 import { L } from './i18n';
+import { Locator, type FixSource, type GeoErrorInfo } from './geo/locator';
 import { searchPlaces as geoSearch, reverseGeocode, coordsPlace, type Place } from './geo/geocode';
 
 export type { Place };
@@ -38,6 +39,12 @@ export interface GeoState {
   held: 'stale' | 'coarse' | 'jump' | null;
   /** Время получения фикса устройством (coords timestamp). */
   fixAt: number | null;
+  /** Каким запросом получена показанная точка (способ определения — спутники, Wi-Fi, сеть — браузер не сообщает). */
+  source: FixSource | null;
+  /** Последняя ошибка Geolocation API (null — ошибок не было с последнего запуска). */
+  lastError: GeoErrorInfo | null;
+  /** Разрешение браузера на геопозицию (Permissions API; на части браузеров неизвестно). */
+  permission: 'granted' | 'prompt' | 'denied' | 'unknown';
 }
 
 export type GeoQuality = 'precise' | 'approx' | 'coarse';
@@ -53,6 +60,9 @@ export const geoStore = createStore<GeoState>({
   quality: null,
   held: null,
   fixAt: null,
+  source: null,
+  lastError: null,
+  permission: 'unknown',
 });
 
 /* ---------- Фильтр точек GPS (чистые функции, покрыты тестами) ---------- */
@@ -87,6 +97,8 @@ export function acceptFix(prev: (RawFix & { at: number }) | null, fix: RawFix, n
   if (!prev) return 'accept';
   if (fix.timestamp < prev.timestamp) return 'stale';
   const prevFresh = now - prev.at < 30_000;
+  // Две точки почти одновременно (запасное слежение и слежение с высокой точностью): заметно худшая не сдвигает точную.
+  if (now - prev.at < 10_000 && fix.accuracy > Math.max(2 * prev.accuracy, prev.accuracy + 25)) return 'coarse';
   if (prevFresh && prev.accuracy <= 100 && fix.accuracy > Math.max(3 * prev.accuracy, 250)) return 'coarse';
   const dt = Math.max(1, (fix.timestamp - prev.timestamp) / 1000);
   const d = haversine(prev, fix);
@@ -245,7 +257,6 @@ export function routeSummary(): string {
   return s.status === 'preview' ? `${head} ${L('Скажите «поехали», чтобы начать.', 'Скажіть «поїхали», щоб почати.')}` : head;
 }
 
-let watchId: number | null = null;
 /** Последняя принятая точка (для фильтра) и точка, от которой считаем направление движения. */
 let acceptedFix: (RawFix & { at: number }) | null = null;
 let headingState: HeadingState = { heading: null, anchor: null, at: null };
@@ -271,13 +282,27 @@ export function bearing(a: LatLon, b: LatLon) {
   return ((Math.atan2(y, x) / r) + 360) % 360;
 }
 
-/** Точка GPS с точностью хуже этой не используется для перестроения и «прибыли». */
+/** Точка с точностью хуже этой не используется для ведения вообще — только для показа на карте. */
 export const MAX_GUIDANCE_ACCURACY = 100;
+/** Точка не хуже этой — пригодна для «поверните сейчас», «вы прибыли» и перестроения. */
+export const FULL_GUIDANCE_ACCURACY = 50;
+
+/**
+ * Как использовать точку при ведении. Показ на карте и ведение разделены:
+ * - full — всё (прогресс, подсказки, прибытие, перестроение);
+ * - progress — прогресс по маршруту и заблаговременные подсказки, без «сейчас», прибытия и перестроения;
+ * - display — только показать на карте с кругом точности.
+ */
+export function guidanceUse(accuracy: number): 'full' | 'progress' | 'display' {
+  return accuracy <= FULL_GUIDANCE_ACCURACY ? 'full' : accuracy <= MAX_GUIDANCE_ACCURACY ? 'progress' : 'display';
+}
 
 /** Обработка точки GPS: фильтр, курс, состояние для карты и ведения. Экспортирована для тестов. */
-export function handleFix(fix: RawFix, now = Date.now()) {
+export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'high') {
   const verdict = acceptFix(acceptedFix, fix, now);
   if (verdict !== 'accept') {
+    // Запасная менее точная точка рядом с точной — обычное дело, это не «слабый сигнал».
+    if (verdict === 'coarse' && source !== 'high' && acceptedFix && now - acceptedFix.at < 10_000) return;
     geoStore.set((s) => ({ ...s, status: 'watching', held: verdict }));
     return;
   }
@@ -286,7 +311,7 @@ export function handleFix(fix: RawFix, now = Date.now()) {
   acceptedFix = { ...fix, at: now };
   const speedKmh = fix.speed != null && fix.speed >= 0 ? fix.speed * 3.6 : null;
   const quality = classifyAccuracy(fix.accuracy);
-  geoStore.set({ status: 'watching', lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speedKmh, heading, updated: now, quality, held: null, fixAt: fix.timestamp });
+  geoStore.set((s) => ({ ...s, status: 'watching', lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speedKmh, heading, updated: now, quality, held: null, fixAt: fix.timestamp, source }));
   if (quality === 'precise') saveLastPos(fix);
   recordFix({ lat: fix.lat, lon: fix.lon }, fix.accuracy, speedKmh, now);
   onPosition({ lat: fix.lat, lon: fix.lon }, fix.accuracy);
@@ -296,7 +321,9 @@ export function __resetGeo() {
   lastPosSaved = 0;
   acceptedFix = null;
   headingState = { heading: null, anchor: null, at: null };
-  geoStore.set({ status: 'idle', lat: null, lon: null, accuracy: null, speedKmh: null, heading: null, updated: null, quality: null, held: null, fixAt: null });
+  locator?.stop();
+  locator = null;
+  geoStore.set({ status: 'idle', lat: null, lon: null, accuracy: null, speedKmh: null, heading: null, updated: null, quality: null, held: null, fixAt: null, source: null, lastError: null, permission: 'unknown' });
 }
 
 const toFix = (p: GeolocationPosition): RawFix => ({
@@ -308,32 +335,65 @@ const toFix = (p: GeolocationPosition): RawFix => ({
   timestamp: p.timestamp || Date.now(),
 });
 
+let locator: Locator | null = null;
+let permWatched = false;
+
+/** Ошибка Geolocation API: запрет — остановка; остальное — продолжаем попытки (последняя точка остаётся). */
+export function handleGeoError(e: GeoErrorInfo) {
+  geoStore.set((s) => ({ ...s, lastError: e, status: e.kind === 'denied' ? 'denied' : s.status === 'idle' ? 'watching' : s.status, ...(e.kind === 'denied' ? { permission: 'denied' as const } : {}) }));
+}
+
+function watchPermission() {
+  if (permWatched) return;
+  permWatched = true;
+  navigator.permissions
+    ?.query({ name: 'geolocation' as PermissionName })
+    .then((p) => {
+      const sync = () => {
+        const st = p.state as GeoState['permission'];
+        geoStore.set((s) => ({ ...s, permission: st }));
+        // Разрешили в настройках, пока приложение открыто, — сразу начинаем.
+        if (st === 'granted' && geoStore.get().status === 'denied') restartGeo();
+      };
+      sync();
+      p.onchange = sync;
+    })
+    .catch(() => {});
+}
+
+/** Начать определение позиции: быстрая доступная точка, затем непрерывное уточнение (см. geo/locator.ts). */
 export function startGeo() {
-  if (watchId != null) return;
+  if (locator?.state.running) return;
   if (!('geolocation' in navigator)) {
     geoStore.set((s) => ({ ...s, status: 'unavailable' }));
     return;
   }
-  const onError = (err: GeolocationPositionError) => {
-    // Тайм-аут одной попытки — не потеря позиции: прежняя точка остаётся, слежение продолжается.
-    if (err.code === err.TIMEOUT && geoStore.get().lat != null) return;
-    geoStore.set((s) => ({ ...s, status: err.code === err.PERMISSION_DENIED ? 'denied' : 'unavailable' }));
-    if (err.code === err.PERMISSION_DENIED && watchId != null) {
-      navigator.geolocation.clearWatch(watchId);
-      watchId = null;
-    }
-  };
-  watchId = navigator.geolocation.watchPosition((p) => handleFix(toFix(p)), onError, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  watchPermission();
+  // Последняя ошибка не сбрасывается: в диагностике видно, когда она была.
+  geoStore.set((s) => ({ ...s, status: s.status === 'denied' ? 'denied' : 'watching' }));
+  locator ??= new Locator(
+    {
+      geo: navigator.geolocation,
+      now: () => Date.now(),
+      setTimer: (fn, ms) => setTimeout(fn, ms),
+      clearTimer: (id) => clearTimeout(id as number),
+      setInterval: (fn, ms) => setInterval(fn, ms),
+      clearInterval: (id) => clearInterval(id as number),
+    },
+    (p, source) => handleFix(toFix(p), Date.now(), source),
+    handleGeoError,
+  );
+  locator.start();
 }
 
-/** Перезапуск слежения (возврат в приложение): iOS может приостановить его и затем отдать старую точку. */
+/** Перезапуск (возврат в приложение, «Обновить позицию»): iOS может приостановить слежение и затем отдать старую точку. */
 export function restartGeo() {
-  if (watchId != null && 'geolocation' in navigator) {
-    navigator.geolocation.clearWatch(watchId);
-    watchId = null;
-  }
+  if (locator) locator.stop();
   startGeo();
 }
+
+/** Состояние запросов — для диагностики. */
+export const locatorState = () => locator?.state ?? { running: false, high: false, low: false, retries: 0 };
 
 export function currentPos(): LatLon | null {
   const g = geoStore.get();
@@ -361,13 +421,26 @@ export function preciseHelp(): string {
 }
 
 /** Короткий статус GPS для карты; null — всё в порядке. */
+const fmtAcc = (m: number) => (m >= 1000 ? `${(m / 1000).toFixed(1).replace('.0', '')} км` : `${Math.round(m)} м`);
+
 export function geoStatusText(g: GeoState, now = Date.now()): { text: string; tone: 'warn' | 'info'; help: () => string } | null {
   if (g.status === 'denied') return { text: 'Нет доступа к геопозиции — как включить', tone: 'warn', help: geoHelp };
   if (g.status === 'unavailable' && g.lat == null) return { text: 'Геопозиция недоступна', tone: 'warn', help: geoHelp };
-  if (g.lat == null) return g.status === 'watching' || g.status === 'idle' ? { text: 'Ищу GPS…', tone: 'info', help: () => 'Ищу спутники. На открытом месте это быстрее.' } : null;
-  if (g.held === 'coarse' || g.held === 'jump') return { text: 'Слабый сигнал GPS — показываю последнюю точную позицию', tone: 'info', help: () => 'Новые точки слишком неточные; машинка не двигается по ним, чтобы не прыгать по карте.' };
-  if (g.quality === 'coarse') return { text: `Приблизительно, ±${g.accuracy! >= 1000 ? `${(g.accuracy! / 1000).toFixed(1).replace('.0', '')} км` : `${Math.round(g.accuracy!)} м`}`, tone: 'warn', help: preciseHelp };
-  if (g.updated && now - g.updated > 60_000) return { text: 'GPS не обновлялся больше минуты', tone: 'info', help: () => 'Последняя известная позиция. Проверьте, что геолокация включена.' };
+  if (g.lat == null) {
+    if (g.status === 'idle') return null;
+    if (g.lastError?.kind === 'unavailable')
+      return { text: 'Устройство пока не сообщает местоположение — пробую снова', tone: 'warn', help: () => `Проверьте, что службы геолокации включены. ${geoHelp()}` };
+    return {
+      text: g.lastError?.kind === 'timeout' ? 'Определяю местоположение… (дольше обычного)' : 'Определяю местоположение…',
+      tone: 'info',
+      help: () => 'Сначала показываю позицию, которую устройство может дать сразу (может быть приблизительной), затем уточняю её.',
+    };
+  }
+  if (g.held === 'coarse' || g.held === 'jump') return { text: 'Слабый сигнал — показываю последнюю точную позицию', tone: 'info', help: () => 'Новые точки заметно хуже или невозможны для автомобиля; машинка не двигается по ним, чтобы не прыгать по карте.' };
+  if (g.quality === 'coarse') return { text: `Приблизительно, ±${fmtAcc(g.accuracy!)}`, tone: 'warn', help: preciseHelp };
+  if (g.updated && now - g.updated > 60_000) return { text: 'Позиция не обновлялась больше минуты', tone: 'info', help: () => 'Показана последняя известная позиция. Проверьте, что геолокация включена.' };
+  if (g.fixAt && now - g.fixAt > 60_000) return { text: `Последняя известная позиция (${Math.round((now - g.fixAt) / 60_000)} мин назад) — уточняю`, tone: 'info', help: () => 'Устройство отдало сохранённую позицию; как только появится свежая, машинка переместится.' };
+  if (g.accuracy != null && g.accuracy > FULL_GUIDANCE_ACCURACY) return { text: `Приблизительно, ±${fmtAcc(g.accuracy)} — уточняю`, tone: 'info', help: () => `${preciseHelp()} Пока точность хуже ${FULL_GUIDANCE_ACCURACY} м, подсказки «поверните сейчас», «вы прибыли» и перестроение маршрута не срабатывают.` };
   return null;
 }
 
@@ -583,13 +656,15 @@ if (typeof window !== 'undefined') {
 function onPosition(pos: LatLon, accuracy = 20) {
   const s = navStore.get();
   if (!s.route || !routeCache || (s.status !== 'guiding' && s.status !== 'preview')) return;
+  const use = guidanceUse(accuracy);
+  // Приблизительная точка (> 100 м) только показывается на карте: прогресс по маршруту не сдвигаем, если он уже есть.
+  if (use === 'display' && s.progress && s.status === 'guiding') return;
   const p = routeProgress(s.route, pos, routeCache, s.progress?.segIndex ?? 0);
   navStore.set({ ...s, progress: p });
-  if (s.status !== 'guiding') return;
-  // Грубая точка (вышки сотовой связи, туннель) не должна вызывать перестроение или «прибыли».
-  if (accuracy > MAX_GUIDANCE_ACCURACY) return;
+  if (s.status !== 'guiding' || use === 'display') return;
+  const full = use === 'full';
 
-  if (p.remainingM < 30) {
+  if (full && p.remainingM < 30) {
     navStore.set({ ...navStore.get(), status: 'arrived' });
     if (driveUiStore.get().minimal) setMinimal(false);
     say(t('arrived'));
@@ -597,14 +672,15 @@ function onPosition(pos: LatLon, accuracy = 20) {
   }
 
   // Сход с маршрута: 3 точки подряд дальше 60 м (с учётом точности GPS) → перестроение.
-  offRouteCount = p.offRouteM > Math.max(60, accuracy * 1.5) ? offRouteCount + 1 : 0;
-  if (offRouteCount >= 3 && Date.now() - lastReroute > (pendingReroute ? 30000 : 15000) && s.dest && !s.rerouting) {
+  // Неточная точка (50–100 м) не считается ни сходом, ни возвратом на маршрут.
+  if (full) offRouteCount = p.offRouteM > Math.max(60, accuracy * 1.5) ? offRouteCount + 1 : 0;
+  if (full && offRouteCount >= 3 && Date.now() - lastReroute > (pendingReroute ? 30000 : 15000) && s.dest && !s.rerouting) {
     reroute(pos);
     return;
   }
 
   // Промежуточная точка пройдена — дальше считаем маршрут без неё.
-  if (s.via && haversine(pos, s.via) < 60) {
+  if (full && s.via && haversine(pos, s.via) < 60) {
     navStore.set({ ...navStore.get(), via: null });
   }
 
@@ -620,6 +696,8 @@ function onPosition(pos: LatLon, accuracy = 20) {
   for (const [key, m] of thresholds) {
     const id = `${p.stepIndex}:${key}`;
     if (p.toStepM <= m && !announced.has(id)) {
+      // «Сейчас поверните» — только по точной точке: иначе возможна ложная команда до перекрёстка.
+      if (key === 'now' && !full) break;
       // Помечаем все более дальние пороги, чтобы не говорить их задним числом.
       thresholds.forEach(([k, mm]) => mm >= m && announced.add(`${p.stepIndex}:${k}`));
       if (key === 'far' && step.distance < 800 && p.toStepM < 400) break;

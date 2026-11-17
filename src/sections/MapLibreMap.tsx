@@ -117,9 +117,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         markers.dest = syncMarker(markers.dest, s.dest, 'dest');
         markers.via = syncMarker(markers.via, s.via, 'via');
       };
+      let accShown = 0;
       const drawAcc = () => {
         const g = geoStore.get();
-        (map.getSource('acc') as GeoJSONSource | undefined)?.setData(g.lat != null && g.lon != null && (g.accuracy ?? 0) > 30 ? circle({ lat: g.lat, lon: g.lon }, g.accuracy!) : empty);
+        const src = map.getSource('acc') as GeoJSONSource | undefined;
+        const show = g.lat != null && g.lon != null && (g.accuracy ?? 0) > 30;
+        src?.setData(show ? circle({ lat: g.lat!, lon: g.lon! }, g.accuracy!) : empty);
+        accShown = src && show ? g.accuracy! : 0;
       };
 
       /* ---------- Метки: цель, остановка, выбранная точка, объекты по пути ---------- */
@@ -355,6 +359,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             heading: headingTarget,
             car: c ? { x: c.x / r.width, y: c.y / r.height } : null,
             car3d: use3d() && !!map.getLayer('car-3d'),
+            accuracyCircle: accShown,
             routePoints: navStore.get().route?.coords.length ?? 0,
             lang: navLang(),
           };
