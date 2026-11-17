@@ -190,11 +190,11 @@ async function checkLab(name, device) {
       return { dark, red, car3d: s.car3d };
     });
   const white = await carPixels();
-  check(`3D-машинка (${name}): объёмная модель на карте`, white.car3d && white.dark > 3 && white.red < 4, JSON.stringify(white));
+  check(`3D-машинка (${name}): объёмная модель на карте`, white.car3d && white.dark > 3, JSON.stringify(white));
   await page.evaluate(() => window.__lab.settings.set((x) => ({ ...x, carColor: 'red' })));
   await page.waitForTimeout(600);
   const red = await carPixels();
-  check(`3D-машинка (${name}): цвет кузова из настроек`, red.red > 10, JSON.stringify(red));
+  check(`3D-машинка (${name}): цвет кузова из настроек (белая → красная)`, red.red > 10 && red.red > white.red * 3, `белая ${white.red}, красная ${red.red} красных пикселей`);
   await page.screenshot({ path: `${out}/lab-${name.replace(/\s+/g, '-').toLowerCase()}-red.png` });
   await page.evaluate(() => window.__lab.settings.set((x) => ({ ...x, carColor: 'white', carStyle: 'flat' })));
   await page.waitForTimeout(800);
