@@ -1,3 +1,4 @@
+import { mapRuntimeStore } from '../lib/mapEngine';
 import { hudSettingsStore, HUD_MODES, HUD_COLORS, openHud, type HudSettings, type HudColor } from '../lib/hud';
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
@@ -710,6 +711,7 @@ function HudSettingsCard() {
 
 function CarOnMapSettings() {
   const s = useStore(settingsStore);
+  const fallback = useStore(mapRuntimeStore).fallback;
   const patch = (p: Partial<SettingsT>) => settingsStore.set((x) => ({ ...x, ...p }));
   return (
     <div className="card car-on-map">
@@ -736,9 +738,10 @@ function CarOnMapSettings() {
         <div>
           <strong>Движок карты</strong>
           <small>
-            MapLibre — векторная карта, поворот по движению, наклон 3D, объёмная машинка. Leaflet — прежняя карта (резерв).
-            Переключение не сбрасывает маршрут.
+            MapLibre — векторная карта, поворот по движению, наклон 3D, объёмная машинка (по умолчанию). Leaflet — прежняя карта
+            (резерв; включается сама, если 3D-карта не запустилась). Переключение не сбрасывает маршрут.
           </small>
+          {fallback && s.mapEngine === 'maplibre' && <small className="warn-text">Сейчас работает Leaflet: {fallback}. Нажмите «MapLibre 3D», чтобы попробовать снова.</small>}
         </div>
         <div className="seg" role="radiogroup" aria-label="Движок карты">
           {(
@@ -747,7 +750,7 @@ function CarOnMapSettings() {
               ['leaflet', 'Leaflet'],
             ] as const
           ).map(([v, label]) => (
-            <button key={v} type="button" role="radio" aria-checked={s.mapEngine === v} className={`chip ${s.mapEngine === v ? 'is-active' : ''}`} onClick={() => patch({ mapEngine: v })}>
+            <button key={v} type="button" role="radio" aria-checked={s.mapEngine === v} className={`chip ${s.mapEngine === v ? 'is-active' : ''}`} onClick={() => (v === 'maplibre' && mapRuntimeStore.set({ fallback: null }), patch({ mapEngine: v, mapEngineExplicit: true }))}>
               {label}
             </button>
           ))}

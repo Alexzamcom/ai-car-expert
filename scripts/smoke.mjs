@@ -227,9 +227,10 @@ async function checkLab(name, device) {
   await page.waitForTimeout(1500);
   const s3 = await st();
   check(`Карта 3D (${name}): в свободном обзоре камера не возвращается сама`, s3.mode === 'free' && d(s3.bearing, s2.bearing) < 1, `${Math.round(s2.bearing)}° → ${Math.round(s3.bearing)}°`);
-  await page.locator('.lab-follow').click({ timeout: 5000 }).catch(() => {});
+  // Нажатие напрямую: при программном WebGL (1–3 кадра/с в CI) проверка «элемент неподвижен» в Playwright не успевает.
+  await page.evaluate(() => document.querySelector('.lab-follow')?.click());
   // Ждём условие, а не фиксированное время: в CI WebGL без видеокарты, анимация камеры медленнее.
-  await page.waitForFunction(() => { const s = window.__lab.state(); return s.mode === 'course' && Math.abs(((s.bearing - s.heading + 540) % 360) - 180) < 12; }, null, { timeout: 10000 }).catch(() => {});
+  await page.waitForFunction(() => { const s = window.__lab.state(); return s.mode === 'course' && Math.abs(((s.bearing - s.heading + 540) % 360) - 180) < 12; }, null, { timeout: 20000 }).catch(() => {});
   const s4 = await st();
   check(`Карта 3D (${name}): «Следовать» восстанавливает карту по движению`, s4.mode === 'course' && d(s4.bearing, s4.heading) < 12 && !(await page.locator('.lab-follow').isVisible()), JSON.stringify({ mode: s4.mode, bearing: Math.round(s4.bearing), heading: Math.round(s4.heading) }));
   const before = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings') || '{}').speakNavigation);
@@ -243,7 +244,7 @@ async function checkLab(name, device) {
 
 /* ---------- Основная навигация на движке MapLibre ---------- */
 async function checkMapLibreNav(name, device, { full = false } = {}) {
-  const { ctx, page } = await newPage(device);
+  const { ctx, page } = await newPage(device, {}, 'maplibre');
   if (MOCK) await ctx.route('**/tiles.openfreemap.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: fixture('maplibre-style.json') }));
   await ctx.addInitScript(() => {
     if (!localStorage.getItem('ace:settings')) localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre' }));
@@ -454,7 +455,7 @@ async function checkIndoorGeo(name, device, engine) {
   const { ctx, page } = await newPage(device, { permissions: [] });
   if (MOCK) await ctx.route('**/tiles.openfreemap.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: fixture('maplibre-style.json') }));
   await ctx.addInitScript((eng) => {
-    localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: eng }));
+    localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: eng, mapEngineExplicit: true }));
     const calls = [];
     const high = [];
     const pos = (acc, dLat = 0) => ({ coords: { latitude: 55.757 + dLat, longitude: 37.6156, accuracy: acc, speed: null, heading: null, altitude: null, altitudeAccuracy: null }, timestamp: Date.now() });
@@ -509,6 +510,62 @@ async function checkIndoorGeo(name, device, engine) {
   await page.waitForFunction(() => /не успело/.test(document.querySelector('.gps-diag')?.textContent ?? ''), null, { timeout: 8000 }).catch(() => {});
   const dl = await page.locator('.gps-diag').textContent().catch(() => '');
   check(`Геопозиция в здании (${name}): диагностика — запрос, точность, возраст, разрешение, ошибка`, /слежение с высокой точностью/.test(dl) && /Возраст координат/.test(dl) && /Разрешение/.test(dl) && /не успело за отведённое время/.test(dl) && !/GPS устройства определяет/.test(dl), dl.slice(dl.indexOf('Точность'), dl.indexOf('Точность') + 320));
+  await ctx.close();
+}
+
+/** Движок по умолчанию: новый пользователь — MapLibre по движению; старый Leaflet по умолчанию — MapLibre; явный Leaflet — Leaflet; сбой — резерв. */
+async function checkEngineDefault(device) {
+  const styleOk = (ctx) => (MOCK ? ctx.route('**/tiles.openfreemap.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: fixture('maplibre-style.json') })) : null);
+  const engineOf = (page) =>
+    page.evaluate(() => (document.querySelector('.ml-map') ? 'maplibre' : document.querySelector('.leaflet-container') ? 'leaflet' : 'none'));
+  const open = async (stored, prep) => {
+    // Запросы service worker приложения Playwright не перехватывает — блокируем его, чтобы подмена сети работала.
+    const { ctx, page } = await newPage(device, { serviceWorkers: 'block' }, null);
+    await styleOk(ctx);
+    if (stored) await ctx.addInitScript((v) => localStorage.getItem('ace:settings') || localStorage.setItem('ace:settings', v), JSON.stringify(stored));
+    if (prep) await prep(ctx);
+    await page.goto(url, { waitUntil: 'load' });
+    await page.waitForFunction(() => document.querySelector('.ml-map .maplibregl-canvas, .leaflet-container'), null, { timeout: 20000 }).catch(() => {});
+    return { ctx, page };
+  };
+  // Новый пользователь
+  let { ctx, page } = await open(null);
+  await page.waitForFunction(() => window.__aceMap?.state?.().car3d, null, { timeout: 30000 }).catch(() => {});
+  const fresh = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ace:settings') || '{}');
+    return { ml: !!document.querySelector('.ml-map'), car3d: !!window.__aceMap?.state?.().car3d, camera: s.cameraMode ?? 'course' };
+  });
+  check('Новый пользователь: MapLibre 3D по умолчанию, камера по движению', fresh.ml && fresh.car3d && fresh.camera === 'course', JSON.stringify(fresh));
+  await ctx.close();
+  // Прежний Leaflet «по умолчанию» (сохранён вместе с другими настройками) → MapLibre
+  ({ ctx, page } = await open({ mapEngine: 'leaflet', carColor: 'red' }));
+  const migrated = { engine: await engineOf(page), color: await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings')).carColor) };
+  check('Обновление: прежний Leaflet по умолчанию → MapLibre, остальные настройки сохранены', migrated.engine === 'maplibre' && migrated.color === 'red', JSON.stringify(migrated));
+  await ctx.close();
+  // Явный выбор Leaflet сохраняется
+  ({ ctx, page } = await open({ mapEngine: 'leaflet', mapEngineExplicit: true }));
+  check('Явно выбранный Leaflet сохраняется', (await engineOf(page)) === 'leaflet');
+  await ctx.close();
+  // Нет WebGL → Leaflet
+  ({ ctx, page } = await open(null, (c) =>
+    c.addInitScript(() => {
+      const orig = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function (type, ...a) {
+        return /webgl/.test(type) ? null : orig.call(this, type, ...a);
+      };
+    }),
+  ));
+  check('Нет WebGL — резервная карта Leaflet', (await engineOf(page)) === 'leaflet');
+  await ctx.close();
+  // Стиль карты не загрузился → Leaflet с сообщением, настройка не меняется
+  ({ ctx, page } = await open(null, (c) => c.route('**/tiles.openfreemap.org/**', (r) => r.fulfill({ status: 503, body: 'down' }))));
+  await page.waitForSelector('.leaflet-container', { timeout: 15000 }).catch(() => {});
+  const down = await page.evaluate(() => ({
+    leaflet: !!document.querySelector('.leaflet-container'),
+    toast: [...document.querySelectorAll('.toast')].map((t) => t.textContent).join(' '),
+    stored: JSON.parse(localStorage.getItem('ace:settings') || '{}').mapEngine ?? 'maplibre',
+  }));
+  check('Сервер карты недоступен — Leaflet с понятным сообщением, выбор MapLibre не стирается', down.leaflet && /резервная карта/.test(down.toast) && down.stored === 'maplibre', JSON.stringify(down));
   await ctx.close();
 }
 
@@ -726,7 +783,11 @@ const errors = [];
 const tileHosts = new Set();
 let cartoRequests = 0;
 
-async function newPage(device, extra = {}) {
+/**
+ * engine — движок, «выбранный пользователем» до открытия страницы (основной набор проверок исторически на Leaflet);
+ * null — новый пользователь без настроек (по умолчанию MapLibre).
+ */
+async function newPage(device, extra = {}, engine = 'leaflet') {
   const ctx = await browser.newContext({
     ...device,
     locale: 'ru-RU',
@@ -735,6 +796,10 @@ async function newPage(device, extra = {}) {
     ...extra,
   });
   await mockNetwork(ctx);
+  if (engine)
+    await ctx.addInitScript((eng) => {
+      if (!localStorage.getItem('ace:settings')) localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: eng, mapEngineExplicit: true }));
+    }, engine);
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
   page.on('request', (r) => {
@@ -1219,6 +1284,7 @@ try {
   await checkMapLibreNav('iPhone 15', devices['iPhone 15']);
   await checkMapLibreNav('iPhone 15 горизонтально', devices['iPhone 15 landscape']);
   await checkMapLibreNav('Pixel 7', devices['Pixel 7']);
+  await checkEngineDefault(ipad);
   await checkIndoorGeo('Leaflet, Pixel 7', devices['Pixel 7'], 'leaflet');
   await checkIndoorGeo('MapLibre, iPhone 15', devices['iPhone 15'], 'maplibre');
 

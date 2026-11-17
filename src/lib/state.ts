@@ -1,3 +1,4 @@
+import { migrateEngine } from './mapEngine';
 import type { CarColor } from './carMarker';
 import { createStore, uid } from './store';
 import { isPanel, type SectionId, type PanelId, type PageId } from './sections';
@@ -94,8 +95,10 @@ export interface Settings {
   carColor: CarColor;
   /** Машинка: объёмная (3D, карта MapLibre) или облегчённая плоская. */
   carStyle: '3d' | 'flat';
-  /** Движок карты: MapLibre (векторная, поворот, наклон 3D) или Leaflet (резерв). Маршрут общий. */
+  /** Движок карты: MapLibre (векторная, поворот, наклон 3D) — основной, Leaflet — резерв. Маршрут общий. */
   mapEngine: 'leaflet' | 'maplibre';
+  /** Движок выбран пользователем в настройках (а не значение по умолчанию). */
+  mapEngineExplicit: boolean;
   /** Ориентация карты при ведении на MapLibre (свободный обзор — жестом). */
   cameraMode: 'course' | 'north';
   /** Полноэкранный минималистичный режим во время ведения. */
@@ -145,7 +148,8 @@ export const settingsStore = createStore<Settings>(
     aiShareLocation: true,
     carColor: 'white',
     carStyle: '3d',
-    mapEngine: 'leaflet',
+    mapEngine: 'maplibre',
+    mapEngineExplicit: false,
     cameraMode: 'course',
     minimalGuidance: true,
     speechLang: 'ru-RU',
@@ -167,6 +171,9 @@ export const settingsStore = createStore<Settings>(
 if (!settingsStore.get().vehicle.make) {
   settingsStore.set((s) => ({ ...s, vehicle: { ...s.vehicle, make: 'Peugeot', model: '3008', year: s.vehicle.year || '2010', engine: s.vehicle.engine || '1.6 THP (бензин, турбо)' } }));
 }
+
+// Миграция: прежний Leaflet по умолчанию → MapLibre; явный выбор Leaflet сохраняется.
+if (migrateEngine(settingsStore.get()) !== settingsStore.get().mapEngine) settingsStore.set((s) => ({ ...s, mapEngine: migrateEngine(s) }));
 
 export function vehicleName(v: VehicleProfile): string {
   const name = [v.make, v.model].filter(Boolean).join(' ').trim();

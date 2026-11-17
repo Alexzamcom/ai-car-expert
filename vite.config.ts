@@ -21,8 +21,8 @@ function serviceWorker(): Plugin {
     generateBundle(_options, bundle) {
       const files = [
         './',
-        // Прототип карты (lab.html, MapLibre ~1,5 МБ) не кэшируется заранее: грузится только при открытии.
-        ...Object.keys(bundle).filter((f) => !f.endsWith('.map') && !/(^|\/)(lab[.-]|maplibre)/.test(f)),
+        // MapLibre — основной движок: кэшируется заранее (офлайн). Прототип (lab.html) — только при открытии.
+        ...Object.keys(bundle).filter((f) => !f.endsWith('.map') && !/(^|\/)lab[.-]/.test(f)),
         ...listPublic(path.resolve('public')),
       ];
       const template = fs.readFileSync(path.resolve('pwa/sw-template.js'), 'utf8');
