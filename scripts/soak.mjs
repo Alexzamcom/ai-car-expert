@@ -19,6 +19,9 @@ const MINUTES = Number(args.find((a) => a.startsWith('--minutes='))?.split('=')[
 const WANT = (args.find((a) => a.startsWith('--devices='))?.split('=')[1] ?? 'ipad,iphone,pixel').split(',');
 /** Вид карты: normal или game («Игровая 3D»). */
 const LOOK = args.find((a) => a.startsWith('--look='))?.split('=')[1] ?? 'normal';
+// game-night — «Игровая 3D» с ночной темой (вручную), остальные — тема по солнцу, как у пользователя.
+const MAP_LOOK = LOOK === 'game-night' ? 'game' : LOOK;
+const THEME = LOOK === 'game-night' ? 'night' : 'auto';
 const [url = 'http://localhost:4173/', out = 'soak'] = args.filter((a) => !a.startsWith('--'));
 fs.mkdirSync(out, { recursive: true });
 const fixture = (f) => fs.readFileSync(path.resolve('tests/fixtures', f), 'utf8');
@@ -62,10 +65,10 @@ async function soak(key) {
     await ctx.route('**/photon.komoot.io/**', (r) => r.fulfill(json('{"features":[]}')));
   }
   // Как у пользователя: MapLibre, автотема по солнцу (от координат), 3D-машинка; диагностика включена.
-  await ctx.addInitScript((look) => {
-    localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre', mapEngineExplicit: true, theme: 'auto', carStyle: '3d', mapLook: look }));
+  await ctx.addInitScript(([look, theme]) => {
+    localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre', mapEngineExplicit: true, theme, carStyle: '3d', mapLook: look }));
     localStorage.setItem('ace:diag', JSON.stringify({ on: true }));
-  }, LOOK);
+  }, [MAP_LOOK, THEME]);
   const page = await ctx.newPage();
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e)));
@@ -139,7 +142,7 @@ async function soak(key) {
         const st = window.__aceMap.state();
             const mem = performance.memory?.usedJSHeapSize ?? null;
         // styleReady — сам стиль загружен (isStyleLoaded() ложен и во время подгрузки данных маршрута/тайлов — это не мерцание).
-        return { at: Date.now(), map: window.__aceDiag.map(), geo: window.__aceDiag.geo(), styleLoaded: st.styleReady, car: st.car, car3d: st.car3d, display: st.display, raw: st.raw, mem, look: st.look, gameLayers: st.gameLayers?.length ?? 0 };
+        return { at: Date.now(), map: window.__aceDiag.map(), geo: window.__aceDiag.geo(), styleLoaded: st.styleReady, car: st.car, car3d: st.car3d, display: st.display, raw: st.raw, mem, look: st.look, gameLayers: st.gameLayers?.length ?? 0, palette: st.palette, windows: st.windows, nightLayers: st.nightLayers?.length ?? 0 };
       });
       samples.push(smp);
     }
@@ -196,6 +199,8 @@ async function soak(key) {
   // Память: не растёт неограниченно (программный WebGL в CI — ориентировочно).
   if (summary.memoryMB) check(`${name}: память не растёт неограниченно`, summary.memoryMB.end < summary.memoryMB.start * 2 + 30, JSON.stringify(summary.memoryMB));
   console.log(`${name}: итог ${JSON.stringify(summary)}`);
+  if (LOOK === 'game-night')
+    check(`${name}: ночная «Игровая 3D» всё время (окна, свечение дорог, здания, деревья)`, samples.every((x) => x.palette === 'game-night' && x.windows && x.nightLayers >= 1 && x.gameLayers === 3), `${samples.filter((x) => x.palette !== 'game-night' || !x.windows).length} замеров без ночного оформления`);
   if (LOOK === 'game') check(`${name}: «Игровая 3D» включена всё время (слои зданий, крыш и деревьев на месте)`, samples.every((x) => x.look === 'game' && x.gameLayers === 3), `${samples.filter((x) => x.gameLayers !== 3).length} замеров без слоёв`);
   fs.writeFileSync(`${out}/soak-${key}.json`, JSON.stringify({ summary, samples }, null, 1));
   await page.screenshot({ path: `${out}/soak-${key}-end.png` });

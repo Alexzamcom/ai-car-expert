@@ -18,9 +18,13 @@ const PLACES = [
 const browser = await chromium.launch();
 const report = [];
 for (const [key, name, lat, lon] of PLACES) {
-  for (const look of key === 'dnipro-park' ? ['game'] : ['game', 'normal']) {
+  for (const look of key === 'dnipro-park' ? ['game', 'game-night'] : ['game', 'game-night', 'normal']) {
     const ctx = await browser.newContext({ viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 1, geolocation: { latitude: lat, longitude: lon, accuracy: 8 }, permissions: ['geolocation'], serviceWorkers: 'block' });
-    await ctx.addInitScript((lk) => localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre', mapEngineExplicit: true, mapLook: lk, theme: 'day' })), look);
+    // Ночь — та же «Игровая 3D» с ночной темой. Ядер как у iPad/iPhone/Pixel (≥ 6): полный вариант с фонарями.
+    await ctx.addInitScript((lk) => {
+      Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+      localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre', mapEngineExplicit: true, mapLook: lk === 'normal' ? 'normal' : 'game', theme: lk === 'game-night' ? 'night' : 'day' }));
+    }, look);
     const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(String(e)));
@@ -33,7 +37,7 @@ for (const [key, name, lat, lon] of PLACES) {
     const info = await page.evaluate(() => {
       const m = window.__aceMap.map;
       const q = (id) => (m.getLayer(id) ? m.queryRenderedFeatures({ layers: [id] }).length : -1);
-      return { buildings: q('game-buildings'), roofs: q('game-roofs'), trees: Math.max(0, q('game-trees')) + Math.max(0, q('game-trees-grass')) + Math.max(0, q('game-trees-wood')), look: window.__aceMap.state().look, treeIcon: m.hasImage('game-tree') };
+      return { buildings: q('game-buildings'), roofs: q('game-roofs'), trees: Math.max(0, q('game-trees')) + Math.max(0, q('game-trees-grass')) + Math.max(0, q('game-trees-wood')), lamps: q('game-lamps'), look: window.__aceMap.state().look, palette: window.__aceMap.state().palette, windows: window.__aceMap.state().windows, images: ['game-tree', 'game-tree-night', 'game-lamp', 'game-win-0'].filter((i) => m.hasImage(i)) };
     });
     // Плавность: поворот камеры на 90° за 6 с (программный WebGL в CI — ориентировочно, устройство быстрее).
     const fps = await page.evaluate(

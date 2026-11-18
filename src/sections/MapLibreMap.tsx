@@ -7,7 +7,7 @@ import { useStore } from '../lib/store';
 import { geoStore, navStore, poiStore, pickStore, pickPoint, selectRoute, addStop, placeFromPoi, readLastPos, navLang } from '../lib/nav';
 import { settingsStore, toast } from '../lib/state';
 import { themeStore, THEMES } from '../lib/theme';
-import { DEFAULT_STYLE_URL, paletteTransform, GAME_TREE, treeImage } from '../lib/mapStyle';
+import { DEFAULT_STYLE_URL, paletteTransform, gameImage, type MapPalette } from '../lib/mapStyle';
 import { carSvg, unwrapAngle, CAR_COLORS } from '../lib/carMarker';
 import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
 import { autoZoom, lookAheadOffset } from '../lib/camera';
@@ -90,7 +90,16 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const start = readLastPos() ?? DEFAULT_CENTER;
       const styleUrl = DEFAULT_STYLE_URL;
       // Палитра: «Игровая 3D» — всегда светлая пастельная; обычная карта — день/ночь по теме.
-      const palette = (): 'day' | 'night' | 'game' => (settingsStore.get().mapLook === 'game' ? 'game' : themeStore.get().active === 'night' ? 'night' : 'day');
+      // «Игровая 3D» — тоже день/ночь по той же теме (авто по солнцу или вручную): светлая миниатюра или ночной город.
+      const palette = (): MapPalette => {
+        const dark = themeStore.get().active === 'night';
+        if (settingsStore.get().mapLook === 'game') return dark ? 'game-night' : 'game';
+        return dark ? 'night' : 'day';
+      };
+      // Слабое устройство (мало ядер) — ночью без пятен света фонарей; окна, свечение дорог и фары остаются.
+      const lite = (navigator.hardwareConcurrency ?? 8) <= 4;
+      const styleOf = (p: MapPalette) => ({ diff: false, transformStyle: paletteTransform(p, { lite }) });
+      const LABEL: Record<MapPalette, string> = { day: 'день', night: 'ночная палитра', hud: 'HUD', game: 'игровая 3D', 'game-night': 'игровая 3D, ночь' };
       const isGame = () => settingsStore.get().mapLook === 'game';
       let map: MlMap;
       try {
@@ -142,14 +151,15 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const styleTimer = setTimeout(() => !styleLoaded && fail('сервер карты не отвечает'), 25_000);
       cleanups.push(() => clearTimeout(styleTimer));
       if (palette() !== 'day') {
-        mapDiag.setStyle(`${palette() === 'game' ? 'игровая 3D' : 'ночная палитра'} при запуске`);
-        map.setStyle(styleUrl, { diff: false, transformStyle: paletteTransform(palette()) });
+        mapDiag.setStyle(`${LABEL[palette()]} при запуске`);
+        map.setStyle(styleUrl, styleOf(palette()));
       }
       // Иконка «игрушечного» дерева — рисуется в коде, когда стиль её запросит (без сторонних изображений).
+      // Деревья, окна и фонари — рисуются в коде, когда стиль их запросит (без сторонних изображений).
       map.on('styleimagemissing', (e: { id: string }) => {
-        if (e.id !== GAME_TREE || map.hasImage(GAME_TREE)) return;
-        const img = treeImage(2);
-        if (img) map.addImage(GAME_TREE, img, { pixelRatio: 2 });
+        if (!e.id.startsWith('game-') || map.hasImage(e.id)) return;
+        const img = gameImage(e.id);
+        if (img) map.addImage(e.id, img, { pixelRatio: 2 });
       });
       mapRef.current = map;
 
@@ -178,7 +188,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (palette() === appliedPalette) return;
         appliedPalette = palette();
         mapDiag.setStyle(`${why} → ${appliedPalette}`);
-        map.setStyle(styleUrl, { diff: false, transformStyle: paletteTransform(appliedPalette) });
+        map.setStyle(styleUrl, styleOf(appliedPalette));
         camera.current(true);
       };
       cleanups.push(themeStore.subscribe(() => restyle('тема')), settingsStore.subscribe(() => restyle('вид карты')));
@@ -255,7 +265,11 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       let carNow: { lon: number; lat: number; heading: number } | null = null;
       const car3d = createCar3dLayer(
         () => (carNow ? { ...carNow, color: hexToRgb(CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
-        { sizePx: () => Math.min(76, Math.max(50, Math.min(innerWidth, innerHeight) * 0.095)) },
+        {
+          sizePx: () => Math.min(76, Math.max(50, Math.min(innerWidth, innerHeight) * 0.095)),
+          // Фары и задние огни — только в ночной «Игровой 3D».
+          night: () => appliedPalette === 'game-night',
+        },
       );
       const carEl = document.createElement('div');
       carEl.className = 'ml-car';
@@ -494,6 +508,9 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             display: (({ mode, lineId, shift, lat, lon, reason }) => ({ mode, lineId, shift, lat, lon, reason }))(displayStore.get()),
             look: settingsStore.get().mapLook,
             gameLayers: ['game-buildings', 'game-roofs', 'game-trees'].filter((id) => !!map.getLayer(id)),
+            palette: appliedPalette,
+            nightLayers: ['game-road-glow', 'game-lamps'].filter((id) => !!map.getLayer(id)),
+            windows: !!map.getLayer('game-buildings') && !!map.getPaintProperty('game-buildings', 'fill-extrusion-pattern'),
             styleReady: !!(map as unknown as { style?: { _loaded?: boolean } }).style?._loaded,
             raw: { lat: geoStore.get().lat, lon: geoStore.get().lon },
             accuracyCircle: accShown,

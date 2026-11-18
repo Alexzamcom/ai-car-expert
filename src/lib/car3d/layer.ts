@@ -24,7 +24,7 @@ void main(){ vNor = aNor; vMat = aMat; vPos = aPos; gl_Position = uMvp * vec4(aP
 const FS = `
 precision mediump float;
 varying vec3 vNor; varying float vMat; varying vec3 vPos;
-uniform vec3 uBody; uniform vec4 uMats[8]; uniform vec3 uView;
+uniform vec3 uBody; uniform vec4 uMats[8]; uniform vec3 uView; uniform float uNight;
 vec3 env(vec3 r){
   vec3 sky = mix(vec3(0.62, 0.70, 0.80), vec3(0.95, 0.97, 1.0), smoothstep(0.0, 0.8, r.z));
   vec3 ground = vec3(0.16, 0.17, 0.19);
@@ -57,7 +57,7 @@ void main(){
     }
   }
   // Фары и фонари светятся.
-  if (mc.a > 0.5) { gl_FragColor = vec4(min(base * 1.15 + 0.08, 1.0), 1.0); return; }
+  if (mc.a > 0.5) { gl_FragColor = vec4(min(base * (1.15 + 0.35 * uNight) + 0.08, 1.0), 1.0); return; }
   vec3 V = normalize(uView);
   vec3 Lk = normalize(vec3(-0.35, -0.45, 0.82));
   vec3 Lf = normalize(vec3(0.6, 0.3, 0.5));
@@ -84,6 +84,8 @@ void main(){
   } else {
     col = base * (0.45 + 0.55 * diff) * ao + pow(max(dot(n, H), 0.0), 16.0) * 0.06;
   }
+  // Ночью кузов чуть темнее и холоднее (как под лунным светом), но остаётся хорошо заметным; фары — ярче.
+  col = mix(col, col * vec3(0.72, 0.78, 0.92), uNight);
   gl_FragColor = vec4(col, 1.0);
 }`;
 
@@ -99,6 +101,30 @@ void main(){
   float soft = 1.0 - smoothstep(-0.35, 0.6, box);
   float contact = 1.0 - smoothstep(-0.32, 0.02, box);
   gl_FragColor = vec4(0.0, 0.0, 0.0, uAlpha * (0.55 * soft + 0.45 * contact));
+}`;
+
+/* Ночь («Игровая 3D»): свет фар и задних огней на земле — плоские прямоугольники в координатах машинки
+   (поворачиваются вместе с ней), мягкое аддитивное свечение без расчёта освещения сцены. */
+const GLOW_VS = `
+attribute vec2 aUv; uniform mat4 uMvp; uniform vec4 uRect; varying vec2 vUv;
+void main(){ vUv = aUv * 0.5 + 0.5; vec2 p = mix(uRect.xy, uRect.zw, vUv); gl_Position = uMvp * vec4(p, 0.03, 1.0); }`;
+const GLOW_FS = `
+precision mediump float; varying vec2 vUv; uniform float uKind; uniform float uAlpha;
+void main(){
+  float x = vUv.x * 2.0 - 1.0; // поперёк машинки −1…1
+  float t = vUv.y;             // вдоль: фары — от бампера вперёд (0→1), огни — от кормы назад (1→0)
+  if (uKind < 0.5) {
+    // Ближний свет: два луча расходятся и сливаются, к краю пятна гаснут.
+    float spread = 0.3 + 0.75 * t;
+    float beam = max(1.0 - smoothstep(0.1 * spread, 0.7 * spread, abs(x - 0.3 * (1.0 - t))),
+                     1.0 - smoothstep(0.1 * spread, 0.7 * spread, abs(x + 0.3 * (1.0 - t))));
+    float a = beam * pow(1.0 - t, 1.25) * smoothstep(0.0, 0.05, t);
+    gl_FragColor = vec4(vec3(1.0, 0.9, 0.68) * a * uAlpha, 1.0);
+  } else {
+    // Задние огни: узкое красное свечение за кормой.
+    float a = (1.0 - smoothstep(0.35, 1.0, abs(x))) * pow(t, 2.2);
+    gl_FragColor = vec4(vec3(1.0, 0.12, 0.08) * a * uAlpha, 1.0);
+  }
 }`;
 
 function compile(gl: WebGLRenderingContext, vs: string, fs: string) {
@@ -167,12 +193,16 @@ export interface Car3dLayer extends CustomLayerInterface {
   failed: boolean;
 }
 
-export function createCar3dLayer(get: () => Car3dState | null, opts: { model?: CarModelId; sizePx?: () => number; onError?: (e: unknown) => void } = {}): Car3dLayer {
+export function createCar3dLayer(
+  get: () => Car3dState | null,
+  opts: { model?: CarModelId; sizePx?: () => number; onError?: (e: unknown) => void; night?: () => boolean } = {},
+): Car3dLayer {
   const mesh: CarMesh = CAR_MODELS[opts.model ?? 'ev'].build();
   const count = mesh.positions.length / 3;
   let map: MlMap | null = null;
   let prog: WebGLProgram | null = null;
   let shadow: WebGLProgram | null = null;
+  let glow: WebGLProgram | null = null;
   let vbo: WebGLBuffer | null = null;
   let sbo: WebGLBuffer | null = null;
   const mats = new Float32Array(Object.keys(MAT_COLOR).flatMap((k) => MAT_COLOR[Number(k)]));
@@ -188,6 +218,7 @@ export function createCar3dLayer(get: () => Car3dState | null, opts: { model?: C
         const g = gl as WebGLRenderingContext;
         prog = compile(g, VS, FS);
         shadow = compile(g, SHADOW_VS, SHADOW_FS);
+        glow = compile(g, GLOW_VS, GLOW_FS);
         const data = new Float32Array(count * 7);
         for (let i = 0; i < count; i++) {
           data.set(mesh.positions.subarray(i * 3, i * 3 + 3), i * 7);
@@ -233,6 +264,27 @@ export function createCar3dLayer(get: () => Car3dState | null, opts: { model?: C
       g.vertexAttribPointer(aUv, 2, g.FLOAT, false, 8, 0);
       g.drawArrays(g.TRIANGLES, 0, 6);
       g.disableVertexAttribArray(aUv);
+      const night = !!opts.night?.() && !!glow;
+      if (night && glow) {
+        // Свет фар (~9 м вперёд от бампера, расходится до ±3.4 м) и красные огни за кормой — аддитивно.
+        g.useProgram(glow);
+        g.blendFunc(g.ONE, g.ONE);
+        g.uniformMatrix4fv(g.getUniformLocation(glow, 'uMvp'), false, mvp);
+        const aG = g.getAttribLocation(glow, 'aUv');
+        g.enableVertexAttribArray(aG);
+        g.vertexAttribPointer(aG, 2, g.FLOAT, false, 8, 0);
+        for (const [kind, rect, alpha] of [
+          [0, [-3.4, 2.2, 3.4, 11.5], 0.7],
+          [1, [-1.1, -3.6, 1.1, -2.25], 0.5],
+        ] as const) {
+          g.uniform1f(g.getUniformLocation(glow, 'uKind'), kind);
+          g.uniform4fv(g.getUniformLocation(glow, 'uRect'), rect as unknown as number[]);
+          g.uniform1f(g.getUniformLocation(glow, 'uAlpha'), alpha);
+          g.drawArrays(g.TRIANGLES, 0, 6);
+        }
+        g.disableVertexAttribArray(aG);
+        g.blendFunc(g.SRC_ALPHA, g.ONE_MINUS_SRC_ALPHA);
+      }
       // Кузов
       g.disable(g.BLEND);
       g.enable(g.DEPTH_TEST);
@@ -243,6 +295,7 @@ export function createCar3dLayer(get: () => Car3dState | null, opts: { model?: C
       g.uniform3fv(g.getUniformLocation(prog, 'uBody'), st.color);
       g.uniform4fv(g.getUniformLocation(prog, 'uMats'), mats);
       g.uniform3fv(g.getUniformLocation(prog, 'uView'), viewDir(map.getBearing(), map.getPitch(), st.heading));
+      g.uniform1f(g.getUniformLocation(prog, 'uNight'), night ? 1 : 0);
       g.bindBuffer(g.ARRAY_BUFFER, vbo);
       const aPos = g.getAttribLocation(prog, 'aPos');
       const aNor = g.getAttribLocation(prog, 'aNor');
@@ -260,6 +313,7 @@ export function createCar3dLayer(get: () => Car3dState | null, opts: { model?: C
       if (sbo) g.deleteBuffer(sbo);
       if (prog) g.deleteProgram(prog);
       if (shadow) g.deleteProgram(shadow);
+      if (glow) g.deleteProgram(glow);
       map = null;
     },
   };
