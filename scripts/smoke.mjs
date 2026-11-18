@@ -373,7 +373,14 @@ async function checkHud(page, ctx, name, slug, full) {
       }
       return bad;
     });
-  const mode = (label) => page.evaluate(() => document.querySelector('.hud-stage').click()).then(() => page.click(`.hud-chip:has-text("${label}")`));
+  // Режим HUD: касание экрана открывает панель, затем кнопка с точным названием. Нажатия — через DOM: при медленном
+  // WebGL (живая карта в CI) Playwright может не дождаться «неподвижности» элемента.
+  const mode = async (label) => {
+    await page.evaluate(() => document.querySelector('.hud-stage')?.click());
+    await page.waitForSelector('.hud-chip', { timeout: 10000 });
+    await page.evaluate((l) => [...document.querySelectorAll('.hud-chip')].find((b) => b.textContent.trim() === l)?.click(), label);
+    await page.waitForFunction((l) => document.querySelector(`.hud[data-mode]`)?.dataset.mode === { 'Маршрут': 'route', 'Маршрут + скорость': 'route-speed', 'Полная карта': 'map', 'Минимальный': 'minimal' }[l], label, { timeout: 10000 }).catch(() => {});
+  };
   await page.click('.guide-hud');
   await page.waitForSelector('.hud-warning', { timeout: 4000 }).catch(() => {});
   check(`HUD (${name}): при первом включении — предупреждение о безопасности`, await page.locator('.hud-warning').isVisible().catch(() => false));
