@@ -23,8 +23,39 @@ export const HUD_COLORS = {
 } as const;
 export type HudColor = keyof typeof HUD_COLORS;
 
+/** Палитра HUD: «Авто» — ночью существующая (ночная) палитра, днём — дневная; «Дневной» — всегда дневная; «Ручной» — своя. */
+export type HudLook = 'auto' | 'day' | 'manual';
+export const HUD_LOOKS: { id: HudLook; label: string; hint: string }[] = [
+  { id: 'auto', label: 'Авто', hint: 'Ночью — ваша обычная палитра HUD, днём — дневная (по той же теме, что и приложение)' },
+  { id: 'day', label: 'Дневной', hint: 'Всегда дневная: белые цифры, жёлтые стрелки, полная яркость, крупнее' },
+  { id: 'manual', label: 'Ручной', hint: 'Свои цвета, размеры и яркость — в любое время суток' },
+];
+
+/** Ручная палитра: цвета цифр и указаний, размеры, яркость. */
+export interface HudManual {
+  /** Цвет скорости и других цифр (расстояние, время прибытия, остаток). */
+  digits: string;
+  /** Цвет стрелок, линии маршрута и текста указаний. */
+  arrows: string;
+  /** Размер цифр 0.7…1.8. */
+  digitsScale: number;
+  /** Размер стрелок и указаний 0.7…1.8. */
+  arrowsScale: number;
+  /** Яркость графических элементов 0.3…1. */
+  brightness: number;
+}
+export const DEFAULT_HUD_MANUAL: HudManual = { digits: '#f2f4f7', arrows: '#3ee6ff', digitsScale: 1, arrowsScale: 1, brightness: 0.9 };
+/** Готовые цвета для ручного режима (плюс любой свой — через выбор цвета). */
+export const HUD_SWATCHES = ['#f2f4f7', '#3ee6ff', '#39ff88', '#ffe14a', '#ffae3a', '#ff5a5a', '#ff6bf0', '#8fa8ff'];
+/** Дневная палитра: в отражении днём лучше всего видны белые цифры и жёлтые указания на полной яркости. */
+export const HUD_DAY = { digits: '#ffffff', arrows: '#ffe14a', brightness: 1, minScale: 1.15 } as const;
+
 export interface HudSettings {
   mode: HudMode;
+  /** Палитра: авто / дневная / ручная. */
+  look: HudLook;
+  /** Значения ручной палитры (сохраняются отдельно — переключение режимов их не теряет). */
+  manual: HudManual;
   mirror: boolean;
   color: HudColor;
   /** Яркость оформления 0.3…1 (системную яркость iOS веб-приложение менять не может). */
@@ -41,6 +72,8 @@ export interface HudSettings {
 
 export const DEFAULT_HUD: HudSettings = {
   mode: 'route',
+  look: 'auto',
+  manual: DEFAULT_HUD_MANUAL,
   mirror: true,
   color: 'cyan',
   brightness: 0.85,
@@ -50,6 +83,46 @@ export const DEFAULT_HUD: HudSettings = {
   showEta: true,
   warned: false,
 };
+
+/** Итоговое оформление HUD сейчас: цвета, размеры, яркость, контраст. */
+export interface HudAppearance {
+  palette: 'night' | 'day' | 'manual';
+  digits: string;
+  arrows: string;
+  digitsScale: number;
+  arrowsScale: number;
+  brightness: number;
+  contrast: HudSettings['contrast'];
+}
+
+const clamp = (v: number, lo: number, hi: number, d: number) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
+const hex = (c: unknown, d: string) => (typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c : d);
+
+/**
+ * Оформление по палитре и времени суток (dark — ночная тема приложения).
+ * Ночная палитра — ровно прежняя: один цвет, яркость, масштаб и контраст из настроек (не меняется этой функцией).
+ */
+export function hudAppearance(s: HudSettings, dark: boolean): HudAppearance {
+  const look = s.look ?? 'auto';
+  if (look === 'manual') {
+    const m = { ...DEFAULT_HUD_MANUAL, ...(s.manual ?? {}) };
+    return {
+      palette: 'manual',
+      digits: hex(m.digits, DEFAULT_HUD_MANUAL.digits),
+      arrows: hex(m.arrows, DEFAULT_HUD_MANUAL.arrows),
+      digitsScale: clamp(m.digitsScale, 0.7, 1.8, 1),
+      arrowsScale: clamp(m.arrowsScale, 0.7, 1.8, 1),
+      brightness: clamp(m.brightness, 0.3, 1, 0.9),
+      contrast: s.contrast,
+    };
+  }
+  if (look === 'auto' && dark) {
+    const c = HUD_COLORS[s.color]?.[1] ?? HUD_COLORS.cyan[1];
+    return { palette: 'night', digits: c, arrows: c, digitsScale: s.scale, arrowsScale: s.scale, brightness: s.brightness, contrast: s.contrast };
+  }
+  const k = Math.max(s.scale, HUD_DAY.minScale);
+  return { palette: 'day', digits: HUD_DAY.digits, arrows: HUD_DAY.arrows, digitsScale: k, arrowsScale: k, brightness: HUD_DAY.brightness, contrast: 'high' };
+}
 
 /** Показывать ли скорость в режиме. В «Маршрут» скорость скрыта по замыслу; в остальных — по настройке. */
 export function hudShowsSpeed(mode: HudMode, s: Pick<HudSettings, 'showSpeed'>) {
