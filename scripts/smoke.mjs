@@ -344,7 +344,8 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   await page.waitForFunction(() => window.__aceMap.state().pitch < 1, null, { timeout: 8000 }).catch(() => {});
   s0 = await st();
   check(`MapLibre (${name}): «Север сверху»`, d(s0.bearing, 0) < 2 && s0.pitch < 2, JSON.stringify({ bearing: s0.bearing, pitch: s0.pitch }));
-  await page.click('.guide-cam:not(.guide-hud)');
+  // Нажатие через DOM: на медленном программном WebGL (iPad в CI) ожидание «готовности» кнопки может не наступить за 30 с.
+  await page.evaluate(() => document.querySelector('.guide-cam:not(.guide-hud)')?.click());
   await page.waitForFunction(() => window.__aceMap.state().pitch > 40, null, { timeout: 8000 }).catch(() => {});
   // Поворот двумя пальцами → свободный обзор → «К машине»
   const cdp2 = await ctx.newCDPSession(page);

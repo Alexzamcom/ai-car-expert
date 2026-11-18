@@ -246,8 +246,9 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           return;
         }
         const cut = Math.max(0, shownCut(now) - 2); // чуть позади центра машинки — линия уходит под неё
-        // Не чаще 5 раз в секунду и только при заметном сдвиге — без лишней работы карты.
-        if (!force && routeShown === s.route && routeShownGuiding && (now - cutSentAt < 200 || Math.abs(cut - cutSent) < 1)) return;
+        // Не чаще ~3 раз в секунду и при сдвиге от 6 м: машинка на экране крупнее этого шага (≈ 50 м при обычном масштабе),
+        // поэтому граница всё равно выглядит плавной, а карта не делает лишней работы.
+        if (!force && routeShown === s.route && routeShownGuiding && (now - cutSentAt < 300 || Math.abs(cut - cutSent) < 6)) return;
         const data = line(remainingCoords(s.route!.coords, trimCum, cut));
         src.setData(data);
         routeData = data as typeof routeData;
