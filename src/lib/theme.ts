@@ -218,11 +218,19 @@ export function applyTheme(name: ThemeName, animate: boolean) {
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEMES[name].bg);
 }
 
+/** Изменилась ли тема по существу: палитра, режим, причина или время следующей смены больше чем на минуту. */
+export function themeChanged(prev: ThemeState, next: ThemeState): boolean {
+  const nextMoved = (prev.next == null) !== (next.next == null) || prev.next?.to !== next.next?.to || Math.abs((prev.next?.at ?? 0) - (next.next?.at ?? 0)) > 60_000;
+  return prev.active !== next.active || prev.mode !== next.mode || prev.reason !== next.reason || nextMoved;
+}
+
 export function evaluateTheme(animate = true) {
   const mode = settingsStore.get().theme;
   const next = computeTheme(mode, new Date(), place(), systemDarkQuery()?.matches ?? true);
   const prev = themeStore.get();
-  if (prev.active !== next.active || prev.mode !== next.mode || prev.reason !== next.reason || prev.next?.at !== next.next?.at) {
+  // Время восхода/заката зависит от точных координат: сдвиг на метры меняет его на миллисекунды. Раньше это считалось
+  // «сменой темы» на каждой точке GPS, и карта MapLibre перезагружала стиль раз в 1–2 с (мерцание). Меньше минуты — не смена.
+  if (themeChanged(prev, next)) {
     themeStore.set(next);
   }
   if (document.documentElement.dataset.theme !== next.active) applyTheme(next.active, animate);

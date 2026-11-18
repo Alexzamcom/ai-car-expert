@@ -105,3 +105,37 @@ jobs:
           name: smoke-live
           path: smoke-live
           if-no-files-found: ignore
+
+  # Длительный тест опубликованной версии: живые тайлы OpenFreeMap и сервер маршрутов, 15 минут на трёх устройствах.
+  soak-live:
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Ожидание публикации
+        run: |
+          URL="$(echo "$SITE_URL" | tr '[:upper:]' '[:lower:]')"
+          echo "SITE_URL=$URL" >> "$GITHUB_ENV"
+          for i in $(seq 1 60); do
+            live=$(curl -s "${URL}version.json?nocache=$i" | grep -o '"commit":"[0-9a-f]*"' | cut -d'"' -f4 || true)
+            if [ "$live" = "$GITHUB_SHA" ]; then exit 0; fi
+            sleep 10
+          done
+          exit 1
+      - name: Длительный тест MapLibre (15 мин, опубликованная версия)
+        run: |
+          npm i --no-save playwright@1.49.1
+          npx playwright install --with-deps chromium
+          node scripts/soak.mjs "$SITE_URL" soak-live --minutes=15
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soak-live
+          path: soak-live
+          if-no-files-found: ignore

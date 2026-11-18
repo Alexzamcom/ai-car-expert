@@ -114,13 +114,59 @@ describe('Привязка к дороге', () => {
     for (let t = 0; t < 5; t++) m.update(fix(0, t * 15, t, { speed: 15 }), [a]);
     const last = 4000;
     expect(m.predict(last + 1000)).toBeNull(); // ещё не потеря
-    const p2 = m.predict(last + 2000)!;
-    const p3 = m.predict(last + 3500)!;
+    const p2 = m.predict(last + 1600)!;
+    const p3 = m.predict(last + 1950)!;
     expect(p2.mode).toBe('predicted');
-    expect(p2.lat).toBeGreaterThan(P(0, 60).lat + 25 / 111_320); // продвинулись вперёд ~30 м
+    expect(p2.lat).toBeGreaterThan(P(0, 60).lat + 20 / 111_320); // продвинулись вперёд ~24 м
     expect(p3.accuracy).toBeGreaterThan(p2.accuracy);
     expect(offLine(p3, a)).toBeLessThan(1);
-    expect(m.predict(last + 6000)).toBeNull(); // не дольше 4 с
+    expect(m.predict(last + 2600)).toBeNull(); // не дольше 2 с
+  });
+
+  it('точки пачкой (0,1 с между ними) не дают «433 км/ч»: прогноз не уносит машинку дальше 40 м', () => {
+    const a = line('a', [[0, -500], [0, 1500]]);
+    const m = new Matcher();
+    for (let t = 0; t < 5; t++) m.update(fix(0, t * 12, t, { speed: null }), [a]);
+    // после паузы — две точки почти одновременно, вторая на 12 м дальше
+    m.update(fix(0, 60, 6, { speed: null }), [a]);
+    m.update({ ...fix(0, 72, 6, { speed: null }), t: 6100 }, [a]);
+    const p = m.predict(6100 + 1900);
+    if (p) expect(p.shift).toBeLessThanOrEqual(40);
+    if (p) expect(p.reason).not.toMatch(/\d{3} км\/ч/);
+  });
+
+  it('на малой скорости (≤ 30 км/ч) прогноза нет: на стоянке iOS может не присылать точки', () => {
+    const a = line('a', [[0, -500], [0, 1500]]);
+    const m = new Matcher();
+    for (let t = 0; t < 5; t++) m.update(fix(0, t * 5, t, { speed: 5 }), [a]);
+    expect(m.predict(4000 + 1800)).toBeNull();
+  });
+
+  it('стоим давно (здание, парковка): к дороге в 15 м не привязываем, причина записана', () => {
+    const a = line('a', [[0, -500], [0, 500]]);
+    const m = new Matcher();
+    let r;
+    for (let t = 0; t < 40; t++) r = m.update(fix(15, 0, t, { speed: 0, heading: null, accuracy: 25 }), [a]);
+    expect(r!.mode).toBe('raw');
+    expect(r!.reason).toMatch(/стоим/);
+  });
+
+  it('дорога дальше 20 м — без привязки даже при плохой точности', () => {
+    const a = line('a', [[0, -500], [0, 500]]);
+    const m = new Matcher();
+    const r = m.update(fix(28, 0, 0, { accuracy: 40 }), [a]);
+    expect(r.mode).toBe('raw');
+    expect(r.reason).toMatch(/без привязки/);
+  });
+
+  it('причина выбора дороги и смещение — для диагностики', () => {
+    const a = line('a', [[0, -500], [0, 500]], { cls: 'primary' });
+    const b = line('b', [[30, -500], [30, 500]]);
+    const m = new Matcher();
+    const r = m.update(fix(4, 0, 0), [a, b]);
+    expect(r.reason).toMatch(/^a \(primary\): 4 м/);
+    expect(r.reason).toMatch(/вторая b/);
+    expect(r.shift).toBeCloseTo(4, 0);
   });
 
   it('стоим — прогноза нет', () => {

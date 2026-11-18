@@ -20,6 +20,7 @@ import { recordFix } from './trip';
 import { L } from './i18n';
 import { Locator, type FixSource, type GeoErrorInfo } from './geo/locator';
 import { updateDisplay, resetDisplay } from './matching/display';
+import { recordArrival } from './diag';
 import { searchPlaces as geoSearch, reverseGeocode, coordsPlace, type Place } from './geo/geocode';
 
 export type { Place };
@@ -103,7 +104,12 @@ export function acceptFix(prev: (RawFix & { at: number }) | null, fix: RawFix, n
   if (prevFresh && prev.accuracy <= 100 && fix.accuracy > Math.max(3 * prev.accuracy, 250)) return 'coarse';
   const dt = Math.max(1, (fix.timestamp - prev.timestamp) / 1000);
   const d = haversine(prev, fix);
-  if (prevFresh && d > 70 * dt + prev.accuracy + fix.accuracy + 50) return 'jump';
+  if (prevFresh && d > 70 * dt + prev.accuracy + fix.accuracy + 50) {
+    // Новая точка заметно точнее прежней (GPS после Wi-Fi/сети) — ошибалась, скорее всего, прежняя: принимаем,
+    // иначе точные точки отбрасывались бы до 30 с.
+    if (fix.accuracy <= 25 && fix.accuracy * 2 <= prev.accuracy) return 'accept';
+    return 'jump';
+  }
   return 'accept';
 }
 
@@ -260,6 +266,8 @@ export function routeSummary(): string {
 
 /** Последняя принятая точка (для фильтра) и точка, от которой считаем направление движения. */
 let acceptedFix: (RawFix & { at: number }) | null = null;
+/** Последняя отброшенная как «скачок» точка — если следующая с ней согласна, ошибалась прежняя принятая. */
+let lastJump: RawFix | null = null;
 let headingState: HeadingState = { heading: null, anchor: null, at: null };
 
 /** Направление маршрута в месте машины (отрезок не короче 10 м) — для проверки курса. */
@@ -300,7 +308,11 @@ export function guidanceUse(accuracy: number): 'full' | 'progress' | 'display' {
 
 /** Обработка точки GPS: фильтр, курс, состояние для карты и ведения. Экспортирована для тестов. */
 export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'high') {
-  const verdict = acceptFix(acceptedFix, fix, now);
+  let verdict = acceptFix(acceptedFix, fix, now);
+  // Две «невозможные» точки подряд согласны между собой — ошибочной была принятая раньше: переходим на новые.
+  if (verdict === 'jump' && lastJump && haversine(lastJump, fix) <= 70 * Math.max(1, (fix.timestamp - lastJump.timestamp) / 1000) + lastJump.accuracy + fix.accuracy + 30) verdict = 'accept';
+  lastJump = verdict === 'jump' ? fix : null;
+  recordArrival(verdict, now);
   if (verdict !== 'accept') {
     // Запасная менее точная точка рядом с точной — обычное дело, это не «слабый сигнал».
     if (verdict === 'coarse' && source !== 'high' && acceptedFix && now - acceptedFix.at < 10_000) return;
@@ -324,6 +336,7 @@ export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'hi
 export function __resetGeo() {
   lastPosSaved = 0;
   acceptedFix = null;
+  lastJump = null;
   headingState = { heading: null, anchor: null, at: null };
   locator?.stop();
   locator = null;

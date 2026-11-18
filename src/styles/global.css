@@ -1528,3 +1528,17 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .cam-label { position: absolute; bottom: 4px; right: 6px; font-size: 0.6rem; font-weight: 700; color: var(--accent); }
 .guide-cam { margin-right: -6px; }
 
+
+/* ---------- Временный диагностический режим карты и геопозиции ---------- */
+.diag-overlay {
+  position: absolute; left: 10px; bottom: calc(150px + var(--safe-b)); z-index: 30; max-width: min(460px, calc(100% - 90px));
+  font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); pointer-events: auto;
+}
+.diag-toggle { font: inherit; font-weight: 700; padding: 4px 8px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel); color: var(--text); }
+.diag-body { margin-top: 4px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line-2); background: color-mix(in srgb, var(--panel) 92%, transparent); max-height: 42vh; overflow: auto; }
+.diag-h { margin-top: 6px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.diag-reason { color: var(--muted); }
+.diag-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--panel); }
+.diag-dot-raw { background: var(--danger); }
+.diag-dot-car { background: var(--accent); }
+.diag-raw { width: 14px; height: 14px; border-radius: 50%; background: var(--danger); border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--line-2); pointer-events: none; }

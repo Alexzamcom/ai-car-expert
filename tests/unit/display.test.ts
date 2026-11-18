@@ -69,11 +69,11 @@ describe('Отображаемая позиция и решения ведени
     for (let m = 12; m <= 60; m += 12) fix(at(m), { speed: 12 });
     const raw = { ...geoStore.get() };
     const p0 = navStore.get().progress;
-    vi.setSystemTime(t + 2500); // 2,5 с без новых точек
+    vi.setSystemTime(t + 1900); // 1,9 с без новых точек
     __tickDisplay();
     const d = displayStore.get();
     expect(d.mode).toBe('predicted');
-    expect(distM(d as { lat: number; lon: number }, raw as { lat: number; lon: number })).toBeGreaterThan(15); // ~12 м/с × 2,5 с вперёд
+    expect(distM(d as { lat: number; lon: number }, raw as { lat: number; lon: number })).toBeGreaterThan(15); // ~12 м/с × 1,9 с вперёд
     expect(geoStore.get().lat).toBe(raw.lat);
     expect(navStore.get().progress).toBe(p0);
   });

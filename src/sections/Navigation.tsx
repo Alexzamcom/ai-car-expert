@@ -48,6 +48,8 @@ import { settingsStore, driveUiStore, setMinimal } from '../lib/state';
 import { startVoice } from '../lib/voice';
 import { openHud } from '../lib/hud';
 import { displayStore } from '../lib/matching/display';
+import { diagModeStore, mapDiag } from '../lib/diag';
+import { DiagOverlay } from './DiagOverlay';
 import { effectiveEngine, webglAvailable, mapRuntimeStore, engineFallback } from '../lib/mapEngine';
 import { stepText, stepIcon, fmtDistance, fmtDuration, haversine } from '../lib/routing';
 import { POI_CATEGORIES, type PoiCategory, type Poi } from '../lib/poi';
@@ -101,7 +103,7 @@ export function Navigation() {
   const themeOnly = useRef(false);
   const fitted = useRef<unknown>(null);
   const map = useRef<L.Map | null>(null);
-  const layers = useRef<{ me?: L.Marker; acc?: L.Circle; dest?: L.Marker; via?: L.Marker; pick?: L.Marker; route?: L.LayerGroup; poi?: L.LayerGroup }>({});
+  const layers = useRef<{ me?: L.Marker; acc?: L.Circle; raw?: L.CircleMarker; dest?: L.Marker; via?: L.Marker; pick?: L.Marker; route?: L.LayerGroup; poi?: L.LayerGroup }>({});
   const pick = useStore(pickStore);
   const geo = useStore(geoStore);
   const nav = useStore(navStore);
@@ -115,7 +117,10 @@ export function Navigation() {
   const carColor = settings.carColor;
   const runtime = useStore(mapRuntimeStore);
   const disp = useStore(displayStore);
+  const diag = useStore(diagModeStore);
   const engine = effectiveEngine(settings.mapEngine, runtime.fallback, webglAvailable());
+  // Диагностика: смена движка (в т. ч. резерв MapLibre → Leaflet) записывается в журнал событий карты.
+  useEffect(() => mapDiag.event(`движок: ${engine}${runtime.fallback ? ` (резерв: ${runtime.fallback})` : ''}`), [engine, runtime.fallback]);
   const mlApi = useRef<MapApi | null>(null);
   const ui = useStore(driveUiStore);
   const geoStatus = geoStatusText(geo);
@@ -243,6 +248,14 @@ export function Navigation() {
       l.acc?.remove();
       l.acc = undefined;
     }
+    // Диагностический режим: сырая точка GPS отдельным маркером.
+    if (diag.on) {
+      if (!l.raw) l.raw = L.circleMarker(raw, { radius: 7, color: '#fff', weight: 2, fillColor: getComputedStyle(document.documentElement).getPropertyValue('--danger').trim() || 'red', fillOpacity: 1, interactive: false }).addTo(m);
+      else l.raw.setLatLng(raw);
+    } else {
+      l.raw?.remove();
+      l.raw = undefined;
+    }
     const rot = l.me.getElement()?.querySelector<HTMLElement>('.car-rot');
     if (rot && shown.heading != null) {
       carAngle.current = unwrapAngle(carAngle.current, shown.heading);
@@ -268,7 +281,7 @@ export function Navigation() {
         else m.panTo(target, { animate: true, duration: 0.9, easeLinearity: 1, noMoveStart: true });
       }
     }
-  }, [geo.lat, geo.lon, geo.heading, geo.accuracy, disp.lat, disp.lon, disp.heading, follow, guiding, carColor, engine]);
+  }, [geo.lat, geo.lon, geo.heading, geo.accuracy, disp.lat, disp.lon, disp.heading, diag.on, follow, guiding, carColor, engine]);
 
   // Цвет машинки из настроек
   useEffect(() => {
@@ -640,6 +653,7 @@ export function Navigation() {
         </div>
 
         {/* Справа: управление картой */}
+        <DiagOverlay engine={engine} />
         <div className="map-controls">
           <VoiceToggle className="map-ctl voice-ctl" />
           {guiding && <HudButton className="map-ctl voice-ctl" />}

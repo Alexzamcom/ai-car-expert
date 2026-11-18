@@ -1,3 +1,4 @@
+import { diagModeStore } from '../lib/diag';
 import { mapRuntimeStore } from '../lib/mapEngine';
 import { hudSettingsStore, HUD_MODES, HUD_COLORS, openHud, type HudSettings, type HudColor } from '../lib/hud';
 import { useEffect, useState } from 'react';
@@ -821,6 +822,8 @@ function CarOnMapSettings() {
 /** Живые данные GPS: для проверки на устройстве, если машинка показывается не там. */
 function GpsDiagnostics() {
   const g = useStore(geoStore);
+  // Временный режим: на карте — сырая точка GPS отдельным маркером, панель с жизненным циклом карты и причиной привязки.
+  const diag = useStore(diagModeStore).on;
   const [, tick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 1000);
@@ -870,6 +873,9 @@ function GpsDiagnostics() {
         Настройки → Конфиденциальность → Службы геолокации).
       </p>
       <div className="toolbar">
+        <button type="button" className={`btn ${diag ? 'btn-primary' : ''}`} aria-pressed={diag} onClick={() => diagModeStore.set({ on: !diag })}>
+          <Icon name="gps" /> {diag ? 'Выключить диагностику на карте' : 'Диагностический режим на карте'}
+        </button>
         <button type="button" className="btn" onClick={() => { restartGeo(); toast('Запрашиваю свежую позицию', 'info'); }}>
           <Icon name="locate" /> Обновить позицию
         </button>
