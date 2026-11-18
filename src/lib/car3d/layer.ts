@@ -16,40 +16,90 @@ export interface Car3dState {
 const VS = `
 attribute vec3 aPos; attribute vec3 aNor; attribute float aMat;
 uniform mat4 uMvp;
-varying vec3 vNor; varying float vMat; varying float vZ;
-void main(){ vNor = aNor; vMat = aMat; vZ = aPos.z; gl_Position = uMvp * vec4(aPos, 1.0); }`;
+varying vec3 vNor; varying float vMat; varying vec3 vPos;
+void main(){ vNor = aNor; vMat = aMat; vPos = aPos; gl_Position = uMvp * vec4(aPos, 1.0); }`;
 
+/* Освещение в координатах модели: ключевой свет сзади-сверху-слева (машинка одинаково читается при любом курсе),
+   направление на камеру uView — из поворота и наклона карты; отражения — простое «небо/земля» по отражённому лучу. */
 const FS = `
 precision mediump float;
-varying vec3 vNor; varying float vMat; varying float vZ;
-uniform vec3 uBody; uniform vec4 uMats[7];
+varying vec3 vNor; varying float vMat; varying vec3 vPos;
+uniform vec3 uBody; uniform vec4 uMats[8]; uniform vec3 uView;
+vec3 env(vec3 r){
+  vec3 sky = mix(vec3(0.62, 0.70, 0.80), vec3(0.95, 0.97, 1.0), smoothstep(0.0, 0.8, r.z));
+  vec3 ground = vec3(0.16, 0.17, 0.19);
+  return mix(ground, sky, smoothstep(-0.15, 0.12, r.z));
+}
 void main(){
   vec3 n = normalize(vNor);
   int m = int(vMat + 0.5);
   vec4 mc = uMats[0];
-  for (int i = 1; i < 7; i++) if (i == m) mc = uMats[i];
+  for (int i = 1; i < 8; i++) if (i == m) mc = uMats[i];
   vec3 base = m == 0 ? uBody : mc.rgb;
-  if (mc.a > 0.5) { gl_FragColor = vec4(base, 1.0); return; }
-  // Свет в координатах модели: сзади-сверху-слева — машинка одинаково читается при любом курсе.
-  vec3 L = normalize(vec3(-0.35, -0.45, 0.82));
-  vec3 H = normalize(L + normalize(vec3(0.0, -0.6, 0.8)));
-  float diff = max(dot(n, L), 0.0);
-  float gloss = (m == 0 || m == 1) ? 1.0 : 0.25;
-  float spec = pow(max(dot(n, H), 0.0), 28.0) * 0.35 * gloss;
-  // Затенение снизу (у порогов темнее) — объём без дорогих эффектов.
-  float ao = mix(0.62, 1.0, smoothstep(0.3, 1.2, vZ));
-  vec3 col = base * (0.36 + 0.7 * diff) * ao + spec;
-  // Стёкла: отражение неба сверху.
-  if (m == 1) col += vec3(0.16, 0.2, 0.26) * max(n.z, 0.0);
+  // Светодиодные полосы рисуются по поверхности кузова (чётко при любой сетке): фонари сзади во всю ширину, фары спереди.
+  if (m == 0) {
+    if ((n.y < -0.35 && vPos.z > 0.855 && vPos.z < 0.905) || (vPos.y < -1.98 && abs(vPos.x) > 0.6 && vPos.z > 0.8 && vPos.z < 0.95 && n.y < 0.2)) { mc = uMats[5]; base = mc.rgb; }
+    else if (n.y > 0.3 && vPos.z > 0.712 && vPos.z < 0.742 && abs(vPos.x) < 0.88) { mc = uMats[4]; base = mc.rgb; }
+    else {
+      // Тёмные накладки: арки колёс (оси 1.42 и −1.40 м, радиус 0.37) и пороги.
+      float arch = min(length(vec2(vPos.y - 1.42, vPos.z - 0.37)), length(vec2(vPos.y + 1.40, vPos.z - 0.37)));
+      if ((arch < 0.5 && abs(n.x) > 0.25) || vPos.z < 0.42) { m = 6; mc = uMats[6]; base = mc.rgb; }
+    }
+  }
+  // Остекление: стойка D цвета кузова (наклонная граница), панорамная крыша — по нормали (плавные границы).
+  if (m == 1 || m == 7) {
+    if (vPos.y < -1.42 - 0.35 * (vPos.z - 1.05) && abs(n.x) > 0.5 && n.z < 0.8) { m = 0; base = uBody; mc = uMats[0]; }
+    else {
+      // Плавный переход стекло → панорамная крыша (без «ступенек» сетки).
+      float roof = smoothstep(0.78, 0.9, n.z);
+      base = mix(uMats[1].rgb, uMats[7].rgb, roof);
+      m = roof > 0.5 ? 7 : 1;
+    }
+  }
+  // Фары и фонари светятся.
+  if (mc.a > 0.5) { gl_FragColor = vec4(min(base * 1.15 + 0.08, 1.0), 1.0); return; }
+  vec3 V = normalize(uView);
+  vec3 Lk = normalize(vec3(-0.35, -0.45, 0.82));
+  vec3 Lf = normalize(vec3(0.6, 0.3, 0.5));
+  float diff = max(dot(n, Lk), 0.0) * 0.75 + max(dot(n, Lf), 0.0) * 0.25;
+  float hemi = 0.5 + 0.5 * n.z;
+  float ao = mix(0.55, 1.0, smoothstep(0.25, 1.05, vPos.z));
+  vec3 H = normalize(Lk + V);
+  float fres = pow(1.0 - max(dot(n, V), 0.0), 3.0);
+  vec3 R = reflect(-V, n);
+  vec3 col;
+  if (m == 0) {
+    // Кузов: краска + лак — мягкий блик и отражение неба по краям.
+    float spec = pow(max(dot(n, H), 0.0), 48.0) * 0.55;
+    col = base * (0.24 + 0.5 * diff + 0.16 * hemi) * ao;
+    col = mix(col, env(R) * 0.92, 0.06 + 0.3 * fres) + spec;
+  } else if (m == 1 || m == 7) {
+    // Стёкла и панорамная крыша: тёмные, с отражением неба.
+    float spec = pow(max(dot(n, H), 0.0), 80.0) * 0.9;
+    col = base * (0.5 + 0.5 * diff) + env(R) * (m == 7 ? 0.28 : 0.22) * (0.35 + 0.65 * fres) + spec;
+  } else if (m == 3) {
+    // Диски — металл.
+    float spec = pow(max(dot(n, H), 0.0), 30.0) * 0.6;
+    col = base * (0.35 + 0.5 * diff) + env(R) * 0.25 + spec;
+  } else {
+    col = base * (0.45 + 0.55 * diff) * ao + pow(max(dot(n, H), 0.0), 16.0) * 0.06;
+  }
   gl_FragColor = vec4(col, 1.0);
 }`;
 
 const SHADOW_VS = `
 attribute vec2 aUv; uniform mat4 uMvp; varying vec2 vUv;
-void main(){ vUv = aUv; gl_Position = uMvp * vec4(aUv.x * 1.55, aUv.y * 2.95, 0.02, 1.0); }`;
+void main(){ vUv = aUv; gl_Position = uMvp * vec4(aUv.x * 1.35, aUv.y * 2.75, 0.02, 1.0); }`;
+/* Мягкая тень: широкий полупрозрачный ореол + плотная контактная тень под колёсами. */
 const SHADOW_FS = `
 precision mediump float; varying vec2 vUv; uniform float uAlpha;
-void main(){ float d = length(vUv); gl_FragColor = vec4(0.0, 0.0, 0.0, uAlpha * (1.0 - smoothstep(0.25, 1.0, d))); }`;
+void main(){
+  vec2 q = abs(vUv);
+  float box = length(max(q - vec2(0.55, 0.7), 0.0)) + min(max(q.x - 0.55, q.y - 0.7), 0.0);
+  float soft = 1.0 - smoothstep(-0.35, 0.6, box);
+  float contact = 1.0 - smoothstep(-0.32, 0.02, box);
+  gl_FragColor = vec4(0.0, 0.0, 0.0, uAlpha * (0.55 * soft + 0.45 * contact));
+}`;
 
 function compile(gl: WebGLRenderingContext, vs: string, fs: string) {
   const sh = (type: number, src: string) => {
@@ -92,6 +142,21 @@ export function modelMatrix(mx: number, my: number, headingDeg: number, unit: nu
   return new Float32Array([c * unit, s * unit, 0, 0, s * unit, -c * unit, 0, 0, 0, 0, unit, 0, mx, my, 0, 1]);
 }
 
+/**
+ * Направление на камеру в координатах модели: камера сзади-сверху от центра карты по её повороту (bearing) и наклону.
+ * Модель: y — нос (курс heading), x — вправо, z — вверх.
+ */
+export function viewDir(bearingDeg: number, pitchDeg: number, headingDeg: number): [number, number, number] {
+  const b = (bearingDeg * Math.PI) / 180;
+  const p = (Math.max(pitchDeg, 1) * Math.PI) / 180;
+  // На камеру в осях восток/север/вверх.
+  const e = -Math.sin(b) * Math.sin(p);
+  const n = -Math.cos(b) * Math.sin(p);
+  const u = Math.cos(p);
+  const h = (headingDeg * Math.PI) / 180;
+  return [e * Math.cos(h) - n * Math.sin(h), e * Math.sin(h) + n * Math.cos(h), u];
+}
+
 export function hexToRgb(hex: string): [number, number, number] {
   const n = parseInt(hex.replace('#', ''), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
@@ -103,7 +168,7 @@ export interface Car3dLayer extends CustomLayerInterface {
 }
 
 export function createCar3dLayer(get: () => Car3dState | null, opts: { model?: CarModelId; sizePx?: () => number; onError?: (e: unknown) => void } = {}): Car3dLayer {
-  const mesh: CarMesh = CAR_MODELS[opts.model ?? 'suv'].build();
+  const mesh: CarMesh = CAR_MODELS[opts.model ?? 'ev'].build();
   const count = mesh.positions.length / 3;
   let map: MlMap | null = null;
   let prog: WebGLProgram | null = null;
@@ -177,6 +242,7 @@ export function createCar3dLayer(get: () => Car3dState | null, opts: { model?: C
       g.uniformMatrix4fv(g.getUniformLocation(prog, 'uMvp'), false, mvp);
       g.uniform3fv(g.getUniformLocation(prog, 'uBody'), st.color);
       g.uniform4fv(g.getUniformLocation(prog, 'uMats'), mats);
+      g.uniform3fv(g.getUniformLocation(prog, 'uView'), viewDir(map.getBearing(), map.getPitch(), st.heading));
       g.bindBuffer(g.ARRAY_BUFFER, vbo);
       const aPos = g.getAttribLocation(prog, 'aPos');
       const aNor = g.getAttribLocation(prog, 'aNor');
