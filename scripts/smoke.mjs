@@ -353,6 +353,9 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   await page.click('.dock [aria-label="Ещё разделы"]');
   await page.click('.more-item:has-text("Настройки")');
   // «Игровая 3D»: переключение во время ведения — один раз перезагружается стиль, машинка и маршрут на месте, камера круче.
+  // Тема «День» явно: при авто-теме в CI может быть ночь по солнцу (ночная игровая карта проверяется ниже отдельно).
+  await page.click('[aria-label="Тема оформления"] [role=radio]:has-text("День")');
+  await page.waitForFunction(() => window.__aceMap.state().palette === 'day' && window.__aceMap.state().styleReady, null, { timeout: 15000 }).catch(() => {});
   const before = await page.evaluate(() => window.__aceDiag.map().setStyles);
   await page.click('[aria-label="Вид карты"] [role=radio]:has-text("Игровая 3D")');
   await page.click('.page-back');
@@ -361,8 +364,27 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   const g = await page.evaluate(() => ({ ...window.__aceMap.state(), setStyles: window.__aceDiag.map().setStyles }));
   check(`MapLibre (${name}): «Игровая 3D» — объёмные здания, крыши, деревья; машинка, маршрут и наклон на месте; стиль загружен один раз`, g.look === 'game' && g.gameLayers.length === 3 && g.car3d && g.routePoints > 2 && g.pitch > 55 && g.setStyles - before === 1, JSON.stringify({ look: g.look, layers: g.gameLayers, car3d: g.car3d, route: g.routePoints, pitch: Math.round(g.pitch), setStyles: g.setStyles - before }));
   await page.screenshot({ path: `${out}/ml-${slug}-game.png` });
+  // Ночная «Игровая 3D»: ручная смена темы во время ведения — один setStyle, окна и свечение дорог, маршрут и машинка на месте.
+  const beforeNight = await page.evaluate(() => ({ setStyles: window.__aceDiag.map().setStyles, zoom: window.__aceMap.state().zoom }));
   await page.click('.dock [aria-label="Ещё разделы"]');
   await page.click('.more-item:has-text("Настройки")');
+  await page.click('[aria-label="Тема оформления"] [role=radio]:has-text("Ночь")');
+  await page.click('.page-back');
+  await page.waitForFunction(() => { const s = window.__aceMap.state(); return s.palette === 'game-night' && s.styleReady && s.windows && s.nightLayers.includes('game-road-glow') && s.car3d; }, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(2500);
+  const gn = await page.evaluate(() => ({ ...window.__aceMap.state(), setStyles: window.__aceDiag.map().setStyles }));
+  check(
+    `MapLibre (${name}): «Игровая 3D», ночь — окна, свечение дорог, фары; маршрут, машинка и масштаб на месте; стиль загружен один раз`,
+    gn.palette === 'game-night' && gn.windows && gn.nightLayers.includes('game-road-glow') && gn.gameLayers.length === 3 && gn.car3d && gn.routePoints > 2 && gn.pitch > 55 && gn.car && gn.car.y > 0.55 && gn.car.y < 0.92 && Math.abs(gn.zoom - beforeNight.zoom) < 1 && gn.setStyles - beforeNight.setStyles === 1,
+    JSON.stringify({ palette: gn.palette, windows: gn.windows, night: gn.nightLayers, car3d: gn.car3d, route: gn.routePoints, car: gn.car, zoom: [beforeNight.zoom, gn.zoom].map((z) => +z.toFixed(1)), setStyles: gn.setStyles - beforeNight.setStyles }),
+  );
+  await page.screenshot({ path: `${out}/ml-${slug}-game-night.png` });
+  await page.click('.dock [aria-label="Ещё разделы"]');
+  await page.click('.more-item:has-text("Настройки")');
+  await page.click('[aria-label="Тема оформления"] [role=radio]:has-text("День")');
+  await page.waitForFunction(() => window.__aceMap.state().palette === 'game' && window.__aceMap.state().nightLayers.length === 0, null, { timeout: 15000 }).catch(() => {});
+  check(`MapLibre (${name}): «Игровая 3D» — обратно день, ночных эффектов нет`, await page.evaluate(() => window.__aceMap.state().palette === 'game' && window.__aceMap.state().nightLayers.length === 0 && !window.__aceMap.state().windows));
+  await page.click('[aria-label="Тема оформления"] [role=radio]:has-text("Автоматически")');
   await page.click('[aria-label="Вид карты"] [role=radio]:has-text("Обычная карта")');
   await page.waitForFunction(() => window.__aceMap.state().look === 'normal' && window.__aceMap.state().gameLayers.length === 0, null, { timeout: 15000 }).catch(() => {});
   check(`MapLibre (${name}): возврат к обычной карте`, await page.evaluate(() => window.__aceMap.state().look === 'normal' && window.__aceMap.state().gameLayers.length === 0));

@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        look: [normal, game]
+        look: [normal, game, game-night]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
