@@ -93,7 +93,7 @@ jobs:
           for u in https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/v1/product-information/market-coverage \
                    https://docs.tomtom.com/traffic-api/documentation/tomtom-orbis-maps/v1/product-information/market-coverage \
                    https://docs.tomtom.com/routing-api/documentation/tomtom-maps/product-information/market-coverage; do
-            fetch "$u" 'grep:\|'
+            fetch "$u" all
           done
           for u in https://developer.tomtom.com/terms-and-conditions https://www.tomtom.com/legal/ \
                    https://developer.tomtom.com/legal https://www.tomtom.com/en_gb/legal/developer-terms/ \
