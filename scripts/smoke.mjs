@@ -246,6 +246,36 @@ async function checkLab(name, device) {
 }
 
 /* ---------- Основная навигация на движке MapLibre ---------- */
+/** Пройденная часть маршрута скрывается: едем по маршруту (тестовые данные) — линия начинается у машинки, позади её нет. */
+async function checkRouteTrim(page, ctx, name, slug) {
+  const c = JSON.parse(fixture('osrm-route.json')).routes[0].geometry.coordinates;
+  const at = (f) => ({ latitude: c[0][1] + (c[1][1] - c[0][1]) * f, longitude: c[0][0] + (c[1][0] - c[0][0]) * f, accuracy: 5 });
+  const m = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos((a.lat * Math.PI) / 180));
+  // ~40 м за 1,1 с (≈130 км/ч — в пределах фильтра скачков): по первому отрезку маршрута
+  for (let f = 0.1; f <= 0.61; f += 0.1) {
+    await ctx.setGeolocation(at(f));
+    await page.waitForTimeout(1100);
+  }
+  await page.waitForTimeout(1500);
+  const s1 = await page.evaluate(() => window.__aceMap.state());
+  const car = { lat: at(0.6).latitude, lon: at(0.6).longitude };
+  const first = s1.routeTrim.first ? { lat: s1.routeTrim.first[1], lon: s1.routeTrim.first[0] } : null;
+  const gap = first ? m(first, car) : Infinity;
+  check(
+    `MapLibre (${name}): пройденный участок скрыт — линия начинается у машинки`,
+    s1.routeTrim.cut > 120 && s1.routeTrim.cut < s1.routeTrim.total && gap < 45 && s1.routeTrim.shownPoints <= s1.routePoints,
+    JSON.stringify({ ...s1.routeTrim, gapM: Math.round(gap) }),
+  );
+  await page.screenshot({ path: `${out}/ml-${slug}-route-trim.png` });
+  // Стоим, GPS «гуляет» назад на ~15 м — граница не возвращается назад
+  for (const f of [0.57, 0.6, 0.56, 0.6]) {
+    await ctx.setGeolocation({ ...at(f), accuracy: 12 });
+    await page.waitForTimeout(1100);
+  }
+  const s2 = await page.evaluate(() => window.__aceMap.state());
+  check(`MapLibre (${name}): остановка и шум GPS — линия позади не «отрастает»`, s2.routeTrim.cut >= s1.routeTrim.cut, JSON.stringify({ before: s1.routeTrim.cut, after: s2.routeTrim.cut }));
+}
+
 async function checkMapLibreNav(name, device, { full = false } = {}) {
   // С --mock — без service worker: иначе он загружает настоящие тайлы в обход подмены сети и тест зависит от сети.
   const { ctx, page } = await newPage(device, MOCK ? { serviceWorkers: 'block' } : {}, 'maplibre');
@@ -287,6 +317,8 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   check(`MapLibre (${name}): маршрут, метка цели${MOCK ? ', варианты' : ''}`, s0.routePoints > 2 && (await page.locator('.ml-pin').count()) >= 1 && (!MOCK || (await page.locator('.route-alt-chip').count()) === 2), JSON.stringify({ points: s0.routePoints, zoom: Math.round(s0.zoom) }));
   let pr = await layoutProblems(page);
   check(`MapLibre (${name}): предпросмотр без наложений`, !pr.length, pr.join('; '));
+  const tp = (await st()).routeTrim;
+  check(`MapLibre (${name}): до «Поехали» маршрут показан целиком`, tp.shownPoints === s0.routePoints && tp.shownPoints > 2, JSON.stringify(tp));
   await page.screenshot({ path: `${out}/ml-${slug}-preview.png` });
   // Поехали → по движению с наклоном
   await page.click('.route-card .btn-primary:has-text("Поехали")');
@@ -302,6 +334,7 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   pr = await layoutProblems(page);
   check(`MapLibre (${name}): ведение без наложений`, !pr.length, pr.join('; '));
   await page.screenshot({ path: `${out}/ml-${slug}-guiding.png` });
+  if (MOCK) await checkRouteTrim(page, ctx, name, slug);
   await checkHud(page, ctx, name, slug, full);
   if (!full) return ctx.close();
   await checkMatching(page, ctx, name);
@@ -375,8 +408,8 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   const gn = await page.evaluate(() => ({ ...window.__aceMap.state(), setStyles: window.__aceDiag.map().setStyles }));
   check(
     `MapLibre (${name}): «Игровая 3D», ночь — окна, свечение дорог, фары; маршрут, машинка и масштаб на месте; стиль загружен один раз`,
-    gn.palette === 'game-night' && gn.windows && gn.nightLayers.includes('game-road-glow') && gn.gameLayers.length === 3 && gn.car3d && gn.routePoints > 2 && gn.pitch > 55 && gn.car && gn.car.y > 0.55 && gn.car.y < 0.92 && Math.abs(gn.zoom - beforeNight.zoom) < 1 && gn.setStyles - beforeNight.setStyles === 1,
-    JSON.stringify({ palette: gn.palette, windows: gn.windows, night: gn.nightLayers, car3d: gn.car3d, route: gn.routePoints, car: gn.car, zoom: [beforeNight.zoom, gn.zoom].map((z) => +z.toFixed(1)), setStyles: gn.setStyles - beforeNight.setStyles }),
+    gn.palette === 'game-night' && gn.routeTrim.shownPoints >= 2 && gn.windows && gn.nightLayers.includes('game-road-glow') && gn.gameLayers.length === 3 && gn.car3d && gn.routePoints > 2 && gn.pitch > 55 && gn.car && gn.car.y > 0.55 && gn.car.y < 0.92 && Math.abs(gn.zoom - beforeNight.zoom) < 1 && gn.setStyles - beforeNight.setStyles === 1,
+    JSON.stringify({ palette: gn.palette, trim: gn.routeTrim, windows: gn.windows, night: gn.nightLayers, car3d: gn.car3d, route: gn.routePoints, car: gn.car, zoom: [beforeNight.zoom, gn.zoom].map((z) => +z.toFixed(1)), setStyles: gn.setStyles - beforeNight.setStyles }),
   );
   await page.screenshot({ path: `${out}/ml-${slug}-game-night.png` });
   await page.click('.dock [aria-label="Ещё разделы"]');
