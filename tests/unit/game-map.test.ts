@@ -103,6 +103,9 @@ describe('«Игровая 3D», ночь', () => {
     const glow = layer(s, 'game-road-glow');
     expect(glow.type).toBe('line');
     expect(idx(s, 'game-road-glow')).toBeLessThan(idx(s, 'highway_minor'));
+    // отсвет на полотне — поверх асфальта, но под зданиями (и под маршрутом, который добавляется перед подписями)
+    expect(idx(s, 'game-road-sheen')).toBeGreaterThan(idx(s, 'highway_major_inner'));
+    expect(idx(s, 'game-road-sheen')).toBeLessThan(idx(s, 'game-buildings'));
     const lamps = layer(s, 'game-lamps');
     expect(lamps.layout['icon-image']).toBe(GAME_LAMP);
     expect(lamps.layout['icon-pitch-alignment']).toBe('map');
@@ -122,6 +125,7 @@ describe('«Игровая 3D», ночь', () => {
   it('дневная игровая карта не получает ночных эффектов', () => {
     const s = game();
     expect(layer(s, 'game-road-glow')).toBeUndefined();
+    expect(layer(s, 'game-road-sheen')).toBeUndefined();
     expect(layer(s, 'game-lamps')).toBeUndefined();
     expect(layer(s, 'game-buildings').paint['fill-extrusion-pattern']).toBeUndefined();
     expect(layer(s, 'game-roofs').minzoom).toBe(15);

@@ -85,22 +85,22 @@ export const GAME = {
 };
 /** Ночная «Игровая 3D»: тёмный сине-графитовый город, холодная подсветка дорог, тёплые окна. */
 export const GAME_NIGHT: typeof GAME = {
-  ground: '#0f1623',
-  residential: '#121a28',
+  ground: '#0a101b',
+  residential: '#0d1420',
   grass: '#13261f',
   park: '#122a20',
   wood: '#0f2219',
   water: '#06111f',
   shore: '#0d2236',
-  asphalt: '#2a3242',
-  asphaltMajor: '#303a4c',
+  asphalt: '#262f3f',
+  asphaltMajor: '#2c3648',
   curb: '#46536a',
   shadow: 'rgba(0, 0, 0, 0.42)',
   path: '#283246',
   text: '#c3cfe2',
   halo: '#0b111b',
   walls: ['#1d2536', '#222a3b', '#1a2232', '#20283a', '#1c2434', '#242c3d'],
-  roofs: ['#2c3548', '#313a4e', '#283143', '#343d50', '#2a3244', '#2f3749'],
+  roofs: ['#222a3a', '#262e40', '#1f2736', '#2a3244', '#242c3c', '#283041'],
 };
 /** Иконка дерева для режима (рисуется в коде, см. treeImage). */
 export const GAME_TREE = 'game-tree';
@@ -291,10 +291,26 @@ function game(style: StyleSpecification, nightMode = false, opts: { lite?: boole
       filter: ['match', ['get', 'class'], roadClasses, true, false],
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: {
-        'line-color': '#4f86d8',
+        'line-color': '#5b95ec',
         'line-width': zoomW([[12, 4], [14, 9], [16, 26], [18, 70]]) as never,
         'line-blur': zoomW([[12, 3], [14, 7], [16, 18], [18, 46]]) as never,
-        'line-opacity': ['interpolate', ['linear'], ['zoom'], 12, 0.18, 15, 0.3, 18, 0.34],
+        'line-opacity': ['interpolate', ['linear'], ['zoom'], 12, 0.25, 15, 0.42, 18, 0.48],
+      },
+    } as StyleSpecification['layers'][number]);
+    // Холодный отсвет на самом полотне (поверх асфальта, под зданиями и маршрутом): дорога «подсвечена», как в макете.
+    add.unshift({
+      id: 'game-road-sheen',
+      type: 'line',
+      source: src,
+      'source-layer': 'transportation',
+      minzoom: 13,
+      filter: ['match', ['get', 'class'], roadClasses, true, false],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': '#7aa8f0',
+        'line-width': zoomW([[13, 1], [16, 5], [18, 14]]) as never,
+        'line-blur': zoomW([[13, 1], [16, 4], [18, 10]]) as never,
+        'line-opacity': 0.22,
       },
     } as StyleSpecification['layers'][number]);
     // Пятна света фонарей на дороге: лежат на земле (наклоняются с картой), только вблизи; на слабых устройствах — без них.
@@ -310,7 +326,7 @@ function game(style: StyleSpecification, nightMode = false, opts: { lite?: boole
           'symbol-placement': 'line',
           'symbol-spacing': 110,
           'icon-image': GAME_LAMP,
-          'icon-size': ['interpolate', ['exponential', 1.6], ['zoom'], 15.5, 0.35, 17, 0.75, 19, 1.9],
+          'icon-size': ['interpolate', ['exponential', 1.6], ['zoom'], 15.5, 0.5, 17, 1.05, 19, 2.6],
           'icon-pitch-alignment': 'map',
           'icon-rotation-alignment': 'map',
           'icon-allow-overlap': true,
@@ -327,7 +343,7 @@ function game(style: StyleSpecification, nightMode = false, opts: { lite?: boole
   // Свет для объёмных зданий и пастельное небо у горизонта.
   if (nightMode) {
     // Ночь: холодный «лунный» свет — объём зданий читается, но город тёмный; небо — глубокий синий.
-    (style as { light?: unknown }).light = { anchor: 'viewport', color: '#9db4e8', intensity: 0.32, position: [1.3, 215, 40] };
+    (style as { light?: unknown }).light = { anchor: 'viewport', color: '#8ea6dd', intensity: 0.24, position: [1.3, 215, 40] };
     (style as { sky?: unknown }).sky = {
       'sky-color': '#0a1222',
       'horizon-color': '#1a2a46',

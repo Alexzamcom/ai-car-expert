@@ -509,7 +509,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             look: settingsStore.get().mapLook,
             gameLayers: ['game-buildings', 'game-roofs', 'game-trees'].filter((id) => !!map.getLayer(id)),
             palette: appliedPalette,
-            nightLayers: ['game-road-glow', 'game-lamps'].filter((id) => !!map.getLayer(id)),
+            nightLayers: ['game-road-glow', 'game-road-sheen', 'game-lamps'].filter((id) => !!map.getLayer(id)),
             windows: !!map.getLayer('game-buildings') && !!map.getPaintProperty('game-buildings', 'fill-extrusion-pattern'),
             styleReady: !!(map as unknown as { style?: { _loaded?: boolean } }).style?._loaded,
             raw: { lat: geoStore.get().lat, lon: geoStore.get().lon },
