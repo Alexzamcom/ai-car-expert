@@ -51,25 +51,41 @@ jobs:
       - name: Условия и лимиты TomTom (выдержки)
         if: env.ACTION == 'terms'
         run: |
-          for u in https://developer.tomtom.com/pricing \
-                   https://docs.tomtom.com/pricing/price-announcement \
-                   https://developer.tomtom.com/terms-and-conditions \
-                   https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/v1/product-information/market-coverage \
-                   https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/traffic-flow/raster-flow-tiles; do
-            echo "=================== $u"
-            curl -sL -m 30 -A 'Mozilla/5.0' "$u" -o /tmp/page.html || { echo "недоступно"; continue; }
-            python3 - <<'PY'
-          import re, html
-          t = open('/tmp/page.html', encoding='utf-8', errors='ignore').read()
-          t = re.sub(r'(?is)<(script|style)[^>]*>.*?</\1>', ' ', t)
+          fetch() {
+            echo "=================== $1"
+            curl -sL -m 30 -A 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15' "$1" -o /tmp/page.html || { echo "недоступно"; return; }
+            MODE="$2" python3 - <<'PY'
+          import re, html, os, json
+          raw = open('/tmp/page.html', encoding='utf-8', errors='ignore').read()
+          # Next.js и подобные: текст бывает только в JSON внутри страницы.
+          t = re.sub(r'(?is)<(script|style)[^>]*>.*?</\1>', ' ', raw)
           t = html.unescape(re.sub(r'<[^>]+>', '\n', t))
           lines = [l.strip() for l in t.split('\n') if l.strip()]
-          keys = re.compile(r'(?i)(traffic|free|month|daily|per day|transactions|request|tile|ukraine|openstreetmap|third.party|overlay|combin|cache|caching|store|display|attribution|commercial|non-commercial|freemium|limit)')
-          out = [l for l in lines if keys.search(l) and len(l) < 400]
-          print('\n'.join(out[:160]) if out else '(текст не найден — страница рендерится скриптом)')
+          mode = os.environ.get('MODE', 'all')
+          if mode == 'all':
+              print('\n'.join(lines[:400]))
+          elif mode.startswith('grep:'):
+              rx = re.compile(mode[5:], re.I)
+              for i, l in enumerate(lines):
+                  if rx.search(l):
+                      print(' | '.join(lines[max(0, i - 2): i + 4])[:600])
+          if len(lines) < 30:
+              # Текст в JSON-данных страницы
+              js = re.findall(r'"(?:text|value|content|description)"\s*:\s*"([^"]{20,600})"', raw)
+              print('JSON-фрагменты:', len(js))
+              rx = re.compile(mode[5:] if mode.startswith('grep:') else '.', re.I)
+              for x in js[:200]:
+                  if rx.search(x):
+                      print('-', html.unescape(x)[:500])
           PY
+          }
+          fetch https://developer.tomtom.com/pricing all
+          fetch https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/v1/product-information/market-coverage 'grep:ukrain|belarus|poland|moldova'
+          for u in https://developer.tomtom.com/terms-and-conditions https://www.tomtom.com/legal/ \
+                   https://developer.tomtom.com/legal https://www.tomtom.com/en_gb/legal/developer-terms/ \
+                   https://download.tomtom.com/open/legal/maps-apis-license-agreement.pdf; do
+            fetch "$u" 'grep:third.party|other map|non-tomtom|openstreetmap|combin|overlay|cach|store|retain|attribution|display|derived'
           done
-
       - name: Проверка токена Cloudflare
         if: env.ACTION != 'terms'
         run: |
