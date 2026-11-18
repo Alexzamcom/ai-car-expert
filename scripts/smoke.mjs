@@ -249,7 +249,8 @@ async function checkLab(name, device) {
 async function checkMapLibreNav(name, device, { full = false } = {}) {
   // С --mock — без service worker: иначе он загружает настоящие тайлы в обход подмены сети и тест зависит от сети.
   const { ctx, page } = await newPage(device, MOCK ? { serviceWorkers: 'block' } : {}, 'maplibre');
-  if (MOCK) await ctx.route('**/tiles.openfreemap.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: fixture('maplibre-style.json') }));
+  // Векторные тайлы (нужны «Игровой 3D») в тестовом режиме пустые; стиль — из fixtures.
+  if (MOCK) await ctx.route('**/tiles.openfreemap.org/**', (r) => (r.request().url().endsWith('.pbf') ? r.fulfill({ status: 204, body: '' }) : r.fulfill({ status: 200, contentType: 'application/json', body: fixture('maplibre-style.json') })));
   await ctx.addInitScript(() => {
     if (!localStorage.getItem('ace:settings')) localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre' }));
   });
@@ -351,6 +352,20 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   await page.click('.guide-sheet button:has-text("Обычный интерфейс")');
   await page.click('.dock [aria-label="Ещё разделы"]');
   await page.click('.more-item:has-text("Настройки")');
+  // «Игровая 3D»: переключение во время ведения — один раз перезагружается стиль, машинка и маршрут на месте, камера круче.
+  const before = await page.evaluate(() => window.__aceDiag.map().setStyles);
+  await page.click('[aria-label="Вид карты"] [role=radio]:has-text("Игровая 3D")');
+  await page.click('.page-back');
+  await page.waitForFunction(() => { const s = window.__aceMap.state(); return s.look === 'game' && s.gameLayers.length === 3 && s.car3d && s.pitch > 55; }, null, { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(3000);
+  const g = await page.evaluate(() => ({ ...window.__aceMap.state(), setStyles: window.__aceDiag.map().setStyles }));
+  check(`MapLibre (${name}): «Игровая 3D» — объёмные здания, крыши, деревья; машинка, маршрут и наклон на месте; стиль загружен один раз`, g.look === 'game' && g.gameLayers.length === 3 && g.car3d && g.routePoints > 2 && g.pitch > 55 && g.setStyles - before === 1, JSON.stringify({ look: g.look, layers: g.gameLayers, car3d: g.car3d, route: g.routePoints, pitch: Math.round(g.pitch), setStyles: g.setStyles - before }));
+  await page.screenshot({ path: `${out}/ml-${slug}-game.png` });
+  await page.click('.dock [aria-label="Ещё разделы"]');
+  await page.click('.more-item:has-text("Настройки")');
+  await page.click('[aria-label="Вид карты"] [role=radio]:has-text("Обычная карта")');
+  await page.waitForFunction(() => window.__aceMap.state().look === 'normal' && window.__aceMap.state().gameLayers.length === 0, null, { timeout: 15000 }).catch(() => {});
+  check(`MapLibre (${name}): возврат к обычной карте`, await page.evaluate(() => window.__aceMap.state().look === 'normal' && window.__aceMap.state().gameLayers.length === 0));
   await page.click('[aria-label="Движок карты"] [role=radio]:has-text("Leaflet")');
   await page.click('.page-back');
   await page.waitForTimeout(1500);

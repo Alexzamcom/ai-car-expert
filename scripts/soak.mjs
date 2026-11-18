@@ -17,6 +17,8 @@ const args = process.argv.slice(2);
 const MOCK = args.includes('--mock');
 const MINUTES = Number(args.find((a) => a.startsWith('--minutes='))?.split('=')[1] ?? 15);
 const WANT = (args.find((a) => a.startsWith('--devices='))?.split('=')[1] ?? 'ipad,iphone,pixel').split(',');
+/** Вид карты: normal или game («Игровая 3D»). */
+const LOOK = args.find((a) => a.startsWith('--look='))?.split('=')[1] ?? 'normal';
 const [url = 'http://localhost:4173/', out = 'soak'] = args.filter((a) => !a.startsWith('--'));
 fs.mkdirSync(out, { recursive: true });
 const fixture = (f) => fs.readFileSync(path.resolve('tests/fixtures', f), 'utf8');
@@ -52,7 +54,7 @@ async function soak(key) {
   const ctx = await browser.newContext({ ...device, locale: 'ru-RU', geolocation: { latitude: ROUTE[0].lat, longitude: ROUTE[0].lon, accuracy: 8 }, permissions: ['geolocation'], serviceWorkers: 'block' });
   const json = (body) => ({ status: 200, contentType: 'application/json', body, headers: { 'Access-Control-Allow-Origin': '*' } });
   if (MOCK) {
-    await ctx.route('**/tiles.openfreemap.org/**', (r) => r.fulfill(json(fixture('maplibre-style.json'))));
+    await ctx.route('**/tiles.openfreemap.org/**', (r) => (r.request().url().endsWith('.pbf') ? r.fulfill({ status: 204, body: '' }) : r.fulfill(json(fixture('maplibre-style.json')))));
     const osrm = (r) => r.fulfill(json(fixture('osrm-route.json')));
     await ctx.route('**/routing.openstreetmap.de/**', osrm);
     await ctx.route('**/router.project-osrm.org/**', osrm);
@@ -60,10 +62,10 @@ async function soak(key) {
     await ctx.route('**/photon.komoot.io/**', (r) => r.fulfill(json('{"features":[]}')));
   }
   // Как у пользователя: MapLibre, автотема по солнцу (от координат), 3D-машинка; диагностика включена.
-  await ctx.addInitScript(() => {
-    localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre', mapEngineExplicit: true, theme: 'auto', carStyle: '3d' }));
+  await ctx.addInitScript((look) => {
+    localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre', mapEngineExplicit: true, theme: 'auto', carStyle: '3d', mapLook: look }));
     localStorage.setItem('ace:diag', JSON.stringify({ on: true }));
-  });
+  }, LOOK);
   const page = await ctx.newPage();
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e)));
@@ -79,7 +81,7 @@ async function soak(key) {
   await page.evaluate(() => [...document.querySelectorAll('.route-card .btn-primary')].find((b) => b.textContent.includes('Поехали'))?.click());
   await page.waitForTimeout(3000);
   const guiding = await page.evaluate(() => !!document.querySelector('.guide-bar, .maneuver'));
-  check(`${name}: ведение по маршруту запущено`, guiding);
+  check(`${name}: ведение по маршруту запущено (вид карты: ${LOOK})`, guiding);
 
   const base = await page.evaluate(() => ({ map: window.__aceDiag.map(), state: window.__aceMap.state() }));
   const cdp = await ctx.newCDPSession(page);
@@ -116,7 +118,7 @@ async function soak(key) {
         const st = window.__aceMap.state();
             const mem = performance.memory?.usedJSHeapSize ?? null;
         // styleReady — сам стиль загружен (isStyleLoaded() ложен и во время подгрузки данных маршрута/тайлов — это не мерцание).
-        return { at: Date.now(), map: window.__aceDiag.map(), geo: window.__aceDiag.geo(), styleLoaded: st.styleReady, car: st.car, car3d: st.car3d, display: st.display, raw: st.raw, mem };
+        return { at: Date.now(), map: window.__aceDiag.map(), geo: window.__aceDiag.geo(), styleLoaded: st.styleReady, car: st.car, car3d: st.car3d, display: st.display, raw: st.raw, mem, look: st.look, gameLayers: st.gameLayers?.length ?? 0 };
       });
       samples.push(smp);
     }
@@ -173,6 +175,7 @@ async function soak(key) {
   // Память: не растёт неограниченно (программный WebGL в CI — ориентировочно).
   if (summary.memoryMB) check(`${name}: память не растёт неограниченно`, summary.memoryMB.end < summary.memoryMB.start * 2 + 30, JSON.stringify(summary.memoryMB));
   console.log(`${name}: итог ${JSON.stringify(summary)}`);
+  if (LOOK === 'game') check(`${name}: «Игровая 3D» включена всё время (слои зданий, крыш и деревьев на месте)`, samples.every((x) => x.look === 'game' && x.gameLayers === 3), `${samples.filter((x) => x.gameLayers !== 3).length} замеров без слоёв`);
   fs.writeFileSync(`${out}/soak-${key}.json`, JSON.stringify({ summary, samples }, null, 1));
   await page.screenshot({ path: `${out}/soak-${key}-end.png` });
   await browser.close();

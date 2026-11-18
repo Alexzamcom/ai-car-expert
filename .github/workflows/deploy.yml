@@ -111,6 +111,10 @@ jobs:
     needs: deploy
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        look: [normal, game]
     env:
       SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
     steps:
@@ -132,10 +136,10 @@ jobs:
         run: |
           npm i --no-save playwright@1.49.1
           npx playwright install --with-deps chromium
-          node scripts/soak.mjs "$SITE_URL" soak-live --minutes=15
+          node scripts/soak.mjs "$SITE_URL" soak-live --minutes=15 --look=${{ matrix.look }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: soak-live
+          name: soak-live-${{ matrix.look }}
           path: soak-live
           if-no-files-found: ignore
