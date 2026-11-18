@@ -1,5 +1,5 @@
-# Выдержки со страниц первоисточников о поставщиках пробок для Украины (запуск в GitHub Actions — там открыт интернет).
-import re, html, urllib.request
+# Выдержки со страниц первоисточников (запуск в GitHub Actions — там открыт интернет). Сейчас: Mapbox — пробки в Украине.
+import re, html, urllib.request, urllib.parse
 
 UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15"}
 
@@ -10,78 +10,36 @@ def clean(s):
     s = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", s)
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", s))).strip()
 
-def section(t):
-    print("\n" + "=" * 24, t)
-
-def rows(r, country):
-    """Строки HTML-таблиц, где есть страна: заголовок таблицы и ячейки строки."""
-    for tbl in re.findall(r"(?is)<table.*?</table>", r):
-        trs = re.findall(r"(?is)<tr.*?</tr>", tbl)
-        head = [clean(c) for c in re.findall(r"(?is)<t[hd][^>]*>(.*?)</t[hd]>", trs[0])] if trs else []
-        for tr in trs:
-            cells = re.findall(r"(?is)<t[hd][^>]*>(.*?)</t[hd]>", tr)
-            vals = [clean(c) or ("✓" if re.search(r"check|✓|icon", c, re.I) else "∅") for c in cells]
-            if any(v.lower() == country.lower() for v in vals):
-                print("  заголовок:", head)
-                print("  строка:   ", vals)
-
-def safe(t, fn):
-    section(t)
+def show(url, rx, width=350, limit=12):
+    print("\n" + "=" * 24, url)
     try:
-        fn()
+        r = raw(url)
     except Exception as e:
-        print("  недоступно:", str(e)[:200])
-
-def azure():
-    r = raw("https://learn.microsoft.com/en-us/azure/azure-maps/traffic-coverage")
-    rows(r, "Ukraine")
-    rows(r, "Poland")
-    t = clean(r)
-    for m in re.finditer(r"(?i)(¹|\b1\b)[^.]{0,20}(only|partial|limited|not|incident|flow)[^.]{0,200}\.", t):
-        print("  сноска:", m.group(0)[:300])
-    i = t.find("Ukraine")
-    print("  текст рядом:", t[max(0, i - 200): i + 200])
-safe("Azure Maps: таблица покрытия трафика", azure)
-
-def google():
-    r = raw("https://developers.google.com/maps/coverage")
-    rows(r, "Ukraine")
-    rows(r, "Poland")
-safe("Google Maps Platform: таблица покрытия", google)
-
-def here():
-    for path in ["traffic-coverage-information", "traffic-here-traffic-api-v7-coverage-information"]:
-        url = "https://docs.here.com/traffic-api/docs/" + path
-        print("  --", url)
-        try:
-            r = raw(url)
-        except Exception as e:
-            print("   недоступно:", str(e)[:120])
-            continue
-        print("   Ukraine в коде страницы:", bool(re.search(r"ukrain", r, re.I)), "| Poland:", bool(re.search(r"poland", r, re.I)))
-        rows(r, "Ukraine")
-        rows(r, "Poland")
-        t = clean(r)
-        for k in ["Ukraine", "Poland"]:
-            i = t.find(k)
-            if i >= 0:
-                print("   текст рядом", k, ":", t[max(0, i - 150): i + 250])
-safe("HERE Traffic API v7: покрытие", here)
-
-def mapbox():
-    for url in ["https://docs.mapbox.com/data/traffic/guides/index.md", "https://docs.mapbox.com/data/traffic/guides/traffic-data/index.md", "https://docs.mapbox.com/llms.txt"]:
-        print("  --", url)
-        try:
-            r = raw(url)
-        except Exception as e:
-            print("   недоступно:", str(e)[:120])
-            continue
-        print("   Ukraine:", bool(re.search(r"ukrain", r, re.I)))
-        for m in re.finditer(r"(?im)^.*(coverage|countr|traffic data).*$", r):
-            print("   ", m.group(0)[:300])
+        print("  недоступно:", str(e)[:160])
+        return ""
+    t = clean(r) if "<html" in r[:2000].lower() or "<!doctype" in r[:200].lower() else r
+    print("  символов:", len(t), "| Ukraine:", bool(re.search(r"ukrain", t, re.I)))
+    n = 0
+    for m in re.finditer(rx, t, re.I):
+        s = max(0, m.start() - width)
+        print("  >", t[s: m.end() + width].replace("\n", " ")[: 2 * width + 60])
+        n += 1
+        if n >= limit:
             break
-    r = raw("https://www.mapbox.com/legal/product-terms")
-    t = clean(r)
-    for m in re.finditer(r"(?i)[^.]{0,250}(non-Mapbox|Mapbox map|other map)[^.]{0,250}\.", t):
-        print("  условия:", m.group(0)[:500])
-safe("Mapbox: покрытие и условия", mapbox)
+    return r
+
+# Индекс документации о пробках Mapbox и все страницы из него
+idx = show("https://docs.mapbox.com/data/traffic/llms.txt", r"coverage|countr|live|typical", 120, 40)
+for u in sorted(set(re.findall(r"\((https://docs\.mapbox\.com/data/traffic/[^)]+)\)", idx or ""))):
+    show(u, r"ukrain|coverage|countr|update|live traffic|freshness|licen|pric", 250, 8)
+
+# Маршруты с пробками (профиль driving-traffic)
+show("https://docs.mapbox.com/api/navigation/directions/", r"driving-traffic|traffic coverage|ukrain|congestion", 250, 10)
+show("https://docs.mapbox.com/api/navigation/directions.md", r"driving-traffic|congestion|ukrain", 250, 8)
+# Плитки пробок mapbox-traffic-v1
+show("https://docs.mapbox.com/data/tilesets/reference/mapbox-traffic-v1.md", r"congestion|coverage|update|countr|ukrain", 250, 8)
+# Цены и бесплатные лимиты
+show("https://www.mapbox.com/pricing", r"free|directions|vector tiles api|map loads|traffic", 200, 25)
+# Условия: использование данных Mapbox с картой не от Mapbox
+show("https://www.mapbox.com/legal/tos", r"non-mapbox|other map|third-party map|mapbox map|cach|store", 300, 15)
+show("https://www.mapbox.com/legal/product-terms", r"non-mapbox|other map|third-party map|mapbox map|traffic|directions", 300, 15)

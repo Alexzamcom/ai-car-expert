@@ -1,0 +1,30 @@
+name: Traffic coverage (Ukraine)
+
+# Раз в месяц: появились ли живые пробки по Украине у TomTom, HERE, Azure Maps и Google.
+# Только публичные страницы покрытия — без ключей и платных API. При изменении (или если страница изменилась
+# и её не удалось разобрать) создаётся issue — GitHub пришлёт уведомление владельцу репозитория.
+
+on:
+  schedule:
+    - cron: '23 4 2 * *'
+  workflow_dispatch:
+  pull_request:
+    paths: ['scripts/traffic-coverage.mjs', '.github/workflows/traffic-coverage.yml']
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Проверка покрытия (в PR — без уведомлений)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/traffic-coverage.mjs ${{ github.event_name != 'pull_request' && '--notify' || '' }}
