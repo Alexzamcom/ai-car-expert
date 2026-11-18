@@ -14,6 +14,14 @@ const fix = (x: number, y: number, t: number, o: Partial<MatchFix> = {}): MatchF
 const offLine = (p: { lat: number; lon: number }, l: RoadLine) => candidates({ ...p, accuracy: 5, speed: null, heading: null, t: 0 }, [l], 1e4)[0].dist;
 
 describe('Привязка к дороге', () => {
+  it('едем на север, рядом диагональная улица (~55°) в 9 м — к ней не привязываем', () => {
+    const diag = line('diag', [[-200, -150], [200, 140]]);
+    const m = new Matcher();
+    let r;
+    for (let t = 0; t < 5; t++) r = m.update(fix(-8, t * 12 - 20, t, { heading: 0, speed: 12 }), [diag]);
+    expect(r!.mode).toBe('raw');
+  });
+
   it('нет данных о дорогах — сырая точка, без ложной привязки', () => {
     const m = new Matcher();
     const r = m.update(fix(3, 0, 0), []);

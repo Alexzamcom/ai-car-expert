@@ -247,7 +247,8 @@ async function checkLab(name, device) {
 
 /* ---------- Основная навигация на движке MapLibre ---------- */
 async function checkMapLibreNav(name, device, { full = false } = {}) {
-  const { ctx, page } = await newPage(device, {}, 'maplibre');
+  // С --mock — без service worker: иначе он загружает настоящие тайлы в обход подмены сети и тест зависит от сети.
+  const { ctx, page } = await newPage(device, MOCK ? { serviceWorkers: 'block' } : {}, 'maplibre');
   if (MOCK) await ctx.route('**/tiles.openfreemap.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', body: fixture('maplibre-style.json') }));
   await ctx.addInitScript(() => {
     if (!localStorage.getItem('ace:settings')) localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre' }));
