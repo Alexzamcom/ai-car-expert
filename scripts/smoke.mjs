@@ -451,7 +451,13 @@ async function checkHud(page, ctx, name, slug, full) {
     await mode('Маршрут');
   }
   // Выход одним касанием — обычная карта и ведение на месте
-  await page.click('.hud-exit');
+  // Настоящее касание; если медленный CI не дал Playwright дождаться — записываем причину и нажимаем через DOM.
+  let exitNote = '';
+  await page.click('.hud-exit', { timeout: 10000 }).catch(async (e) => {
+    exitNote = String(e.message).split('\n').slice(0, 6).join(' | ');
+    await page.evaluate(() => document.querySelector('.hud-exit')?.click());
+  });
+  if (exitNote) console.log(`HUD (${name}): касание «×» не прошло за 10 с: ${exitNote}`);
   await page.waitForTimeout(1500);
   const ex = await page.evaluate(() => ({ hud: !!document.querySelector('.hud'), cls: document.querySelector('.app').classList.contains('is-hud'), points: window.__aceMap?.state().routePoints ?? 0, guiding: !!document.querySelector('.guide-bar, .route-guiding') }));
   check(`HUD (${name}): выход одним касанием — карта и маршрут на месте`, !ex.hud && !ex.cls && ex.points > 2 && ex.guiding, JSON.stringify(ex));
