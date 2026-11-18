@@ -5,6 +5,7 @@ import type { GeoJSONSource, Map as MlMap } from 'maplibre-gl';
 import { geoStore, navStore, readLastPos } from '../lib/nav';
 import { DEFAULT_STYLE_URL, paletteTransform } from '../lib/mapStyle';
 import { autoZoom } from '../lib/camera';
+import { displayStore } from '../lib/matching/display';
 import { unwrapAngle } from '../lib/carMarker';
 import type { LatLon } from '../lib/routing';
 
@@ -101,7 +102,7 @@ export function HudMap({ color }: { color: string }) {
         });
       };
       const onGeo = () => {
-        const g = geoStore.get();
+        const g = displayStore.get(); // отображаемая позиция (привязка к дороге)
         if (g.lat == null || g.lon == null) return;
         if (to && to.lat === g.lat && to.lon === g.lon && heading === g.heading) return;
         const now = performance.now();
@@ -113,7 +114,7 @@ export function HudMap({ color }: { color: string }) {
         camera(first);
       };
       onGeo();
-      cleanups.push(geoStore.subscribe(onGeo));
+      cleanups.push(displayStore.subscribe(onGeo));
 
       let raf = 0;
       const frame = (now: number) => {

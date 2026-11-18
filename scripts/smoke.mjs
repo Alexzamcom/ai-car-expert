@@ -299,6 +299,7 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   await page.screenshot({ path: `${out}/ml-${slug}-guiding.png` });
   await checkHud(page, ctx, name, slug, full);
   if (!full) return ctx.close();
+  await checkMatching(page, ctx, name);
   // Север сверху и обратно
   await page.click('.guide-cam:not(.guide-hud)');
   await page.waitForFunction(() => window.__aceMap.state().pitch < 1, null, { timeout: 8000 }).catch(() => {});
@@ -567,6 +568,34 @@ async function checkEngineDefault(device) {
   }));
   check('Сервер карты недоступен — Leaflet с понятным сообщением, выбор MapLibre не стирается', down.leaflet && /резервная карта/.test(down.toast) && down.stored === 'maplibre', JSON.stringify(down));
   await ctx.close();
+}
+
+/** Привязка к дороге: GPS в 6 м сбоку от маршрута — машинка на линии маршрута; сырая точка и ведение — по GPS. */
+async function checkMatching(page, ctx, name) {
+  if (!MOCK) return; // геометрия маршрута известна только в тестовых данных
+  const c = JSON.parse(fixture('osrm-route.json')).routes[0].geometry.coordinates;
+  const [a, b] = [c[1], c[2]]; // [lon, lat], второй отрезок маршрута
+  const k = Math.cos((a[1] * Math.PI) / 180);
+  const dx = (b[0] - a[0]) * 111320 * k;
+  const dy = (b[1] - a[1]) * 111320;
+  const len = Math.hypot(dx, dy);
+  const at = (m, side) => ({ latitude: a[1] + (dy * m) / len / 111320 + (-dx / len) * side / 111320, longitude: a[0] + (dx * m) / len / 111320 / k + (dy / len) * side / 111320 / k });
+  // Доезжаем до маршрута без «невозможных скачков» (фильтр GPS их отбросил бы), затем едем вдоль него.
+  const cur = await page.evaluate(() => window.__aceMap.state().raw);
+  const start = at(20, 6);
+  const gap = Math.hypot((start.latitude - cur.lat) * 111320, (start.longitude - cur.lon) * 111320 * k);
+  const n = Math.max(1, Math.ceil(gap / 35));
+  for (let i = 1; i <= n; i++) {
+    await ctx.setGeolocation({ latitude: cur.lat + ((start.latitude - cur.lat) * i) / n, longitude: cur.lon + ((start.longitude - cur.lon) * i) / n, accuracy: 8 });
+    await page.waitForTimeout(1050);
+  }
+  for (let m = 32; m <= 140; m += 12) {
+    await ctx.setGeolocation({ ...at(m, 6), accuracy: 8 });
+    await page.waitForTimeout(1050);
+  }
+  await page.waitForTimeout(800);
+  const st = await page.evaluate(() => ({ display: window.__aceMap.state().display }));
+  check(`Привязка к дороге (${name}): машинка на линии маршрута при GPS в 6 м сбоку`, st.display?.mode === 'matched' && /^route/.test(st.display?.lineId ?? ''), JSON.stringify(st.display));
 }
 
 /** Пересечения элементов поверх карты и горизонтальная прокрутка страницы. */

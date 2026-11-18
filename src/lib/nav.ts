@@ -19,6 +19,7 @@ import { speak, stopSpeaking } from './speech';
 import { recordFix } from './trip';
 import { L } from './i18n';
 import { Locator, type FixSource, type GeoErrorInfo } from './geo/locator';
+import { updateDisplay, resetDisplay } from './matching/display';
 import { searchPlaces as geoSearch, reverseGeocode, coordsPlace, type Place } from './geo/geocode';
 
 export type { Place };
@@ -312,6 +313,9 @@ export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'hi
   const speedKmh = fix.speed != null && fix.speed >= 0 ? fix.speed * 3.6 : null;
   const quality = classifyAccuracy(fix.accuracy);
   geoStore.set((s) => ({ ...s, status: 'watching', lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speedKmh, heading, updated: now, quality, held: null, fixAt: fix.timestamp, source }));
+  // Отображаемая позиция (привязка к дороге) — отдельно; решения ведения ниже — только по сырой точке.
+  const nav = navStore.get();
+  updateDisplay({ lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speed: fix.speed != null && fix.speed >= 0 ? fix.speed : null, heading }, nav.status === 'guiding' ? (nav.route?.coords ?? null) : null, now);
   if (quality === 'precise') saveLastPos(fix);
   recordFix({ lat: fix.lat, lon: fix.lon }, fix.accuracy, speedKmh, now);
   onPosition({ lat: fix.lat, lon: fix.lon }, fix.accuracy);
@@ -323,6 +327,7 @@ export function __resetGeo() {
   headingState = { heading: null, anchor: null, at: null };
   locator?.stop();
   locator = null;
+  resetDisplay();
   geoStore.set({ status: 'idle', lat: null, lon: null, accuracy: null, speedKmh: null, heading: null, updated: null, quality: null, held: null, fixAt: null, source: null, lastError: null, permission: 'unknown' });
 }
 

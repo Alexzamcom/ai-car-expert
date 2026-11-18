@@ -47,6 +47,7 @@ import { lookAheadOffset, speedBand } from '../lib/camera';
 import { settingsStore, driveUiStore, setMinimal } from '../lib/state';
 import { startVoice } from '../lib/voice';
 import { openHud } from '../lib/hud';
+import { displayStore } from '../lib/matching/display';
 import { effectiveEngine, webglAvailable, mapRuntimeStore, engineFallback } from '../lib/mapEngine';
 import { stepText, stepIcon, fmtDistance, fmtDuration, haversine } from '../lib/routing';
 import { POI_CATEGORIES, type PoiCategory, type Poi } from '../lib/poi';
@@ -113,6 +114,7 @@ export function Navigation() {
   const settings = useStore(settingsStore);
   const carColor = settings.carColor;
   const runtime = useStore(mapRuntimeStore);
+  const disp = useStore(displayStore);
   const engine = effectiveEngine(settings.mapEngine, runtime.fallback, webglAvailable());
   const mlApi = useRef<MapApi | null>(null);
   const ui = useStore(driveUiStore);
@@ -225,22 +227,25 @@ export function Navigation() {
   useEffect(() => {
     const m = map.current;
     if (!m || geo.lat == null || geo.lon == null) return;
-    const ll: L.LatLngTuple = [geo.lat, geo.lon];
+    // Машинка и камера — по отображаемой позиции (привязка к дороге); круг точности — вокруг сырой точки GPS.
+    const shown = disp.lat != null && disp.lon != null ? { lat: disp.lat, lon: disp.lon, heading: disp.heading } : geo;
+    const raw: L.LatLngTuple = [geo.lat, geo.lon];
+    const ll: L.LatLngTuple = [shown.lat!, shown.lon!];
     const l = layers.current;
     if (!l.me) l.me = L.marker(ll, { icon: carIcon(carColor), interactive: false, zIndexOffset: 1000 }).addTo(m);
     else l.me.setLatLng(ll);
     // Круг точности — только когда она заметна: видно, что позиция приблизительная.
     const acc = geo.accuracy ?? 0;
     if (acc > 30) {
-      if (!l.acc) l.acc = L.circle(ll, { radius: acc, className: 'map-accuracy', interactive: false, weight: 1 }).addTo(m);
-      else l.acc.setLatLng(ll).setRadius(acc);
+      if (!l.acc) l.acc = L.circle(raw, { radius: acc, className: 'map-accuracy', interactive: false, weight: 1 }).addTo(m);
+      else l.acc.setLatLng(raw).setRadius(acc);
     } else {
       l.acc?.remove();
       l.acc = undefined;
     }
     const rot = l.me.getElement()?.querySelector<HTMLElement>('.car-rot');
-    if (rot && geo.heading != null) {
-      carAngle.current = unwrapAngle(carAngle.current, geo.heading);
+    if (rot && shown.heading != null) {
+      carAngle.current = unwrapAngle(carAngle.current, shown.heading);
       rot.style.transform = `rotate(${carAngle.current}deg)`;
     }
     if (follow) {
@@ -253,9 +258,9 @@ export function Navigation() {
         zoomBand.current = band;
         // Упреждение: машинка ниже центра по ходу движения — впереди видно больше дороги.
         let target = L.latLng(ll);
-        if (geo.heading != null) {
+        if (shown.heading != null) {
           const size = m.getSize();
-          const [dx, dy] = lookAheadOffset(geo.heading, size.x, size.y);
+          const [dx, dy] = lookAheadOffset(shown.heading, size.x, size.y);
           target = m.unproject(m.project(target, zoom).add([dx, dy]), zoom);
         }
         // Плавно и линейно, без рывков между точками GPS (раз в ~1 с).
@@ -263,7 +268,7 @@ export function Navigation() {
         else m.panTo(target, { animate: true, duration: 0.9, easeLinearity: 1, noMoveStart: true });
       }
     }
-  }, [geo.lat, geo.lon, geo.heading, geo.accuracy, follow, guiding, carColor, engine]);
+  }, [geo.lat, geo.lon, geo.heading, geo.accuracy, disp.lat, disp.lon, disp.heading, follow, guiding, carColor, engine]);
 
   // Цвет машинки из настроек
   useEffect(() => {

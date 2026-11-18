@@ -13,6 +13,8 @@ import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
 import { autoZoom, lookAheadOffset } from '../lib/camera';
 import { hudUiStore } from '../lib/hud';
 import { engineFallback } from '../lib/mapEngine';
+import { displayStore, setRoadProvider } from '../lib/matching/display';
+import type { RoadLine } from '../lib/matching/matcher';
 import { LongPressDetector } from '../lib/geo/longpress';
 import type { LatLon } from '../lib/routing';
 
@@ -278,9 +280,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         settingsStore.subscribe(() => camera.current(true)),
         // Выход из HUD — карта сразу на месте машинки.
         hudUiStore.subscribe(() => !hudUiStore.get().active && (map.resize(), camera.current(true))),
-        geoStore.subscribe(() => {
-          const g = geoStore.get();
-          drawAcc();
+        // Круг точности — вокруг сырой точки GPS; машинка и камера — по отображаемой позиции (привязка к дороге).
+        geoStore.subscribe(drawAcc),
+        displayStore.subscribe(() => {
+          const g = displayStore.get();
           if (g.lat == null || g.lon == null) return;
           if (to && to.lat === g.lat && to.lon === g.lon && headingTarget === g.heading) return;
           const now = performance.now();
@@ -291,6 +294,46 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           camera.current();
         }),
       );
+
+      /* ---------- Дороги рядом — для привязки машинки (src/lib/matching) ---------- */
+      // Только автомобильные дороги из векторных тайлов, которые карта уже загрузила (без отдельных запросов).
+      const ROAD_CLASSES = /^(motorway|trunk|primary|secondary|tertiary|minor|service|busway)$/;
+      type BoxedLine = RoadLine & { box: [number, number, number, number] };
+      let roadCache: { at: number; lines: BoxedLine[] } | null = null;
+      const loadRoads = (): BoxedLine[] => {
+        const src = Object.entries(map.getStyle()?.sources ?? {}).find(([, v]) => v.type === 'vector')?.[0];
+        if (!src) return [];
+        const out: BoxedLine[] = [];
+        const seen = new Set<string>();
+        for (const f of map.querySourceFeatures(src, { sourceLayer: 'transportation' })) {
+          const cls = String(f.properties?.class ?? '');
+          if (!ROAD_CLASSES.test(cls)) continue;
+          const g = f.geometry;
+          const parts = g.type === 'LineString' ? [g.coordinates] : g.type === 'MultiLineString' ? g.coordinates : [];
+          for (const part of parts) {
+            if (part.length < 2) continue;
+            const coords = part.map(([lon, lat]) => ({ lat, lon }));
+            const a = coords[0];
+            const b = coords[coords.length - 1];
+            // Устойчивый id по геометрии: один и тот же участок между запросами — та же дорога.
+            const id = `${cls}:${a.lat.toFixed(5)},${a.lon.toFixed(5)}:${b.lat.toFixed(5)},${b.lon.toFixed(5)}`;
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const lats = coords.map((c) => c.lat);
+            const lons = coords.map((c) => c.lon);
+            const ow = Number(f.properties?.oneway ?? 0);
+            out.push({ id, coords, oneway: ow === 1 ? 1 : ow === -1 ? -1 : 0, kind: 'road', cls, box: [Math.min(...lats), Math.min(...lons), Math.max(...lats), Math.max(...lons)] });
+          }
+        }
+        return out;
+      };
+      setRoadProvider((pt, r) => {
+        if (!roadCache || performance.now() - roadCache.at > 3000) roadCache = { at: performance.now(), lines: loadRoads() };
+        const dLat = r / 111_320;
+        const dLon = r / (111_320 * Math.cos((pt.lat * Math.PI) / 180));
+        return roadCache.lines.filter((l) => l.box[0] <= pt.lat + dLat && l.box[2] >= pt.lat - dLat && l.box[1] <= pt.lon + dLon && l.box[3] >= pt.lon - dLon);
+      });
+      cleanups.push(() => setRoadProvider(null));
 
       /* ---------- Долгое нажатие и правый клик — выбор точки ---------- */
       const lp = new LongPressDetector({
@@ -385,6 +428,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             heading: headingTarget,
             car: c ? { x: c.x / r.width, y: c.y / r.height } : null,
             car3d: use3d() && !!map.getLayer('car-3d'),
+            display: { mode: displayStore.get().mode, lineId: displayStore.get().lineId },
+            raw: { lat: geoStore.get().lat, lon: geoStore.get().lon },
             accuracyCircle: accShown,
             routePoints: navStore.get().route?.coords.length ?? 0,
             lang: navLang(),
@@ -407,7 +452,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       // Начальное состояние (маршрут, метки, позиция) — сразу после загрузки.
       drawPoi();
       drawPick();
-      const g = geoStore.get();
+      const d = displayStore.get();
+      const g = d.lat != null ? d : geoStore.get();
       if (g.lat != null && g.lon != null) {
         to = { lat: g.lat, lon: g.lon };
         headingTarget = g.heading;
