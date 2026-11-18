@@ -12,11 +12,13 @@ fs.mkdirSync(out, { recursive: true });
 const PLACES = [
   ['dnipro', 'Днепр, центр', 48.4668, 35.0459],
   ['pavlograd', 'Павлоград, центр', 48.5318, 35.8708],
+  // Парк имени Шевченко (Днепр) — деревья вблизи
+  ['dnipro-park', 'Днепр, парк Шевченко', 48.4581, 35.0624],
 ];
 const browser = await chromium.launch();
 const report = [];
 for (const [key, name, lat, lon] of PLACES) {
-  for (const look of ['game', 'normal']) {
+  for (const look of key === 'dnipro-park' ? ['game'] : ['game', 'normal']) {
     const ctx = await browser.newContext({ viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 1, geolocation: { latitude: lat, longitude: lon, accuracy: 8 }, permissions: ['geolocation'], serviceWorkers: 'block' });
     await ctx.addInitScript((lk) => localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre', mapEngineExplicit: true, mapLook: lk, theme: 'day' })), look);
     const page = await ctx.newPage();
@@ -25,13 +27,13 @@ for (const [key, name, lat, lon] of PLACES) {
     await page.goto(url, { waitUntil: 'load' });
     await page.waitForFunction(() => window.__aceMap?.state?.().car3d, null, { timeout: 60000 }).catch(() => {});
     // Вид «миниатюры»: близко, с наклоном и поворотом; ждём, пока догрузятся тайлы.
-    await page.evaluate(([la, lo]) => window.__aceMap.map.jumpTo({ center: [lo, la], zoom: 16.4, pitch: 58, bearing: 32 }), [lat, lon]);
+    await page.evaluate(([la, lo]) => window.__aceMap.map.jumpTo({ center: [lo, la], zoom: key === 'dnipro-park' ? 17.2 : 16.4, pitch: 58, bearing: 32 }), [lat, lon]);
     await page.waitForFunction(() => window.__aceMap.map.loaded() && window.__aceMap.map.areTilesLoaded(), null, { timeout: 60000 }).catch(() => {});
     await page.waitForTimeout(1500);
     const info = await page.evaluate(() => {
       const m = window.__aceMap.map;
       const q = (id) => (m.getLayer(id) ? m.queryRenderedFeatures({ layers: [id] }).length : -1);
-      return { buildings: q('game-buildings'), roofs: q('game-roofs'), trees: q('game-trees') + Math.max(0, q('game-trees-wood')), look: window.__aceMap.state().look };
+      return { buildings: q('game-buildings'), roofs: q('game-roofs'), trees: Math.max(0, q('game-trees')) + Math.max(0, q('game-trees-grass')) + Math.max(0, q('game-trees-wood')), look: window.__aceMap.state().look, treeIcon: m.hasImage('game-tree') };
     });
     // Плавность: поворот камеры на 90° за 6 с (программный WebGL в CI — ориентировочно, устройство быстрее).
     const fps = await page.evaluate(

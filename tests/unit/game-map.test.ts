@@ -28,12 +28,12 @@ describe('«Игровая 3D»: стиль', () => {
   });
   it('деревья: стилизованная иконка вдоль парков и лесов, стоят вертикально при наклоне', () => {
     const s = game();
-    for (const id of ['game-trees', 'game-trees-wood']) {
+    for (const id of ['game-trees', 'game-trees-grass', 'game-trees-wood']) {
       const t = layer(s, id);
       expect(t.type).toBe('symbol');
       expect(t.layout['icon-image']).toBe(GAME_TREE);
       expect(t.layout['icon-pitch-alignment']).toBe('viewport');
-      expect(t.minzoom).toBe(15);
+      expect(t.minzoom).toBeGreaterThanOrEqual(15);
     }
   });
   it('пастельная палитра: фон, парки, вода; дороги — асфальт с белым бордюром и тенью под ними', () => {

@@ -79,15 +79,17 @@ export const GAME = {
   path: '#e4d6bd',
   text: '#5b5048',
   halo: '#fbf6ec',
-  walls: ['#f6c9ad', '#f8e3bf', '#cfe9d2', '#dcd3f1', '#cde1f4', '#f5d0d8'],
-  roofs: ['#e08f72', '#e9b871', '#8fc59b', '#a99ad6', '#8fb6dc', '#e19aa9'],
+  // Стены — светлые кремовые оттенки, цвет даёт крыша (как у миниатюрного макета города).
+  walls: ['#fbf4e8', '#f7ecdc', '#fdf8f1', '#f4ece5', '#eef2f2', '#f6eee2'],
+  roofs: ['#e9967c', '#efb886', '#9fcfa8', '#a8bfe3', '#e6a3b4', '#c7b5e6'],
 };
 /** Иконка дерева для режима (рисуется в коде, см. treeImage). */
 export const GAME_TREE = 'game-tree';
 
+// Цвет по номеру здания (если есть в тайлах) и высоте: соседние дома разные, а у одного дома цвет не «мигает».
 const wallColor = (pal: string[]): unknown => [
   'match',
-  ['%', ['floor', ['/', ['coalesce', ['get', 'render_height'], 6], 3]], pal.length],
+  ['%', ['+', ['to-number', ['id'], 0], ['floor', ['/', ['coalesce', ['get', 'render_height'], 6], 3]]], pal.length],
   ...pal.flatMap((c, i) => (i < pal.length - 1 ? [i, c] : [])),
   pal[pal.length - 1],
 ];
@@ -204,6 +206,25 @@ function game(style: StyleSpecification) {
         'symbol-spacing': 46,
         'icon-image': GAME_TREE,
         'icon-size': ['interpolate', ['linear'], ['zoom'], 15, 0.45, 17, 0.75, 19, 1.1],
+        'icon-anchor': 'bottom',
+        'icon-pitch-alignment': 'viewport',
+        'icon-rotation-alignment': 'viewport',
+        'icon-allow-overlap': false,
+        'icon-padding': 0,
+      },
+    },
+    {
+      id: 'game-trees-grass',
+      type: 'symbol',
+      source: src,
+      'source-layer': 'landcover',
+      minzoom: 15.5,
+      filter: ['match', ['get', 'class'], ['grass', 'meadow'], true, false],
+      layout: {
+        'symbol-placement': 'line',
+        'symbol-spacing': 64,
+        'icon-image': GAME_TREE,
+        'icon-size': ['interpolate', ['linear'], ['zoom'], 15.5, 0.45, 17, 0.7, 19, 1.05],
         'icon-anchor': 'bottom',
         'icon-pitch-alignment': 'viewport',
         'icon-rotation-alignment': 'viewport',
