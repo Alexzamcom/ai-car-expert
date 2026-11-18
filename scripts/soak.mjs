@@ -85,7 +85,9 @@ async function soak(key) {
     }
     await page.fill('#map-search', '');
     await page.fill('#map-search', 'Театр Сатиры');
-    await page.press('#map-search', 'Enter');
+    // Enter — с клавиатуры без ожидания «готовности» элемента (на медленном программном WebGL оно может не наступить).
+    await page.focus('#map-search').catch(() => {});
+    await page.keyboard.press('Enter');
     // Нажатия — через DOM: на медленном программном WebGL (iPad, «Игровая 3D», три браузера сразу) ожидание
     // «неподвижности» элемента у Playwright может не дождаться кадра. Каждый шаг пишет, дошёл ли он.
     const step = async (sel, text, timeout) => {
@@ -127,7 +129,8 @@ async function soak(key) {
     await ctx.setGeolocation({ latitude: p.lat + (rnd() * noise) / 111320, longitude: p.lon + (rnd() * noise) / 111320 / K, accuracy: 8 + Math.abs(rnd()) * 8 });
     // Каждые 60 с — поворот двумя пальцами (свободный обзор), через 5 с — «К машине».
     if (s % 60 === 30) {
-      const box = await page.locator('.ml-map').boundingBox();
+      // Размер карты — из DOM (locator.boundingBox ждёт кадра и на перегруженном CI-iPad не дожидался его 30 с).
+      const box = await page.evaluate(() => { const r = document.querySelector('.ml-map').getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; });
       const cx = box.x + box.width / 2;
       const cy = box.y + box.height * 0.45;
       const two = (a) => [[cx + 110 * Math.cos(a), cy + 110 * Math.sin(a)], [cx - 110 * Math.cos(a), cy - 110 * Math.sin(a)]].map(([x, y], i) => ({ x, y, id: i + 1 }));
@@ -212,5 +215,6 @@ try {
 } finally {
   const failed = results.filter((r) => !r.ok);
   console.log(`\nПройдено ${results.length - failed.length}/${results.length}, провалов: ${failed.length}`);
-  process.exitCode = failed.length ? 1 : 0;
+  // Явный выход: если сценарий устройства упал, его браузер мог остаться открытым и не дать процессу завершиться.
+  process.exit(failed.length ? 1 : 0);
 }
