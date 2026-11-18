@@ -262,6 +262,10 @@ export class Matcher {
     if (!l || !c || l.res.mode !== 'matched' || l.speed < PREDICT_MIN_SPEED) return null;
     const dt = (now - l.fix.t) / 1000;
     if (dt <= 1.5 || dt > this.opts.predictSec) return null;
+    // Направление прогноза должно быть известно: курс машины совпадает с дорогой (как при привязке — не больше 45°),
+    // либо его задаёт сама дорога (маршрут, одностороннее движение). Иначе прогноз мог развернуть машинку назад.
+    const sure = l.fix.heading != null ? adiff(l.fix.heading, c.travel) <= 45 : c.line.kind === 'route' || c.line.oneway === 1 || c.line.oneway === -1;
+    if (!sure) return null;
     const ahead = Math.min(MAX_PREDICT_M, l.speed * dt);
     const forward = adiff(c.travel, c.bearing) < 90; // едем по ходу линии
     const p = walk(c.line.coords, c.seg, c.f, forward ? ahead : -ahead);

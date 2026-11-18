@@ -143,6 +143,23 @@ describe('Привязка к дороге', () => {
     if (p) expect(p.reason).not.toMatch(/\d{3} км\/ч/);
   });
 
+  it('курс неизвестен на двусторонней дороге — прогноза нет (направление не угадываем, машинка не разворачивается назад)', () => {
+    const a = line('a', [[0, 1500], [0, -500]]); // линия нарисована с севера на юг, едем на север
+    const m = new Matcher();
+    for (let t = 0; t < 5; t++) m.update(fix(0, t * 15, t, { speed: 15, heading: null }), [a]);
+    expect(m.predict(4000 + 1700)).toBeNull();
+  });
+
+  it('прогноз по курсу: едем на север по линии, нарисованной на юг, — машинка идёт вперёд, курс ~0°', () => {
+    const a = line('a', [[0, 1500], [0, -500]]);
+    const m = new Matcher();
+    for (let t = 0; t < 5; t++) m.update(fix(0, t * 15, t, { speed: 15, heading: 0 }), [a]);
+    const p = m.predict(4000 + 1700)!;
+    expect(p.mode).toBe('predicted');
+    expect(p.lat).toBeGreaterThan(P(0, 60).lat);
+    expect(Math.min(p.bearing!, 360 - p.bearing!)).toBeLessThan(5);
+  });
+
   it('на малой скорости (≤ 30 км/ч) прогноза нет: на стоянке iOS может не присылать точки', () => {
     const a = line('a', [[0, -500], [0, 1500]]);
     const m = new Matcher();
