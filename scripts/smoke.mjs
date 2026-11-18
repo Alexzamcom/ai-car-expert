@@ -334,8 +334,9 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   pr = await layoutProblems(page);
   check(`MapLibre (${name}): ведение без наложений`, !pr.length, pr.join('; '));
   await page.screenshot({ path: `${out}/ml-${slug}-guiding.png` });
-  if (MOCK) await checkRouteTrim(page, ctx, name, slug);
   await checkHud(page, ctx, name, slug, full);
+  // После HUD: проезд по маршруту меняет курс, а HUD-проверка ждёт курс прежнего движения.
+  if (MOCK) await checkRouteTrim(page, ctx, name, slug);
   if (!full) return ctx.close();
   await checkMatching(page, ctx, name);
   // Север сверху и обратно
