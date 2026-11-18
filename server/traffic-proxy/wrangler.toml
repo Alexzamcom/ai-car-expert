@@ -1,0 +1,27 @@
+# Cloudflare Worker: пробки TomTom для AI Car Expert (только этот сервис; ИИ-прокси, Yenota и TVoy Hub не затрагивает).
+# Секрет задаётся в Cloudflare (Workers & Pages → ai-car-expert-traffic → Settings → Variables and Secrets),
+# НЕ в репозитории и НЕ в приложении:
+#   TOMTOM_KEY — ключ TomTom (бесплатный тариф, без банковской карты).
+name = "ai-car-expert-traffic"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+[vars]
+ALLOWED_ORIGINS = "https://alexzamcom.github.io"
+# Суточные потолки запросов к TomTom (с запасом от бесплатных месячных лимитов; превышение → 429, без платных запросов).
+# Тайлы: ~200 тыс. растровых/мес бесплатно → 5000 в сутки ≈ 150 тыс./мес.
+DAILY_TILES = "5000"
+# Маршруты с пробками, данные отрезков и описания происшествий — немного: проверка и ведение.
+DAILY_ROUTES = "300"
+DAILY_FLOW = "500"
+DAILY_INCIDENTS = "300"
+# Запросов в минуту с одного IP (защита от злоупотреблений).
+RATE_PER_MIN = "120"
+# Без хранилища счётчиков (KV) запросы к TomTom не выполняются.
+REQUIRE_KV = "1"
+
+# KV для счётчиков подключается при развёртывании:
+# [[kv_namespaces]]
+# binding = "USAGE"
+# id = "<id>"
