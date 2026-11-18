@@ -34,6 +34,13 @@ describe('Покрытие пробок по Украине: разбор таб
     const diff = changes([evaluate(google('⬤'), src('google'))]);
     expect(diff.map((d: { id: string }) => d.id)).toEqual(['google']);
   });
+  it('сноска у названия страны («Ukraine<sup>1</sup>», как у Azure) не мешает: появятся отметки — «есть»', () => {
+    const t = table(['Country/Region', 'Incidents', 'Flow'], [['Poland', '✓', '✓'], ['Ukraine<sup>1</sup>', '✓', '✓']]);
+    expect(evaluate(t, src('azure')).status).toBe('yes');
+    const now = table(['Country/Region', 'Incidents', 'Flow'], [['Poland', '✓', '✓'], ['Ukraine<sup>1</sup>']]);
+    expect(evaluate(now, src('azure'))).toMatchObject({ status: 'no' });
+    expect(evaluate(now, src('azure')).ukraine.detail).not.toBe('страны нет в таблице');
+  });
   it('Украина в таблице, но без отметки потока — «нет», а не «есть»', () => {
     expect(evaluate(here(''), src('here')).status).toBe('no');
     expect(evaluate(azure(['✓', '']), src('azure')).status).toBe('no');

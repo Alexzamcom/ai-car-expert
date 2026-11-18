@@ -48,7 +48,8 @@ export function tableRows(html) {
   return out;
 }
 
-const norm = (s) => s.toLowerCase().replace(/ü/g, 'u').trim();
+// Название страны без сносок: «Ukraine 1», «Ukraine¹», «Ukraine *» → «ukraine».
+const norm = (s) => s.toLowerCase().replace(/ü/g, 'u').replace(/[\s\d*¹²³†‡]+$/u, '').trim();
 
 /**
  * Статус страны у источника: 'yes' — пробки есть, 'no' — нет (страны нет в таблице или отметки нет), 'unknown' — таблица не разобрана.
