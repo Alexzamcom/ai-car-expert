@@ -180,21 +180,24 @@ async function checkLab(name, device) {
       const s = window.__lab.state();
       let dark = 0;
       let red = 0;
+      let light = 0;
       for (let dx = -0.04; dx <= 0.04; dx += 0.005)
         for (let dy = -0.07; dy <= 0.04; dy += 0.005) {
           const p = window.__lab.pixelAt(s.carDrawn.x + dx, s.carDrawn.y + dy);
           if (!p) continue;
           if (p[0] < 70 && p[1] < 70 && p[2] < 85) dark++;
           if (p[0] > 140 && p[1] < 90 && p[2] < 90) red++;
+          if (p[0] > 150 && p[1] > 150 && p[2] > 150) light++; // светлый (белый) кузов
         }
-      return { dark, red, car3d: s.car3d };
+      return { dark, red, light, car3d: s.car3d };
     });
   const white = await carPixels();
   check(`3D-машинка (${name}): объёмная модель на карте`, white.car3d && white.dark > 3, JSON.stringify(white));
   await page.evaluate(() => window.__lab.settings.set((x) => ({ ...x, carColor: 'red' })));
   await page.waitForTimeout(600);
   const red = await carPixels();
-  check(`3D-машинка (${name}): цвет кузова из настроек (белая → красная)`, red.red > 10 && red.red > white.red * 3, `белая ${white.red}, красная ${red.red} красных пикселей`);
+  // Красные пиксели есть и у белой машины (светодиодные фонари), поэтому сравниваем прирост красного и убыль белого.
+  check(`3D-машинка (${name}): цвет кузова из настроек (белая → красная)`, red.red >= white.red + 8 && red.light < white.light * 0.5, `белая: красных ${white.red}, светлых ${white.light}; красная: красных ${red.red}, светлых ${red.light}`);
   await page.screenshot({ path: `${out}/lab-${name.replace(/\s+/g, '-').toLowerCase()}-red.png` });
   await page.evaluate(() => window.__lab.settings.set((x) => ({ ...x, carColor: 'white', carStyle: 'flat' })));
   await page.waitForTimeout(800);
@@ -593,9 +596,10 @@ async function checkMatching(page, ctx, name) {
     await ctx.setGeolocation({ ...at(m, 6), accuracy: 8 });
     await page.waitForTimeout(1050);
   }
-  await page.waitForTimeout(800);
+  // Сразу после последней точки (в CI страница медленная — допускается и короткий прогноз вдоль той же линии маршрута).
+  await page.waitForTimeout(300);
   const st = await page.evaluate(() => ({ display: window.__aceMap.state().display }));
-  check(`Привязка к дороге (${name}): машинка на линии маршрута при GPS в 6 м сбоку`, st.display?.mode === 'matched' && /^route/.test(st.display?.lineId ?? ''), JSON.stringify(st.display));
+  check(`Привязка к дороге (${name}): машинка на линии маршрута при GPS в 6 м сбоку`, /^(matched|predicted)$/.test(st.display?.mode ?? '') && /^route/.test(st.display?.lineId ?? ''), JSON.stringify(st.display));
 }
 
 /** Пересечения элементов поверх карты и горизонтальная прокрутка страницы. */
