@@ -13,10 +13,14 @@ export interface DisplayPos {
   mode: MatchResult['mode'] | null;
   confidence: number;
   lineId: string | null;
+  /** Почему показана именно эта позиция (выбор дороги или причина «без привязки»). */
+  reason: string;
+  /** Расстояние от сырой точки GPS до показанной, м. */
+  shift: number;
   at: number;
 }
 
-const EMPTY: DisplayPos = { lat: null, lon: null, heading: null, accuracy: null, mode: null, confidence: 0, lineId: null, at: 0 };
+const EMPTY: DisplayPos = { lat: null, lon: null, heading: null, accuracy: null, mode: null, confidence: 0, lineId: null, reason: '', shift: 0, at: 0 };
 export const displayStore = createStore<DisplayPos>(EMPTY);
 
 /** Дороги рядом из карты (MapLibre, векторные тайлы). Нет поставщика — привязка только к маршруту. */
@@ -86,7 +90,7 @@ export function updateDisplay(fix: DisplayFix, route: LatLon[] | null, now = Dat
   // Курс: по дороге — только в движении и при уверенной привязке; стоим — прежний (без вращения от шума).
   const moving = (fix.speed ?? 0) >= 2;
   const heading = r.mode === 'matched' && moving && r.bearing != null ? r.bearing : (fix.heading ?? prev.heading);
-  displayStore.set({ lat: r.lat, lon: r.lon, heading, accuracy: r.accuracy, mode: r.mode, confidence: r.confidence, lineId: r.lineId, at: now });
+  displayStore.set({ lat: r.lat, lon: r.lon, heading, accuracy: r.accuracy, mode: r.mode, confidence: r.confidence, lineId: r.lineId, reason: r.reason, shift: r.shift, at: now });
   timer ??= setInterval(tick, 500);
 }
 
@@ -97,7 +101,7 @@ function tick() {
   const p = matcher.predict(now);
   if (!p) return;
   const prev = displayStore.get();
-  displayStore.set({ ...prev, lat: p.lat, lon: p.lon, heading: p.bearing ?? prev.heading, accuracy: p.accuracy, mode: 'predicted', confidence: p.confidence, at: now });
+  displayStore.set({ ...prev, lat: p.lat, lon: p.lon, heading: p.bearing ?? prev.heading, accuracy: p.accuracy, mode: 'predicted', confidence: p.confidence, reason: p.reason, shift: p.shift, at: now });
 }
 
 export function resetDisplay() {

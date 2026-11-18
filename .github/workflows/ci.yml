@@ -36,3 +36,30 @@ jobs:
           name: smoke-local
           path: smoke-local
           if-no-files-found: ignore
+
+  # Длительный тест MapLibre 3D: 15 минут ведения с GPS раз в секунду, жестами и 3D-машинкой на iPad, iPhone и Android
+  # (параллельно). Проверяет, что карта не пересоздаётся, стиль не перезагружается (мерцание), WebGL не теряется.
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Длительный тест MapLibre (15 мин, тестовые данные)
+        run: |
+          npm i --no-save playwright@1.49.1
+          npx playwright install --with-deps chromium
+          npx vite preview --port 4173 --strictPort &
+          npx --yes wait-on@8.0.1 -t 30000 http://localhost:4173/
+          node scripts/soak.mjs http://localhost:4173/ soak-local --mock --minutes=15
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soak-local
+          path: soak-local
+          if-no-files-found: ignore

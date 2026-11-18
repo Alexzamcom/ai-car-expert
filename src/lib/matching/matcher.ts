@@ -57,6 +57,10 @@ export interface MatchResult {
   accuracy: number;
   confidence: number;
   lineId: string | null;
+  /** Почему так: выбранная дорога и её стоимость, вторая по вероятности, или причина «без привязки» (для диагностики). */
+  reason: string;
+  /** Расстояние от сырой точки до показанной, м. */
+  shift: number;
 }
 
 /* ---------- Геометрия в локальной плоскости (метры) ---------- */
@@ -102,7 +106,15 @@ export interface MatcherOptions {
   /** Сколько секунд допускается прогноз при потере сигнала. */
   predictSec: number;
 }
-export const MATCH_DEFAULTS: MatcherOptions = { maxAccuracy: 60, predictSec: 4 };
+export const MATCH_DEFAULTS: MatcherOptions = { maxAccuracy: 60, predictSec: 2 };
+/** Дальше этого от сырой точки машинку на дорогу не переносим (полоса движения — не дальше ~10–15 м от оси дороги). */
+export const MAX_SNAP_M = 20;
+/** Прогноз — только на скорости (≥ 30 км/ч): на стоянке iOS может перестать присылать точки, и прогноз увёл бы машинку вперёд. */
+export const PREDICT_MIN_SPEED = 8;
+/** Скорость выше этой (≈ 200 км/ч) считаем ошибкой измерения. */
+export const MAX_SPEED = 55;
+/** Прогноз уводит машинку вперёд не дальше этого. */
+export const MAX_PREDICT_M = 40;
 
 /** Состояние сопоставления между точками. */
 export class Matcher {
@@ -110,12 +122,15 @@ export class Matcher {
   /** Кандидат на переход, подтверждения. */
   private pending: { id: string; n: number } | null = null;
   private last: { fix: MatchFix; res: MatchResult; speed: number } | null = null;
+  /** Когда последний раз ехали (≥ 2 м/с): стоя «в здании» к дороге не привязываем. */
+  private movedAt = -Infinity;
   constructor(private opts: MatcherOptions = MATCH_DEFAULTS) {}
 
   reset() {
     this.cur = null;
     this.pending = null;
     this.last = null;
+    this.movedAt = -Infinity;
   }
 
   get current() {
@@ -137,7 +152,8 @@ export class Matcher {
     if (fix.heading != null && moving) {
       const dh = adiff(fix.heading, travel);
       // Против одностороннего движения или поперёк — дорога маловероятна (параллельная встречная, съезд под углом).
-      cost += dh > 100 ? 12 : (dh / 30) ** 2;
+      // Расхождение больше 45° в движении — не «своя» дорога (поперечная, диагональная): стоимость выше порога правдоподобия.
+      cost += dh > 100 ? 12 : dh > 45 ? 8 + (dh / 30) ** 2 : (dh / 30) ** 2;
     }
     // История: держимся текущей дороги; переход на другую — небольшой штраф (на связанную — меньше).
     if (this.cur) {
@@ -151,16 +167,21 @@ export class Matcher {
 
   /** Новая точка GPS. lines — маршрут и дороги рядом (могут быть пустыми). */
   update(fix: MatchFix, lines: RoadLine[]): MatchResult {
-    const raw = (confidence = 0): MatchResult => ({ mode: 'raw', lat: fix.lat, lon: fix.lon, bearing: null, accuracy: fix.accuracy, confidence, lineId: null });
-    const speed = fix.speed ?? (this.last ? distM(this.last.fix, fix) / Math.max(0.5, (fix.t - this.last.fix.t) / 1000) : 0);
+    const raw = (reason: string, confidence = 0): MatchResult => ({ mode: 'raw', lat: fix.lat, lon: fix.lon, bearing: null, accuracy: fix.accuracy, confidence, lineId: null, reason, shift: 0 });
+    // Скорость: от устройства; иначе по двум точкам, но только если между ними ≥ 0,8 с. Точки, пришедшие пачкой
+    // (почти одновременно после паузы), давали «433 км/ч», и прогноз уносил машинку на сотню метров вперёд.
+    const dtS = this.last ? (fix.t - this.last.fix.t) / 1000 : 0;
+    const speed = Math.min(MAX_SPEED, fix.speed ?? (this.last && dtS >= 0.8 ? distM(this.last.fix, fix) / dtS : (this.last?.speed ?? 0)));
+    if (speed >= 2) this.movedAt = fix.t;
     const done = (res: MatchResult) => {
+      res.shift = distM(fix, res);
       this.last = { fix, res, speed };
       return res;
     };
     if (fix.accuracy > this.opts.maxAccuracy || !lines.length) {
       this.cur = null;
       this.pending = null;
-      return done(raw());
+      return done(raw(!lines.length ? 'нет данных о дорогах и маршрута рядом' : `точность ±${Math.round(fix.accuracy)} м хуже ${this.opts.maxAccuracy} м`));
     }
     const radius = Math.min(80, Math.max(25, fix.accuracy * 2 + 15));
     const cs = candidates(fix, lines, radius).map((c) => this.score(c, fix));
@@ -168,7 +189,7 @@ export class Matcher {
       // Рядом нет известных дорог (съехали с маршрута, а карта дорог не загружена) — без ложной привязки.
       this.cur = null;
       this.pending = null;
-      return done(raw());
+      return done(raw(`нет дорог в радиусе ${Math.round(radius)} м`));
     }
     cs.sort((a, b) => a.cost - b.cost);
     let best = cs[0];
@@ -188,7 +209,22 @@ export class Matcher {
     const ps = cs.map((c) => Math.exp(-(c.cost - cs[0].cost) / 2));
     const sum = ps.reduce((a, b) => a + b, 0);
     const pBest = Math.exp(-(best.cost - cs[0].cost) / 2) / sum;
-    const near = best.dist <= Math.max(12, fix.accuracy * 1.5);
+    // Не дальше заявленной точности и не дальше MAX_SNAP_M: иначе машинка «уезжает» на соседнюю дорогу из здания, двора, парковки.
+    // Держимся своей дороги после уверенной привязки — до MAX_SNAP_M (одиночный выброс не уводит машинку с дороги).
+    const snapLimit = held ? MAX_SNAP_M : Math.min(MAX_SNAP_M, Math.max(8, fix.accuracy * 1.5));
+    const near = best.dist <= snapLimit;
+    const why = `${best.line.id}${best.line.cls ? ` (${best.line.cls})` : ''}: ${Math.round(best.dist)} м, стоимость ${best.cost.toFixed(1)}${cs[1] && cs[1] !== best ? `; вторая ${cs[1].line.id === best.line.id ? cs[0].line.id : cs[1].line.id} — ${(cs[1] === best ? cs[0] : cs[1]).cost.toFixed(1)}` : '; других дорог рядом нет'}${held ? '; держимся своей дороги (переход не подтверждён)' : ''}`;
+    // Стоим и давно не ехали (вошли в здание, двор, парковка): к дороге не тянем, кроме совсем близкой.
+    const parked = speed < 1 && fix.t - this.movedAt > 30_000;
+    if (parked && best.dist > 6) {
+      this.cur = null;
+      this.pending = null;
+      return done(raw(`стоим, ближайшая дорога в ${Math.round(best.dist)} м — без привязки`));
+    }
+    if (!near && best.dist > snapLimit) {
+      this.cur = best;
+      return done(raw(`дорога ${best.line.id} в ${Math.round(best.dist)} м — дальше ${Math.round(snapLimit)} м, без привязки`));
+    }
     // Абсолютная правдоподобность: единственная дорога рядом ещё не значит «наша» (едем поперёк или против направления).
     const plausible = best.cost < 8;
     const confidence = (near ? Math.min(1, pBest) : pBest * 0.4) * (plausible ? 1 : 0.2);
@@ -196,8 +232,8 @@ export class Matcher {
     const bearing = best.travel;
     // Одиночный выброс к соседней дороге: остаёмся на своей (прыжок туда-обратно хуже, чем одна неточная точка).
     if (held && this.last?.res.mode === 'matched' && this.last.res.lineId === best.line.id)
-      return done({ mode: 'matched', lat: best.point.lat, lon: best.point.lon, bearing, accuracy: fix.accuracy, confidence: Math.max(confidence, 0.5), lineId: best.line.id });
-    if (confidence >= 0.7) return done({ mode: 'matched', lat: best.point.lat, lon: best.point.lon, bearing, accuracy: Math.min(fix.accuracy, 10), confidence, lineId: best.line.id });
+      return done({ mode: 'matched', lat: best.point.lat, lon: best.point.lon, bearing, accuracy: fix.accuracy, confidence: Math.max(confidence, 0.5), lineId: best.line.id, reason: why, shift: 0 });
+    if (confidence >= 0.7) return done({ mode: 'matched', lat: best.point.lat, lon: best.point.lon, bearing, accuracy: Math.min(fix.accuracy, 10), confidence, lineId: best.line.id, reason: why, shift: 0 });
     if (confidence >= 0.35) {
       // Сомнительно: смещаем к дороге частично — без резких скачков.
       const w = (confidence - 0.35) / 0.35;
@@ -209,9 +245,11 @@ export class Matcher {
         accuracy: fix.accuracy,
         confidence,
         lineId: best.line.id,
+        reason: `частично к дороге (уверенность ${confidence.toFixed(2)}): ${why}`,
+        shift: 0,
       });
     }
-    return done(raw(confidence));
+    return done(raw(`неуверенно (${confidence.toFixed(2)}): ${why}`, confidence));
   }
 
   /**
@@ -221,14 +259,14 @@ export class Matcher {
   predict(now: number): MatchResult | null {
     const l = this.last;
     const c = this.cur;
-    if (!l || !c || l.res.mode !== 'matched' || l.speed < 3) return null;
+    if (!l || !c || l.res.mode !== 'matched' || l.speed < PREDICT_MIN_SPEED) return null;
     const dt = (now - l.fix.t) / 1000;
     if (dt <= 1.5 || dt > this.opts.predictSec) return null;
-    const ahead = l.speed * dt;
+    const ahead = Math.min(MAX_PREDICT_M, l.speed * dt);
     const forward = adiff(c.travel, c.bearing) < 90; // едем по ходу линии
     const p = walk(c.line.coords, c.seg, c.f, forward ? ahead : -ahead);
     if (!p) return null;
-    return { mode: 'predicted', lat: p.lat, lon: p.lon, bearing: c.travel, accuracy: l.res.accuracy + l.speed * dt * 0.5, confidence: Math.max(0, l.res.confidence * (1 - dt / this.opts.predictSec)), lineId: c.line.id };
+    return { mode: 'predicted', lat: p.lat, lon: p.lon, bearing: c.travel, accuracy: l.res.accuracy + ahead * 0.5, confidence: Math.max(0, l.res.confidence * (1 - dt / this.opts.predictSec)), lineId: c.line.id, reason: `прогноз ${dt.toFixed(1)} с без новых точек, ${Math.round(l.speed * 3.6)} км/ч по ${c.line.id}`, shift: distM(l.fix, p) };
   }
 }
 

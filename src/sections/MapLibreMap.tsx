@@ -13,6 +13,7 @@ import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
 import { autoZoom, lookAheadOffset } from '../lib/camera';
 import { hudUiStore } from '../lib/hud';
 import { engineFallback } from '../lib/mapEngine';
+import { mapDiag, diagModeStore } from '../lib/diag';
 import { displayStore, setRoadProvider } from '../lib/matching/display';
 import type { RoadLine } from '../lib/matching/matcher';
 import { LongPressDetector } from '../lib/geo/longpress';
@@ -102,10 +103,30 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         // Нет WebGL или он отключён/исчерпан (на iOS — слишком много контекстов).
         return fail('WebGL недоступен');
       }
+      /* Диагностика жизненного цикла: создание/удаление, смена и загрузка стиля, ошибки, потеря WebGL, кадры. */
+      mapDiag.create();
+      map.on('style.load', () => mapDiag.styleLoad());
+      const canvas = map.getCanvas();
+      const onLost = () => mapDiag.contextLost();
+      const onRestored = () => mapDiag.contextRestored();
+      canvas.addEventListener('webglcontextlost', onLost);
+      canvas.addEventListener('webglcontextrestored', onRestored);
+      let frames = 0;
+      map.on('render', () => frames++);
+      const fpsTimer = setInterval(() => {
+        mapDiag.fps(frames);
+        frames = 0;
+      }, 1000);
+      cleanups.push(() => {
+        clearInterval(fpsTimer);
+        canvas.removeEventListener('webglcontextlost', onLost);
+        canvas.removeEventListener('webglcontextrestored', onRestored);
+      });
       // Стиль карты не загрузился (нет связи с сервером карты и нет кеша) — резервная карта.
       let styleLoaded = false;
       map.once('style.load', () => (styleLoaded = true));
       map.on('error', (e) => {
+        mapDiag.error(String((e.error as Error | undefined)?.message ?? e.error ?? 'неизвестно'));
         // Ошибки отдельных тайлов, значков и шрифтов — не повод уходить с карты; важен только сам стиль.
         const url = (e.error as { url?: string } | undefined)?.url;
         if (styleLoaded || (url && !url.includes('/styles/'))) return;
@@ -114,7 +135,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       });
       const styleTimer = setTimeout(() => !styleLoaded && fail('сервер карты не отвечает'), 25_000);
       cleanups.push(() => clearTimeout(styleTimer));
-      if (palette() === 'night') map.setStyle(styleUrl, { diff: false, transformStyle: paletteTransform('night') });
+      if (palette() === 'night') {
+        mapDiag.setStyle('ночная палитра при запуске');
+        map.setStyle(styleUrl, { diff: false, transformStyle: paletteTransform('night') });
+      }
       mapRef.current = map;
 
       /* ---------- Слои маршрута и точности ---------- */
@@ -134,7 +158,14 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         syncCar();
       };
       map.on('style.load', addLayers);
-      const unTheme = themeStore.subscribe(() => map.setStyle(styleUrl, { diff: false, transformStyle: paletteTransform(palette()) }));
+      // Стиль перезагружается только при смене палитры день ⇄ ночь (не на каждое изменение состояния темы).
+      let appliedPalette: 'day' | 'night' = palette();
+      const unTheme = themeStore.subscribe(() => {
+        if (palette() === appliedPalette) return;
+        appliedPalette = palette();
+        mapDiag.setStyle(`тема → ${appliedPalette}`);
+        map.setStyle(styleUrl, { diff: false, transformStyle: paletteTransform(appliedPalette) });
+      });
       cleanups.push(unTheme);
 
       const drawRoute = () => {
@@ -192,6 +223,19 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (Number.isFinite(idx)) selectRoute(idx);
       });
 
+      /* ---------- Диагностический режим: сырая точка GPS отдельным маркером (машинка — скорректированная позиция) ---------- */
+      const rawEl = document.createElement('div');
+      rawEl.className = 'diag-raw';
+      rawEl.title = 'Сырая точка GPS браузера';
+      const rawMarker = new ml.Marker({ element: rawEl });
+      const drawRaw = () => {
+        const g = geoStore.get();
+        if (diagModeStore.get().on && g.lat != null && g.lon != null) rawMarker.setLngLat([g.lon, g.lat]).addTo(map);
+        else rawMarker.remove();
+      };
+      cleanups.push(geoStore.subscribe(drawRaw), diagModeStore.subscribe(drawRaw), () => rawMarker.remove());
+      drawRaw();
+
       /* ---------- Машинка: 3D-слой или плоская; плавно между точками GPS ---------- */
       let carNow: { lon: number; lat: number; heading: number } | null = null;
       const car3d = createCar3dLayer(
@@ -220,10 +264,12 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       let t0 = 0;
       let headingShown = 0;
       let headingTarget: number | null = null;
+      // Машинка доезжает до новой точки за время между точками (0,25–1 с), а не всегда за 1 с — без отставания.
+      let moveMs = 1000;
       const carPos = (now: number): LatLon | null => {
         if (!to) return null;
         if (!from) return to;
-        const k = Math.min(1, (now - t0) / 1000);
+        const k = Math.min(1, (now - t0) / moveMs);
         return { lat: from.lat + (to.lat - from.lat) * k, lon: from.lon + (to.lon - from.lon) * k };
       };
       let raf = 0;
@@ -274,7 +320,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         const zoom = userZoom ? map.getZoom() : autoZoom(g.speedKmh, n.progress?.toStepM ?? null);
         const heading = headingTarget ?? map.getBearing();
         const offset: [number, number] = course ? [0, size.height * 0.24] : (lookAheadOffset(heading, size.width, size.height).map((v) => -v) as [number, number]);
-        map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? PITCH : 0, zoom, offset, duration: immediate ? 600 : 1000, easing: (x) => x, essential: true });
+        map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? PITCH : 0, zoom, offset, duration: immediate ? 600 : moveMs, easing: (x) => x, essential: true });
       };
       cleanups.push(
         settingsStore.subscribe(() => camera.current(true)),
@@ -289,6 +335,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           const now = performance.now();
           from = carPos(now) ?? { lat: g.lat, lon: g.lon };
           to = { lat: g.lat, lon: g.lon };
+          if (t0) moveMs = Math.min(1000, Math.max(250, now - t0));
           t0 = now;
           if (g.heading != null) headingTarget = g.heading;
           camera.current();
@@ -428,7 +475,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             heading: headingTarget,
             car: c ? { x: c.x / r.width, y: c.y / r.height } : null,
             car3d: use3d() && !!map.getLayer('car-3d'),
-            display: { mode: displayStore.get().mode, lineId: displayStore.get().lineId },
+            display: (({ mode, lineId, shift, lat, lon, reason }) => ({ mode, lineId, shift, lat, lon, reason }))(displayStore.get()),
+            styleReady: !!(map as unknown as { style?: { _loaded?: boolean } }).style?._loaded,
             raw: { lat: geoStore.get().lat, lon: geoStore.get().lon },
             accuracyCircle: accShown,
             routePoints: navStore.get().route?.coords.length ?? 0,
@@ -446,6 +494,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         markers.poi.forEach((m) => m.remove());
         p.apiRef.current = null;
         delete (window as unknown as { __aceMap?: unknown }).__aceMap;
+        mapDiag.remove();
         map.remove();
         mapRef.current = null;
       });

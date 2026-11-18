@@ -6,6 +6,7 @@ import { geoStore, navStore, readLastPos } from '../lib/nav';
 import { DEFAULT_STYLE_URL, paletteTransform } from '../lib/mapStyle';
 import { autoZoom } from '../lib/camera';
 import { displayStore } from '../lib/matching/display';
+import { mapDiag } from '../lib/diag';
 import { unwrapAngle } from '../lib/carMarker';
 import type { LatLon } from '../lib/routing';
 
@@ -43,6 +44,7 @@ export function HudMap({ color }: { color: string }) {
         fadeDuration: 0,
       });
       mapRef.current = map;
+      mapDiag.create('HUD-карта');
       const restyle = () => map.setStyle(DEFAULT_STYLE_URL, { diff: false, transformStyle: paletteTransform('hud', { roadColor: '#8d969f' }) });
       restyle();
 
@@ -142,6 +144,7 @@ export function HudMap({ color }: { color: string }) {
     return () => {
       disposed = true;
       cleanups.forEach((f) => f());
+      if (mapRef.current) mapDiag.remove('HUD-карта');
       mapRef.current?.remove();
       mapRef.current = null;
     };
