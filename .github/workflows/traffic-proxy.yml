@@ -80,7 +80,21 @@ jobs:
           PY
           }
           fetch https://developer.tomtom.com/pricing all
-          fetch https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/v1/product-information/market-coverage 'grep:ukrain|belarus|poland|moldova'
+          echo "=================== FAQ (ответы в данных страницы)"
+          python3 - <<'PY2'
+          import re, html
+          raw = open('/tmp/page.html', encoding='utf-8', errors='ignore').read().replace('\\"', '"')
+          for q in ['monthly request limit', 'cap for monthly', 'free forever', 'credit card', 'per account or per API key']:
+              i = raw.find(q)
+              if i >= 0:
+                  seg = re.sub(r'<[^>]+>', ' ', html.unescape(raw[i:i + 1500]))
+                  print('---', q, ':', re.sub(r'\s+', ' ', seg)[:900])
+          PY2
+          for u in https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/v1/product-information/market-coverage \
+                   https://docs.tomtom.com/traffic-api/documentation/tomtom-orbis-maps/v1/product-information/market-coverage \
+                   https://docs.tomtom.com/routing-api/documentation/tomtom-maps/product-information/market-coverage; do
+            fetch "$u" 'grep:\|'
+          done
           for u in https://developer.tomtom.com/terms-and-conditions https://www.tomtom.com/legal/ \
                    https://developer.tomtom.com/legal https://www.tomtom.com/en_gb/legal/developer-terms/ \
                    https://download.tomtom.com/open/legal/maps-apis-license-agreement.pdf; do
