@@ -1,7 +1,7 @@
 import { diagModeStore } from '../lib/diag';
 import { mapRuntimeStore } from '../lib/mapEngine';
-import { hudSettingsStore, HUD_MODES, HUD_COLORS, openHud, type HudSettings, type HudColor } from '../lib/hud';
-import { useEffect, useState } from 'react';
+import { hudSettingsStore, HUD_MODES, HUD_COLORS, HUD_LOOKS, HUD_SWATCHES, DEFAULT_HUD_MANUAL, hudAppearance, openHud, type HudSettings, type HudColor, type HudManual } from '../lib/hud';
+import { useEffect, useState, type ReactElement } from 'react';
 import { Icon } from '../components/Icon';
 import { useStore } from '../lib/store';
 import { settingsStore, toast, closePage, type Settings as SettingsT, type VehicleProfile, type AiProvider } from '../lib/state';
@@ -615,6 +615,88 @@ function ResetButton() {
   );
 }
 
+type Seg = <T extends string | boolean>(label: string, value: T, opts: readonly (readonly [T, string])[], on: (v: T) => void) => ReactElement;
+
+/** Палитра HUD: «Авто» / «Дневной» / «Ручной»; в «Ручном» — цвета цифр и указаний, размеры, яркость, сброс и образец. */
+function HudLookSettings({ h, patch, seg }: { h: HudSettings; patch: (p: Partial<HudSettings>) => void; seg: Seg }) {
+  const dark = useStore(themeStore).active === 'night';
+  const look = hudAppearance(h, dark);
+  const m: HudManual = { ...DEFAULT_HUD_MANUAL, ...(h.manual ?? {}) };
+  const setM = (p: Partial<HudManual>) => patch({ manual: { ...m, ...p } });
+  const colorRow = (label: string, key: 'digits' | 'arrows', hint: string) => (
+    <div className="setting-row">
+      <div>
+        <strong>{label}</strong>
+        <small>{hint}</small>
+      </div>
+      <div className="seg hud-manual-colors" role="radiogroup" aria-label={label}>
+        {HUD_SWATCHES.map((c) => (
+          <button key={c} type="button" role="radio" aria-checked={m[key] === c} aria-label={`${label}: ${c}`} className={`chip hud-color-chip ${m[key] === c ? 'is-active' : ''}`} onClick={() => setM({ [key]: c })}>
+            <span className="hud-dot" style={{ background: c }} />
+          </button>
+        ))}
+        <label className="chip hud-color-custom" title="Свой цвет">
+          <input type="color" value={m[key]} aria-label={`${label}: свой цвет`} onChange={(e) => setM({ [key]: e.target.value })} />
+          Свой
+        </label>
+      </div>
+    </div>
+  );
+  const slider = (label: string, value: number, min: number, max: number, on: (v: number) => void, aria: string) => (
+    <div className="setting-row">
+      <div>
+        <strong>
+          {label}: {Math.round(value * 100)}%
+        </strong>
+      </div>
+      <input type="range" min={min} max={max} step={5} value={Math.round(value * 100)} aria-label={aria} onChange={(e) => on(Number(e.target.value) / 100)} />
+    </div>
+  );
+  return (
+    <>
+      <div className="setting-row">
+        <div>
+          <strong>Палитра</strong>
+          <small>{HUD_LOOKS.find((l) => l.id === (h.look ?? 'auto'))?.hint}</small>
+        </div>
+        {seg('Палитра HUD', h.look ?? 'auto', HUD_LOOKS.map((l) => [l.id, l.label] as const), (v) => patch({ look: v }))}
+      </div>
+      {/* Образец — как будет выглядеть сейчас (без зеркала) */}
+      <div className="hud-preview" data-palette={look.palette} aria-label="Образец HUD" style={{ opacity: look.brightness }}>
+        <span className="hud-preview-arrow" style={{ color: look.arrows, fontSize: `${2.2 * look.arrowsScale}rem` }}>
+          <Icon name="arrowRight" size="1em" stroke={2.6} />
+        </span>
+        <span style={{ color: look.digits, fontSize: `${1.6 * look.digitsScale}rem` }}>300 м</span>
+        <span className="hud-preview-instr" style={{ color: look.arrows, fontSize: `${0.9 * look.arrowsScale}rem` }}>
+          Поверните направо
+        </span>
+        <strong style={{ color: look.digits, fontSize: `${2.2 * look.digitsScale}rem` }}>72</strong>
+        <small className="muted">
+          {look.palette === 'night' ? 'Сейчас: обычная (ночная) палитра' : look.palette === 'day' ? 'Сейчас: дневная палитра' : 'Сейчас: ручная палитра'}
+        </small>
+      </div>
+      {h.look === 'manual' && (
+        <div className="hud-manual" aria-label="Ручная палитра HUD">
+          {colorRow('Цвет скорости и цифр', 'digits', 'Скорость, расстояние до манёвра, время прибытия и остаток')}
+          {colorRow('Цвет стрелок и указаний', 'arrows', 'Стрелки манёвров, линия маршрута, текст подсказок')}
+          {slider('Размер цифр', m.digitsScale, 70, 180, (v) => setM({ digitsScale: v }), 'Размер цифр HUD')}
+          {slider('Размер стрелок и указаний', m.arrowsScale, 70, 180, (v) => setM({ arrowsScale: v }), 'Размер стрелок HUD')}
+          {slider('Яркость графики', m.brightness, 30, 100, (v) => setM({ brightness: v }), 'Яркость графики HUD')}
+          <div className="setting-row">
+            <div>
+              <strong>Стандартные значения</strong>
+              <small>Сбросить цвета, размеры и яркость ручной палитры</small>
+            </div>
+            <button type="button" className="btn" onClick={() => patch({ manual: { ...DEFAULT_HUD_MANUAL } })}>
+              Сбросить
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** HUD — проекция на лобовое стекло: режим, зеркало, цвет, яркость оформления, контраст, масштаб. */
 function HudSettingsCard() {
   const h = useStore(hudSettingsStore);
@@ -652,9 +734,11 @@ function HudSettingsCard() {
         </div>
         {seg('Зеркало', h.mirror, [[true, 'Включено'], [false, 'Выключено']] as const, (v) => patch({ mirror: v }))}
       </div>
+      <HudLookSettings h={h} patch={patch} seg={seg} />
       <div className="setting-row">
         <div>
           <strong>Цвет</strong>
+          <small>Обычная палитра HUD — в режиме «Авто» ночью</small>
         </div>
         <div className="seg" role="radiogroup" aria-label="Цвет HUD">
           {(Object.keys(HUD_COLORS) as HudColor[]).map((c) => (
@@ -667,7 +751,7 @@ function HudSettingsCard() {
       <div className="setting-row">
         <div>
           <strong>Яркость оформления: {Math.round(h.brightness * 100)}%</strong>
-          <small>Ночью уменьшайте — меньше бликов и отвлечения</small>
+          <small>Обычная палитра (ночью в «Авто»). Ночью уменьшайте — меньше бликов и отвлечения</small>
         </div>
         <input type="range" min={30} max={100} step={5} value={Math.round(h.brightness * 100)} aria-label="Яркость оформления HUD" onChange={(e) => patch({ brightness: Number(e.target.value) / 100 })} />
       </div>

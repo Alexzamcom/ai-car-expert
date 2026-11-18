@@ -26,29 +26,32 @@
 .hud-top { display: flex; justify-content: center; }
 .hud-maneuver { display: flex; align-items: center; gap: 0.25em; font-size: calc(6rem * var(--s)); line-height: 1; max-width: 100%; }
 .hud-maneuver > div { min-width: 0; }
-.hud-dist { font-size: calc(3.8rem * var(--s)); font-variant-numeric: tabular-nums; }
+/* Цифры (скорость, расстояние, прибытие) — свой цвет и размер; без ручной палитры совпадают с общими (--hud-color, --hud-scale). */
+.hud { --sn: var(--hud-scale-num, var(--hud-scale, 1)); }
+.hud-dist, .hud-eta, .hud-speed { color: var(--hud-digits, var(--hud-color, #3ee6ff)); }
+.hud-dist { font-size: calc(3.8rem * var(--sn)); font-variant-numeric: tabular-nums; }
 .hud-instr { font-size: calc(1.45rem * var(--s)); opacity: 0.8; margin-top: 0.3em; max-width: 62vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hud-status { font-size: calc(2.2rem * var(--s)); }
 .hud-bottom { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
 .hud-eta { display: grid; gap: 0.2em; }
-.hud-eta strong { font-size: calc(2.6rem * var(--s)); font-variant-numeric: tabular-nums; line-height: 1; }
-.hud-eta span { font-size: calc(1.3rem * var(--s)); opacity: 0.75; }
+.hud-eta strong { font-size: calc(2.6rem * var(--sn)); font-variant-numeric: tabular-nums; line-height: 1; }
+.hud-eta span { font-size: calc(1.3rem * var(--sn)); opacity: 0.75; }
 .hud-speed { display: grid; justify-items: end; line-height: 0.9; }
-.hud-speed strong { font-size: calc(5.5rem * var(--s)); font-variant-numeric: tabular-nums; }
-.hud-speed span { font-size: calc(1.2rem * var(--s)); opacity: 0.75; }
+.hud-speed strong { font-size: calc(5.5rem * var(--sn)); font-variant-numeric: tabular-nums; }
+.hud-speed span { font-size: calc(1.2rem * var(--sn)); opacity: 0.75; }
 .hud-speed.is-unknown strong { opacity: 0.5; }
-.mode-route-speed .hud-speed strong { font-size: calc(7.5rem * var(--s)); }
+.mode-route-speed .hud-speed strong { font-size: calc(7.5rem * var(--sn)); }
 /* Минимальный: огромная стрелка по центру */
 .mode-minimal .hud-big-arrow { position: absolute; inset: 0; display: grid; place-items: center; font-size: calc(min(46vw, 40vh) * var(--s)); pointer-events: none; }
 .mode-minimal .hud-maneuver > svg { display: none; }
-.mode-minimal .hud-dist { font-size: calc(5rem * var(--s)); }
-.mode-minimal .hud-speed strong { font-size: calc(6.5rem * var(--s)); }
+.mode-minimal .hud-dist { font-size: calc(5rem * var(--sn)); }
+.mode-minimal .hud-speed strong { font-size: calc(6.5rem * var(--sn)); }
 @media (orientation: landscape) {
   .mode-minimal .hud-big-arrow { font-size: calc(min(34vw, 52vh) * var(--s)); }
   .hud-maneuver { font-size: calc(5rem * var(--s)); }
 }
 @media (max-width: 500px), (max-height: 500px) {
-  .hud { --s: calc(var(--hud-scale, 1) * 0.72); }
+  .hud { --s: calc(var(--hud-scale, 1) * 0.72); --sn: calc(var(--hud-scale-num, var(--hud-scale, 1)) * 0.72); }
 }
 /* Управление: не зеркалится, приглушено */
 .hud-exit {
@@ -75,3 +78,17 @@
 .hud-warning-card li { margin: 0 0 10px; line-height: 1.4; font-size: 1.05rem; }
 .hud-warning-actions { display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
 .hud-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: -2px; }
+/* Настройки: образец HUD и ручная палитра (в разделе «Настройки», не на экране HUD). Фон образца — чёрный, как у HUD. */
+.hud-preview {
+  display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto auto auto; align-items: center; gap: 2px 14px;
+  margin: 6px 0 10px; padding: 14px 18px; border-radius: 14px; background: #000; font-weight: 800; line-height: 1.05;
+  font-family: system-ui, -apple-system, 'SF Pro Display', Roboto, sans-serif; overflow: hidden;
+}
+.hud-preview-arrow { grid-row: 1 / span 2; display: grid; }
+.hud-preview-instr { grid-column: 2; font-weight: 700; opacity: 0.8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hud-preview strong { grid-column: 3; grid-row: 1 / span 2; font-variant-numeric: tabular-nums; }
+.hud-preview small { grid-column: 1 / -1; font-weight: 500; font-size: 0.8rem; color: #9aa3ad; margin-top: 6px; }
+.hud-manual { display: grid; }
+.hud-manual-colors { flex-wrap: wrap; }
+.hud-color-custom { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.hud-color-custom input { width: 26px; height: 26px; padding: 0; border: none; background: none; }

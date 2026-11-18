@@ -388,6 +388,19 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   await page.click('.dock [aria-label="Ещё разделы"]');
   await page.click('.more-item:has-text("Настройки")');
   // «Игровая 3D»: переключение во время ведения — один раз перезагружается стиль, машинка и маршрут на месте, камера круче.
+  // Настройки HUD: палитры «Авто / Дневной / Ручной», ручной редактор, образец, сброс к стандартным.
+  await page.evaluate(() => [...document.querySelectorAll('[aria-label="Палитра HUD"] [role=radio]')].find((b) => b.textContent.trim() === 'Ручной')?.click());
+  await page.waitForSelector('.hud-manual', { timeout: 5000 }).catch(() => {});
+  await page.evaluate(() => document.querySelector('.hud-manual [aria-label="Цвет скорости и цифр: #ff5a5a"]')?.click());
+  const hm1 = await page.evaluate(() => ({ editor: !!document.querySelector('.hud-manual'), sliders: document.querySelectorAll('.hud-manual input[type=range]').length, custom: document.querySelectorAll('.hud-manual input[type=color]').length, preview: document.querySelector('.hud-preview')?.dataset.palette, digits: JSON.parse(localStorage.getItem('ace:hud')).manual?.digits }));
+  await page.evaluate(() => [...document.querySelectorAll('.hud-manual button')].find((b) => b.textContent.trim() === 'Сбросить')?.click());
+  const hm2 = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:hud')).manual);
+  check(
+    `Настройки HUD (${name}): «Ручной» — цвета цифр и стрелок (готовые и свой), размеры, яркость, образец, сброс`,
+    hm1.editor && hm1.sliders === 3 && hm1.custom === 2 && hm1.preview === 'manual' && hm1.digits === '#ff5a5a' && hm2.digits === '#f2f4f7' && hm2.arrows === '#3ee6ff' && hm2.digitsScale === 1 && hm2.brightness === 0.9,
+    JSON.stringify({ hm1, hm2 }),
+  );
+  await page.evaluate(() => [...document.querySelectorAll('[aria-label="Палитра HUD"] [role=radio]')].find((b) => b.textContent.trim() === 'Авто')?.click());
   // Тема «День» явно: при авто-теме в CI может быть ночь по солнцу (ночная игровая карта проверяется ниже отдельно).
   await page.click('[aria-label="Тема оформления"] [role=radio]:has-text("День")');
   await page.waitForFunction(() => window.__aceMap.state().palette === 'day' && window.__aceMap.state().styleReady, null, { timeout: 15000 }).catch(() => {});
@@ -503,8 +516,49 @@ async function checkHud(page, ctx, name, slug, full) {
     await page.click('.hud-chip:has-text("Зеркально")');
     await page.click('.hud-swatch[aria-label="Цвет: Зелёный"]');
     await page.click('.hud-chip[aria-label="Темнее"]');
-    const st = await page.evaluate(() => ({ color: getComputedStyle(document.querySelector('.hud')).color, op: getComputedStyle(document.querySelector('.hud-stage')).opacity }));
-    check(`HUD (${name}): цвет и яркость оформления`, st.color === 'rgb(57, 255, 136)' && Math.abs(Number(st.op) - 0.75) < 0.01, JSON.stringify(st));
+    // «Авто»: ночью — обычная (ночная) палитра как прежде; днём — дневная. Тема в тесте — по солнцу, поэтому проверяем по ней.
+    const st = await page.evaluate(() => ({
+      color: getComputedStyle(document.querySelector('.hud')).color,
+      op: getComputedStyle(document.querySelector('.hud-stage')).opacity,
+      palette: document.querySelector('.hud').dataset.palette,
+      dark: document.documentElement.dataset.theme === 'night',
+      saved: JSON.parse(localStorage.getItem('ace:hud') || '{}'),
+    }));
+    check(
+      `HUD (${name}): цвет и яркость оформления («Авто»: ночью — обычная палитра, днём — дневная)`,
+      st.saved.color === 'green' && Math.abs(st.saved.brightness - 0.75) < 0.01 &&
+        (st.dark ? st.palette === 'night' && st.color === 'rgb(57, 255, 136)' && Math.abs(Number(st.op) - 0.75) < 0.01 : st.palette === 'day' && st.color === 'rgb(255, 225, 74)' && Number(st.op) === 1),
+      JSON.stringify(st),
+    );
+    // «Дневной» — всегда дневная; «Ручной» — свои цвета цифр и стрелок, яркость (в любое время суток)
+    const dyPalette = () => (st.dark ? 'night' : 'day');
+    const palette = async (label, id) => {
+      await page.evaluate(() => document.querySelector('.hud-stage')?.click());
+      await page.waitForSelector('.hud-chip', { timeout: 10000 });
+      await page.evaluate((l) => [...document.querySelectorAll('.hud-chips[aria-label="Палитра HUD"] .hud-chip')].find((b) => b.textContent.trim() === l)?.click(), label);
+      await page.waitForFunction((x) => document.querySelector('.hud')?.dataset.palette === x, id, { timeout: 5000 }).catch(() => {});
+    };
+    const look = () =>
+      page.evaluate(() => ({
+        palette: document.querySelector('.hud').dataset.palette,
+        digits: getComputedStyle(document.querySelector('.hud-dist') ?? document.querySelector('.hud-status')).color,
+        arrows: getComputedStyle(document.querySelector('.hud')).color,
+        op: getComputedStyle(document.querySelector('.hud-stage')).opacity,
+      }));
+    await palette('Дневной', 'day');
+    const dy = await look();
+    check(`HUD (${name}): «Дневной» — белые цифры, жёлтые указания, полная яркость`, dy.palette === 'day' && (dy.digits === 'rgb(255, 255, 255)' || dy.digits === 'rgb(255, 225, 74)') && dy.arrows === 'rgb(255, 225, 74)' && Number(dy.op) === 1, JSON.stringify(dy));
+    await palette('Ручной', 'manual');
+    await page.evaluate(() => document.querySelector('.hud-swatch[aria-label="Цвет: Янтарный"]')?.click());
+    await page.evaluate(() => document.querySelector('.hud-chip[aria-label="Темнее"]')?.click());
+    const mn2 = await look();
+    const savedM = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:hud')).manual);
+    check(
+      `HUD (${name}): «Ручной» — свои цвета стрелок и цифр, яркость; обычная палитра не меняется`,
+      mn2.palette === 'manual' && mn2.arrows === 'rgb(255, 174, 58)' && savedM.arrows === '#ffae3a' && Math.abs(savedM.brightness - 0.8) < 0.01 && Math.abs(Number(mn2.op) - 0.8) < 0.01 &&
+        (await page.evaluate(() => JSON.parse(localStorage.getItem('ace:hud')).color)) === 'green',
+      JSON.stringify({ ...mn2, savedM }),
+    );
     // Голос — кнопка доступна в HUD
     await page.click('.hud-chip[aria-label*="голосовые"]');
     const muted = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:settings')).speakNavigation === false);
@@ -516,6 +570,9 @@ async function checkHud(page, ctx, name, slug, full) {
     await page.waitForFunction(() => !!document.querySelector('.hud-dist'), null, { timeout: 25000 }).catch(() => {});
     const rs = await page.evaluate(() => ({ mode: document.querySelector('.hud')?.dataset.mode, mirror: document.querySelector('.hud')?.dataset.mirror, dist: !!document.querySelector('.hud-dist'), warn: !!document.querySelector('.hud-warning') }));
     check(`HUD (${name}): после перезапуска — HUD, режим и маршрут восстановлены`, rs.mode === 'minimal' && rs.mirror === '1' && rs.dist && !rs.warn, JSON.stringify(rs));
+    const rp = await page.evaluate(() => ({ palette: document.querySelector('.hud')?.dataset.palette, arrows: getComputedStyle(document.querySelector('.hud')).color, op: getComputedStyle(document.querySelector('.hud-stage')).opacity }));
+    check(`HUD (${name}): после перезапуска — ручная палитра сохранена`, rp.palette === 'manual' && rp.arrows === 'rgb(255, 174, 58)' && Math.abs(Number(rp.op) - 0.8) < 0.01, JSON.stringify(rp));
+    await palette('Авто', dyPalette());
     // После перезапуска курс неизвестен, пока машина не поедет.
     for (let k = 8; k <= 10; k++) {
       await ctx.setGeolocation({ latitude: R.latitude + 0.0005 * k, longitude: R.longitude - 0.0001 * k, accuracy: 6 });

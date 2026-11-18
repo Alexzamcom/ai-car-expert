@@ -5,6 +5,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useStore } from '../lib/store';
 import { geoStore, navStore, navLang, setNavigationVoice, readNavSession } from '../lib/nav';
 import { settingsStore } from '../lib/state';
+import { themeStore } from '../lib/theme';
 import { setKeepAwake } from '../lib/wakeLock';
 import { stepIcon, stepText, fmtDistance, fmtDuration, type LatLon, type Route } from '../lib/routing';
 import { unwrapAngle } from '../lib/carMarker';
@@ -14,6 +15,8 @@ import {
   closeHud,
   HUD_MODES,
   HUD_COLORS,
+  HUD_LOOKS,
+  hudAppearance,
   hudShowsSpeed,
   reliableSpeed,
   hudRangeM,
@@ -21,6 +24,7 @@ import {
   toCarFrame,
   type HudMode,
   type HudColor,
+  type HudLook,
 } from '../lib/hud';
 import { Icon } from '../components/Icon';
 import '../styles/hud.css';
@@ -102,7 +106,11 @@ function HudScreen() {
   const hideTimer = useRef(0);
   useTick(1000); // свежесть скорости и время прибытия
   const lang = navLang();
-  const color = HUD_COLORS[s.color][1];
+  // Оформление: ночью в «Авто» — прежняя палитра без изменений; днём — дневная; «Ручной» — свои цвета и размеры.
+  const dark = useStore(themeStore).active === 'night';
+  const look = hudAppearance(s, dark);
+  const color = look.arrows;
+  const manual = look.palette === 'manual';
 
   const showControls = () => {
     setControls(true);
@@ -148,13 +156,19 @@ function HudScreen() {
 
   return (
     <div
-      className={`hud mode-${s.mode} contrast-${s.contrast}`}
-      style={{ ['--hud-color' as string]: color, ['--hud-scale' as string]: String(s.scale) }}
+      className={`hud mode-${s.mode} contrast-${look.contrast}`}
+      style={{
+        ['--hud-color' as string]: color,
+        ['--hud-digits' as string]: look.digits,
+        ['--hud-scale' as string]: String(look.arrowsScale),
+        ['--hud-scale-num' as string]: String(look.digitsScale),
+      }}
       data-mode={s.mode}
+      data-palette={look.palette}
       data-mirror={s.mirror ? '1' : '0'}
       onClick={showControls}
     >
-      <div className={`hud-stage ${s.mirror ? 'is-mirrored' : ''}`} style={{ opacity: s.brightness }} data-testid="hud-stage">
+      <div className={`hud-stage ${s.mirror ? 'is-mirrored' : ''}`} style={{ opacity: look.brightness }} data-testid="hud-stage">
         {s.mode === 'map' ? (
           <Suspense fallback={null}>
             <HudMap color={color} />
@@ -199,21 +213,40 @@ function HudScreen() {
             <button className="hud-chip" onClick={() => setNavigationVoice(!voiceOn)} aria-pressed={!voiceOn} aria-label={voiceOn ? 'Выключить голосовые подсказки' : 'Включить голосовые подсказки'}>
               <Icon name={voiceOn ? 'speaker' : 'speakerOff'} /> {voiceOn ? 'Звук' : 'Без звука'}
             </button>
-            <button className="hud-chip" onClick={() => set({ brightness: Math.max(0.3, +(s.brightness - 0.1).toFixed(2)) })} aria-label="Темнее">
+            {/* Яркость и цвет: в «Ручном» — ручной палитры, иначе — обычной (ночной), как раньше. Дневная палитра фиксирована. */}
+            <button
+              className="hud-chip"
+              onClick={() => (manual ? set({ manual: { ...s.manual, brightness: Math.max(0.3, +(look.brightness - 0.1).toFixed(2)) } }) : set({ brightness: Math.max(0.3, +(s.brightness - 0.1).toFixed(2)) }))}
+              aria-label="Темнее"
+            >
               <Icon name="moon" /> −
             </button>
-            <button className="hud-chip" onClick={() => set({ brightness: Math.min(1, +(s.brightness + 0.1).toFixed(2)) })} aria-label="Ярче">
+            <button
+              className="hud-chip"
+              onClick={() => (manual ? set({ manual: { ...s.manual, brightness: Math.min(1, +(look.brightness + 0.1).toFixed(2)) } }) : set({ brightness: Math.min(1, +(s.brightness + 0.1).toFixed(2)) }))}
+              aria-label="Ярче"
+            >
               <Icon name="sun" /> +
             </button>
-            {(Object.keys(HUD_COLORS) as HudColor[]).map((c) => (
-              <button
-                key={c}
-                className={`hud-swatch ${s.color === c ? 'is-active' : ''}`}
-                style={{ background: HUD_COLORS[c][1] }}
-                onClick={() => set({ color: c })}
-                aria-label={`Цвет: ${HUD_COLORS[c][0]}`}
-                aria-pressed={s.color === c}
-              />
+            {(Object.keys(HUD_COLORS) as HudColor[]).map((c) => {
+              const active = manual ? s.manual.arrows === HUD_COLORS[c][1] : s.color === c;
+              return (
+                <button
+                  key={c}
+                  className={`hud-swatch ${active ? 'is-active' : ''}`}
+                  style={{ background: HUD_COLORS[c][1] }}
+                  onClick={() => (manual ? set({ manual: { ...s.manual, arrows: HUD_COLORS[c][1] } }) : set({ color: c }))}
+                  aria-label={`Цвет: ${HUD_COLORS[c][0]}`}
+                  aria-pressed={active}
+                />
+              );
+            })}
+          </div>
+          <div className="hud-chips" role="radiogroup" aria-label="Палитра HUD">
+            {HUD_LOOKS.map((l) => (
+              <button key={l.id} role="radio" className={`hud-chip ${s.look === l.id ? 'is-active' : ''}`} onClick={() => set({ look: l.id as HudLook })} aria-checked={s.look === l.id}>
+                {l.label}
+              </button>
             ))}
           </div>
         </div>
