@@ -72,15 +72,24 @@ async function soak(key) {
   await page.goto(url, { waitUntil: 'load' });
   await page.waitForFunction(() => window.__aceMap?.state?.().car3d, null, { timeout: 60000 }).catch(() => {});
 
-  // Маршрут и «Поехали».
-  await page.fill('#map-search', 'Театр Сатиры');
-  await page.press('#map-search', 'Enter');
-  await page.locator('.map-panel .place-row').first().click({ timeout: 20000 }).catch(() => {});
-  await page.locator('.pick-card button:has-text("Маршрут сюда")').click({ timeout: 10000 }).catch(() => {});
-  await page.waitForSelector('.route-card .btn-primary:has-text("Поехали")', { timeout: 30000 }).catch(() => {});
-  await page.evaluate(() => [...document.querySelectorAll('.route-card .btn-primary')].find((b) => b.textContent.includes('Поехали'))?.click());
-  await page.waitForTimeout(3000);
-  const guiding = await page.evaluate(() => !!document.querySelector('.guide-bar, .maneuver'));
+  // Маршрут и «Поехали». На опубликованной версии поиск и маршрут идут через публичные Nominatim/OSRM:
+  // при их задержке или ограничении частоты (параллельные прогоны с одного адреса) — повтор через 10 с.
+  let guiding = false;
+  for (let attempt = 1; attempt <= 3 && !guiding; attempt++) {
+    if (attempt > 1) {
+      console.log(`${name}: маршрут не построен, попытка ${attempt}`);
+      await page.waitForTimeout(10000);
+    }
+    await page.fill('#map-search', '');
+    await page.fill('#map-search', 'Театр Сатиры');
+    await page.press('#map-search', 'Enter');
+    await page.locator('.map-panel .place-row').first().click({ timeout: 20000 }).catch(() => {});
+    await page.locator('.pick-card button:has-text("Маршрут сюда")').click({ timeout: 10000 }).catch(() => {});
+    await page.waitForSelector('.route-card .btn-primary:has-text("Поехали")', { timeout: 30000 }).catch(() => {});
+    await page.evaluate(() => [...document.querySelectorAll('.route-card .btn-primary')].find((b) => b.textContent.includes('Поехали'))?.click());
+    await page.waitForTimeout(3000);
+    guiding = await page.evaluate(() => !!document.querySelector('.guide-bar, .maneuver'));
+  }
   check(`${name}: ведение по маршруту запущено (вид карты: ${LOOK})`, guiding);
 
   const base = await page.evaluate(() => ({ map: window.__aceDiag.map(), state: window.__aceMap.state() }));
