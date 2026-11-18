@@ -11,10 +11,12 @@ export const SOURCES = [
   { id: 'here', name: 'HERE Traffic API v7', url: 'https://docs.here.com/traffic-api/docs/traffic-coverage-information', kind: 'column', column: /^flow$/i },
   { id: 'azure', name: 'Azure Maps Traffic', url: 'https://learn.microsoft.com/en-us/azure/azure-maps/traffic-coverage', kind: 'column', column: /^flow$/i },
   { id: 'google', name: 'Google Maps Platform (Traffic Layer)', url: 'https://developers.google.com/maps/coverage', kind: 'column', column: /^traffic layer$/i },
+  // Mapbox: список стран, где время маршрута driving-traffic считается по живым и типовым пробкам (Markdown-версия страницы).
+  { id: 'mapbox', name: 'Mapbox Directions driving-traffic', url: 'https://docs.mapbox.com/help/dive-deeper/directions.md', kind: 'mdlist', heading: '#### Traffic Coverage' },
 ];
 
 /** Ожидаемое сейчас (ноябрь 2026): пробок по Украине нет ни у кого. Отличие — повод для уведомления. */
-export const BASELINE = { tomtom: 'no', 'tomtom-orbis': 'no', here: 'no', azure: 'no', google: 'no' };
+export const BASELINE = { tomtom: 'no', 'tomtom-orbis': 'no', here: 'no', azure: 'no', google: 'no', mapbox: 'yes' };
 
 const decode = (s) =>
   s
@@ -57,6 +59,14 @@ const norm = (s) => s.toLowerCase().replace(/ü/g, 'u').replace(/[\s\d*¹²³†
  * kind 'column': отметка в нужной колонке строки страны (для таблиц с несколькими странами в строке — относительно ячейки страны).
  */
 export function countryStatus(html, source, country) {
+  if (source.kind === 'mdlist') {
+    const i = html.indexOf(source.heading);
+    if (i < 0) return { status: 'unknown', detail: `нет раздела «${source.heading}»` };
+    const end = html.indexOf('\n#', i + source.heading.length);
+    const items = html.slice(i, end > 0 ? end : undefined).split('\n').filter((l) => /^\s*[-*]\s+/.test(l)).map((l) => l.replace(/^\s*[-*]\s+/, '').trim());
+    if (!items.length) return { status: 'unknown', detail: 'список стран пуст' };
+    return items.some((x) => norm(x) === norm(country)) ? { status: 'yes', detail: `в списке «живые и типовые пробки» (${items.length} стран)` } : { status: 'no', detail: `нет в списке (${items.length} стран)` };
+  }
   const rows = tableRows(html);
   if (!rows.length) return { status: 'unknown', detail: 'таблиц на странице не найдено' };
   for (const r of rows) {

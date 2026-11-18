@@ -56,8 +56,15 @@ describe('Покрытие пробок по Украине: разбор таб
     for (const y of ['✔', '✓', '✅*', '⬤ / ⬤', '<span aria-label="Yes"></span>']) expect(isYes(y)).toBe(true);
     for (const n of ['—', '', '1', '2']) expect(isYes(n)).toBe(false);
   });
-  it('ожидаемое состояние — «нет» у всех пяти источников', () => {
-    expect(Object.values(BASELINE)).toEqual(['no', 'no', 'no', 'no', 'no']);
+  it('Mapbox: список стран в Markdown; Украина есть — как ожидается; пропадёт — уведомление', () => {
+    const md = (withUa: boolean) => `### Traffic data\n\n#### Traffic Coverage\n\nFor the following countries, the returned ETA is calculated using both real-time and typical traffic data.\n\n-   Poland\n-   Romania\n${withUa ? '-   Ukraine\n' : ''}-   United Kingdom\n\n### Next\n`;
+    expect(evaluate(md(true), src('mapbox')).status).toBe('yes');
+    expect(changes([evaluate(md(true), src('mapbox'))])).toEqual([]);
+    expect(changes([evaluate(md(false), src('mapbox'))]).length).toBe(1);
+    expect(evaluate('# другой текст', src('mapbox')).status).toBe('unknown');
+  });
+  it('ожидаемое состояние: живых пробок нет у пяти источников, Mapbox заявляет Украину', () => {
+    expect(BASELINE).toEqual({ tomtom: 'no', 'tomtom-orbis': 'no', here: 'no', azure: 'no', google: 'no', mapbox: 'yes' });
     expect(tableRows(tomtom(false)).length).toBe(2);
   });
 });
