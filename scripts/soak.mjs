@@ -83,12 +83,24 @@ async function soak(key) {
     await page.fill('#map-search', '');
     await page.fill('#map-search', 'Театр Сатиры');
     await page.press('#map-search', 'Enter');
-    await page.locator('.map-panel .place-row').first().click({ timeout: 20000 }).catch(() => {});
-    await page.locator('.pick-card button:has-text("Маршрут сюда")').click({ timeout: 10000 }).catch(() => {});
-    await page.waitForSelector('.route-card .btn-primary:has-text("Поехали")', { timeout: 30000 }).catch(() => {});
-    await page.evaluate(() => [...document.querySelectorAll('.route-card .btn-primary')].find((b) => b.textContent.includes('Поехали'))?.click());
+    // Нажатия — через DOM: на медленном программном WebGL (iPad, «Игровая 3D», три браузера сразу) ожидание
+    // «неподвижности» элемента у Playwright может не дождаться кадра. Каждый шаг пишет, дошёл ли он.
+    const step = async (sel, text, timeout) => {
+      const ok = await page.waitForSelector(sel, { timeout }).then(() => true).catch(() => false);
+      if (ok) await page.evaluate(([q, t]) => [...document.querySelectorAll(q)].find((b) => !t || b.textContent.includes(t))?.click(), [sel, text]);
+      return ok;
+    };
+    const steps = {
+      results: await step('.map-panel .place-row', '', 20000),
+      pick: await step('.pick-card button', 'Маршрут сюда', 15000),
+      route: await step('.route-card .btn-primary', 'Поехали', 30000),
+    };
     await page.waitForTimeout(3000);
     guiding = await page.evaluate(() => !!document.querySelector('.guide-bar, .maneuver'));
+    if (!guiding) {
+      console.log(`${name}: шаги запуска маршрута ${JSON.stringify(steps)}`);
+      await page.screenshot({ path: `${out}/${name.replace(/\W+/g, "-")}-route-attempt${attempt}.png` }).catch(() => {});
+    }
   }
   check(`${name}: ведение по маршруту запущено (вид карты: ${LOOK})`, guiding);
 
