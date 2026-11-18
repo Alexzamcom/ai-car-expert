@@ -93,7 +93,8 @@ jobs:
           for u in https://docs.tomtom.com/traffic-api/documentation/tomtom-maps/v1/product-information/market-coverage \
                    https://docs.tomtom.com/traffic-api/documentation/tomtom-orbis-maps/v1/product-information/market-coverage \
                    https://docs.tomtom.com/routing-api/documentation/tomtom-maps/product-information/market-coverage; do
-            fetch "$u" all
+            fetch "$u" 'grep:^(ukraine|україна|ua/ukr|poland|romania|moldova|belarus|turkey|türkiye)$'
+            echo "строк в таблице: $(python3 -c "import re,html;t=open('/tmp/page.html',encoding='utf-8',errors='ignore').read();print(len(re.findall(r'[A-Z]{2}/[A-Z]{3}',t)))") стран" 
           done
           for u in https://developer.tomtom.com/terms-and-conditions https://www.tomtom.com/legal/ \
                    https://developer.tomtom.com/legal https://www.tomtom.com/en_gb/legal/developer-terms/ \
