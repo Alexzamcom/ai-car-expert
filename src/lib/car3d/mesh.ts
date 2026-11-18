@@ -1,3 +1,5 @@
+import { buildEv } from './ev';
+
 /* Собственная облегчённая 3D-модель автомобиля (без сторонних моделей и лицензий).
    Строится кодом из простых тел: кузов (профиль с фасками), кабина со стёклами, крыша, стойки, колёса, фары, фонари.
    Оси модели: x — вправо, y — вперёд (нос), z — вверх; единицы — метры. Реестр моделей — для других автомобилей. */
@@ -11,6 +13,8 @@ export const MAT = {
   headlight: 4,
   taillight: 5,
   trim: 6,
+  /** Панорамная крыша — тёмное глянцевое стекло. */
+  roof: 7,
 } as const;
 export type MatId = (typeof MAT)[keyof typeof MAT];
 
@@ -23,6 +27,7 @@ export const MAT_COLOR: Record<number, [number, number, number, number]> = {
   [MAT.headlight]: [1.0, 0.97, 0.86, 1],
   [MAT.taillight]: [0.95, 0.13, 0.12, 1],
   [MAT.trim]: [0.12, 0.13, 0.15, 0],
+  [MAT.roof]: [0.05, 0.06, 0.08, 0],
 };
 
 export interface CarMesh {
@@ -54,6 +59,48 @@ export class Builder {
       this.pos.push(...p);
       this.nor.push(...n);
       this.mat.push(m);
+    }
+  }
+  /** Треугольник с заданными нормалями вершин (сглаженная поверхность). */
+  triN(a: V3, b: V3, c: V3, na: V3, nb: V3, nc: V3, m: number) {
+    for (const [p, n] of [[a, na], [b, nb], [c, nc]] as const) {
+      this.pos.push(...p);
+      this.nor.push(...n);
+      this.mat.push(m);
+    }
+  }
+  /** Колесо электрокроссовера: шина со скруглённым плечом, диск с пятью спицами (наружная сторона). */
+  wheelEv(cx: number, cy: number, cz: number, r: number, w: number, seg = 30) {
+    const out = cx > 0 ? 1 : -1;
+    const xo = cx + (out * w) / 2; // наружная сторона
+    const xi = cx - (out * w) / 2;
+    const P = (x: number, a: number, rr: number): V3 => [x, cy + Math.cos(a) * rr, cz + Math.sin(a) * rr];
+    const radial = (a: number, nx = 0, k = 1): V3 => {
+      const l = Math.hypot(nx, k) || 1;
+      return [nx / l, (Math.cos(a) * k) / l, (Math.sin(a) * k) / l];
+    };
+    const ax: V3 = [out, 0, 0];
+    for (let i = 0; i < seg; i++) {
+      const a0 = (i / seg) * Math.PI * 2;
+      const a1 = ((i + 1) / seg) * Math.PI * 2;
+      // Протектор и скруглённое плечо (к наружной стороне).
+      const xs = xo - out * 0.05;
+      this.triN(P(xi, a0, r), P(xi, a1, r), P(xs, a1, r), radial(a0), radial(a1), radial(a1), MAT.tire);
+      this.triN(P(xi, a0, r), P(xs, a1, r), P(xs, a0, r), radial(a0), radial(a1), radial(a0), MAT.tire);
+      this.triN(P(xs, a0, r), P(xs, a1, r), P(xo, a1, r * 0.9), radial(a0, out * 0.7), radial(a1, out * 0.7), radial(a1, out * 1.4), MAT.tire);
+      this.triN(P(xs, a0, r), P(xo, a1, r * 0.9), P(xo, a0, r * 0.9), radial(a0, out * 0.7), radial(a1, out * 1.4), radial(a0, out * 1.4), MAT.tire);
+      // Боковина шины.
+      this.triN(P(xo, a0, r * 0.9), P(xo, a1, r * 0.9), P(xo, a1, r * 0.7), ax, ax, ax, MAT.tire);
+      this.triN(P(xo, a0, r * 0.9), P(xo, a1, r * 0.7), P(xo, a0, r * 0.7), ax, ax, ax, MAT.tire);
+      // Диск: обод, спицы и проёмы между ними, ступица.
+      const spoke = ((i * 5) / seg) % 1 < 0.4; // пять спиц, проёмы между ними тёмные
+      const xr = xo - out * 0.012;
+      this.triN(P(xr, a0, r * 0.7), P(xr, a1, r * 0.7), P(xr, a1, r * 0.6), ax, ax, ax, MAT.rim);
+      this.triN(P(xr, a0, r * 0.7), P(xr, a1, r * 0.6), P(xr, a0, r * 0.6), ax, ax, ax, MAT.rim);
+      const mid = spoke ? MAT.rim : MAT.trim;
+      this.triN(P(xr, a0, r * 0.6), P(xr, a1, r * 0.6), P(xr, a1, r * 0.22), ax, ax, ax, mid);
+      this.triN(P(xr, a0, r * 0.6), P(xr, a1, r * 0.22), P(xr, a0, r * 0.22), ax, ax, ax, mid);
+      this.triN(P(xr, a0, r * 0.22), P(xr, a1, r * 0.22), [xr + out * 0.01, cy, cz], ax, ax, ax, MAT.rim);
     }
   }
   /** Четырёхугольник a-b-c-d (против часовой стрелки, если смотреть снаружи). */
@@ -161,6 +208,9 @@ export function buildSuv(): CarMesh {
   return b.build(4.6, W, 1.71);
 }
 
-/** Реестр моделей: позже — седан, хэтчбек, пикап. */
-export const CAR_MODELS = { suv: { name: 'Кроссовер', build: buildSuv } } as const;
+/** Реестр моделей: электрокроссовер (по умолчанию) и прежний простой кроссовер; позже — седан, хэтчбек, пикап. */
+export const CAR_MODELS = {
+  ev: { name: 'Электрокроссовер', build: () => buildEv() },
+  suv: { name: 'Кроссовер (простой)', build: buildSuv },
+} as const;
 export type CarModelId = keyof typeof CAR_MODELS;

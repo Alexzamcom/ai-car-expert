@@ -110,7 +110,8 @@ const carMarker = new maplibregl.Marker({ element: carEl, rotationAlignment: 'ma
 let carNow: { lon: number; lat: number; heading: number } | null = null;
 const car3d = createCar3dLayer(
   () => (carNow ? { ...carNow, color: hexToRgb(CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
-  { sizePx: () => Math.min(76, Math.max(50, Math.min(innerWidth, innerHeight) * 0.095)) },
+  // ?carsize=400 — крупная машинка для осмотра модели (прототип).
+  { sizePx: () => Number(params.get('carsize')) || Math.min(76, Math.max(50, Math.min(innerWidth, innerHeight) * 0.095)), model: params.get('carmodel') === 'suv' ? 'suv' : 'ev' },
 );
 const use3d = () => settingsStore.get().carStyle !== 'flat' && !car3d.failed;
 function syncCarLayer() {
