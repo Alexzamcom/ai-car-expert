@@ -1,1 +1,321 @@
-{"version": 8, "name": "test-minimal", "sources": {"roads": {"type": "geojson", "data": {"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"kind": "primary"}, "geometry": {"type": "LineString", "coordinates": [[30.52165, 50.44185], [30.52208, 50.44412], [30.52258, 50.44655], [30.52318, 50.44902], [30.52358, 50.45025], [30.52502, 50.45195], [30.52705, 50.45332], [30.52842, 50.45362], [30.53005, 50.45212], [30.53212, 50.45026], [30.53418, 50.44852], [30.53612, 50.44655], [30.53872, 50.44472]]}}, {"type": "Feature", "properties": {"kind": "minor"}, "geometry": {"type": "LineString", "coordinates": [[30.51, 50.442], [30.545, 50.442]]}}, {"type": "Feature", "properties": {"kind": "minor"}, "geometry": {"type": "LineString", "coordinates": [[30.51, 50.4435], [30.545, 50.4435]]}}, {"type": "Feature", "properties": {"kind": "minor"}, "geometry": {"type": "LineString", "coordinates": [[30.51, 50.445], [30.545, 50.445]]}}, {"type": "Feature", "properties": {"kind": "minor"}, "geometry": {"type": "LineString", "coordinates": [[30.51, 50.4465], [30.545, 50.4465]]}}, {"type": "Feature", "properties": {"kind": "minor"}, "geometry": {"type": "LineString", "coordinates": [[30.51, 50.448], [30.545, 50.448]]}}, {"type": "Feature", "properties": {"kind": "minor"}, "geometry": {"type": "LineString", "coordinates": [[30.51, 50.4495], [30.545, 50.4495]]}}, {"type": "Feature", "properties": {"kind": "minor"}, "geometry": {"type": "LineString", "coordinates": [[30.51, 50.451], [30.545, 50.451]]}}, {"type": "Feature", "properties": {"kind": "minor"}, "geometry": {"type": "LineString", "coordinates": [[30.51, 50.4525], [30.545, 50.4525]]}}]}}, "water": {"type": "geojson", "data": {"type": "Feature", "properties": {}, "geometry": {"type": "Polygon", "coordinates": [[[30.545, 50.44], [30.56, 50.44], [30.56, 50.46], [30.545, 50.46], [30.545, 50.44]]]}}}}, "layers": [{"id": "background", "type": "background", "paint": {"background-color": "#eef0f3"}}, {"id": "water", "type": "fill", "source": "water", "paint": {"fill-color": "#cfe0ef"}}, {"id": "road-minor", "type": "line", "source": "roads", "filter": ["==", ["get", "kind"], "minor"], "paint": {"line-color": "#ffffff", "line-width": 6}}, {"id": "road-primary", "type": "line", "source": "roads", "filter": ["==", ["get", "kind"], "primary"], "paint": {"line-color": "#ffffff", "line-width": 10}}]}
+{
+ "version": 8,
+ "name": "test-minimal",
+ "sources": {
+  "roads": {
+   "type": "geojson",
+   "data": {
+    "type": "FeatureCollection",
+    "features": [
+     {
+      "type": "Feature",
+      "properties": {
+       "kind": "primary"
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         30.52165,
+         50.44185
+        ],
+        [
+         30.52208,
+         50.44412
+        ],
+        [
+         30.52258,
+         50.44655
+        ],
+        [
+         30.52318,
+         50.44902
+        ],
+        [
+         30.52358,
+         50.45025
+        ],
+        [
+         30.52502,
+         50.45195
+        ],
+        [
+         30.52705,
+         50.45332
+        ],
+        [
+         30.52842,
+         50.45362
+        ],
+        [
+         30.53005,
+         50.45212
+        ],
+        [
+         30.53212,
+         50.45026
+        ],
+        [
+         30.53418,
+         50.44852
+        ],
+        [
+         30.53612,
+         50.44655
+        ],
+        [
+         30.53872,
+         50.44472
+        ]
+       ]
+      }
+     },
+     {
+      "type": "Feature",
+      "properties": {
+       "kind": "minor"
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         30.51,
+         50.442
+        ],
+        [
+         30.545,
+         50.442
+        ]
+       ]
+      }
+     },
+     {
+      "type": "Feature",
+      "properties": {
+       "kind": "minor"
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         30.51,
+         50.4435
+        ],
+        [
+         30.545,
+         50.4435
+        ]
+       ]
+      }
+     },
+     {
+      "type": "Feature",
+      "properties": {
+       "kind": "minor"
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         30.51,
+         50.445
+        ],
+        [
+         30.545,
+         50.445
+        ]
+       ]
+      }
+     },
+     {
+      "type": "Feature",
+      "properties": {
+       "kind": "minor"
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         30.51,
+         50.4465
+        ],
+        [
+         30.545,
+         50.4465
+        ]
+       ]
+      }
+     },
+     {
+      "type": "Feature",
+      "properties": {
+       "kind": "minor"
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         30.51,
+         50.448
+        ],
+        [
+         30.545,
+         50.448
+        ]
+       ]
+      }
+     },
+     {
+      "type": "Feature",
+      "properties": {
+       "kind": "minor"
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         30.51,
+         50.4495
+        ],
+        [
+         30.545,
+         50.4495
+        ]
+       ]
+      }
+     },
+     {
+      "type": "Feature",
+      "properties": {
+       "kind": "minor"
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         30.51,
+         50.451
+        ],
+        [
+         30.545,
+         50.451
+        ]
+       ]
+      }
+     },
+     {
+      "type": "Feature",
+      "properties": {
+       "kind": "minor"
+      },
+      "geometry": {
+       "type": "LineString",
+       "coordinates": [
+        [
+         30.51,
+         50.4525
+        ],
+        [
+         30.545,
+         50.4525
+        ]
+       ]
+      }
+     }
+    ]
+   }
+  },
+  "water": {
+   "type": "geojson",
+   "data": {
+    "type": "Feature",
+    "properties": {},
+    "geometry": {
+     "type": "Polygon",
+     "coordinates": [
+      [
+       [
+        30.545,
+        50.44
+       ],
+       [
+        30.56,
+        50.44
+       ],
+       [
+        30.56,
+        50.46
+       ],
+       [
+        30.545,
+        50.46
+       ],
+       [
+        30.545,
+        50.44
+       ]
+      ]
+     ]
+    }
+   }
+  },
+  "openmaptiles": {
+   "type": "vector",
+   "tiles": [
+    "https://tiles.openfreemap.org/planet/{z}/{x}/{y}.pbf"
+   ],
+   "maxzoom": 14
+  }
+ },
+ "layers": [
+  {
+   "id": "background",
+   "type": "background",
+   "paint": {
+    "background-color": "#eef0f3"
+   }
+  },
+  {
+   "id": "water",
+   "type": "fill",
+   "source": "water",
+   "paint": {
+    "fill-color": "#cfe0ef"
+   }
+  },
+  {
+   "id": "road-minor",
+   "type": "line",
+   "source": "roads",
+   "filter": [
+    "==",
+    [
+     "get",
+     "kind"
+    ],
+    "minor"
+   ],
+   "paint": {
+    "line-color": "#ffffff",
+    "line-width": 6
+   }
+  },
+  {
+   "id": "road-primary",
+   "type": "line",
+   "source": "roads",
+   "filter": [
+    "==",
+    [
+     "get",
+     "kind"
+    ],
+    "primary"
+   ],
+   "paint": {
+    "line-color": "#ffffff",
+    "line-width": 10
+   }
+  }
+ ]
+}

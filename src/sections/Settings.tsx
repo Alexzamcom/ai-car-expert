@@ -760,6 +760,29 @@ function CarOnMapSettings() {
       {s.mapEngine === 'maplibre' && (
         <div className="setting-row">
           <div>
+            <strong>Вид карты</strong>
+            <small>
+              «Игровая 3D» — светлая пастельная миниатюра: объёмные здания из данных карты, парки, деревья, вода и широкие дороги.
+              Навигация, машинка, HUD и голос — те же.
+            </small>
+          </div>
+          <div className="seg" role="radiogroup" aria-label="Вид карты">
+            {(
+              [
+                ['normal', 'Обычная карта'],
+                ['game', 'Игровая 3D'],
+              ] as const
+            ).map(([v, label]) => (
+              <button key={v} type="button" role="radio" aria-checked={s.mapLook === v} className={`chip ${s.mapLook === v ? 'is-active' : ''}`} onClick={() => patch({ mapLook: v })}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {s.mapEngine === 'maplibre' && (
+        <div className="setting-row">
+          <div>
             <strong>Карта при ведении</strong>
             <small>Сдвиг или поворот карты двумя пальцами — свободный обзор; «К машине» возвращает выбранный режим</small>
           </div>

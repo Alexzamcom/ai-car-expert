@@ -42,6 +42,10 @@ jobs:
   soak:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        look: [normal, game]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -50,16 +54,38 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - name: Длительный тест MapLibre (15 мин, тестовые данные)
+      - name: Длительный тест MapLibre (15 мин, тестовые данные, вид ${{ matrix.look }})
         run: |
           npm i --no-save playwright@1.49.1
           npx playwright install --with-deps chromium
           npx vite preview --port 4173 --strictPort &
           npx --yes wait-on@8.0.1 -t 30000 http://localhost:4173/
-          node scripts/soak.mjs http://localhost:4173/ soak-local --mock --minutes=15
+          node scripts/soak.mjs http://localhost:4173/ soak-local --mock --minutes=15 --look=${{ matrix.look }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: soak-local
+          name: soak-local-${{ matrix.look }}
           path: soak-local
           if-no-files-found: ignore
+
+  # «Игровая 3D» на настоящих тайлах OpenFreeMap (Днепр, Павлоград): снимки в журнал и ориентировочная плавность.
+  # Зависит от сети — не блокирует CI.
+  map-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Снимки «Игровой 3D»
+        run: |
+          npm i --no-save playwright@1.49.1
+          npx playwright install --with-deps chromium
+          npx vite preview --port 4173 --strictPort &
+          npx --yes wait-on@8.0.1 -t 30000 http://localhost:4173/
+          node scripts/map-preview.mjs http://localhost:4173/ map-preview

@@ -7,7 +7,7 @@ import { useStore } from '../lib/store';
 import { geoStore, navStore, poiStore, pickStore, pickPoint, selectRoute, addStop, placeFromPoi, readLastPos, navLang } from '../lib/nav';
 import { settingsStore, toast } from '../lib/state';
 import { themeStore, THEMES } from '../lib/theme';
-import { DEFAULT_STYLE_URL, paletteTransform } from '../lib/mapStyle';
+import { DEFAULT_STYLE_URL, paletteTransform, GAME_TREE, treeImage } from '../lib/mapStyle';
 import { carSvg, unwrapAngle, CAR_COLORS } from '../lib/carMarker';
 import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
 import { autoZoom, lookAheadOffset } from '../lib/camera';
@@ -29,6 +29,10 @@ export interface MapApi {
 }
 
 const PITCH = 50;
+/** «Игровая 3D»: камера по движению чуть выше и круче (вид «миниатюры»), без маршрута — тоже с наклоном. */
+const GAME_PITCH = 58;
+const GAME_IDLE_PITCH = 45;
+const GAME_ZOOM_BONUS = 0.3;
 const DEFAULT_CENTER: LatLon = { lat: 55.7539, lon: 37.6208 };
 const empty = { type: 'FeatureCollection' as const, features: [] };
 
@@ -85,7 +89,9 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       ml.setWorkerUrl(workerUrl);
       const start = readLastPos() ?? DEFAULT_CENTER;
       const styleUrl = DEFAULT_STYLE_URL;
-      const palette = () => (themeStore.get().active === 'night' ? 'night' : 'day');
+      // Палитра: «Игровая 3D» — всегда светлая пастельная; обычная карта — день/ночь по теме.
+      const palette = (): 'day' | 'night' | 'game' => (settingsStore.get().mapLook === 'game' ? 'game' : themeStore.get().active === 'night' ? 'night' : 'day');
+      const isGame = () => settingsStore.get().mapLook === 'game';
       let map: MlMap;
       try {
         map = new ml.Map({
@@ -135,16 +141,23 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       });
       const styleTimer = setTimeout(() => !styleLoaded && fail('сервер карты не отвечает'), 25_000);
       cleanups.push(() => clearTimeout(styleTimer));
-      if (palette() === 'night') {
-        mapDiag.setStyle('ночная палитра при запуске');
-        map.setStyle(styleUrl, { diff: false, transformStyle: paletteTransform('night') });
+      if (palette() !== 'day') {
+        mapDiag.setStyle(`${palette() === 'game' ? 'игровая 3D' : 'ночная палитра'} при запуске`);
+        map.setStyle(styleUrl, { diff: false, transformStyle: paletteTransform(palette()) });
       }
+      // Иконка «игрушечного» дерева — рисуется в коде, когда стиль её запросит (без сторонних изображений).
+      map.on('styleimagemissing', (e: { id: string }) => {
+        if (e.id !== GAME_TREE || map.hasImage(GAME_TREE)) return;
+        const img = treeImage(2);
+        if (img) map.addImage(GAME_TREE, img, { pixelRatio: 2 });
+      });
       mapRef.current = map;
 
       /* ---------- Слои маршрута и точности ---------- */
       const addLayers = () => {
         const t = THEMES[themeStore.get().active];
-        const before = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
+        // Маршрут — под подписями, но над деревьями «Игровой 3D» (их символьные слои начинаются с game-).
+        const before = map.getStyle().layers.find((l) => l.type === 'symbol' && !l.id.startsWith('game-'))?.id;
         if (!map.getSource('acc')) map.addSource('acc', { type: 'geojson', data: empty });
         if (!map.getSource('alts')) map.addSource('alts', { type: 'geojson', data: empty });
         if (!map.getSource('route')) map.addSource('route', { type: 'geojson', data: empty });
@@ -158,15 +171,17 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         syncCar();
       };
       map.on('style.load', addLayers);
-      // Стиль перезагружается только при смене палитры день ⇄ ночь (не на каждое изменение состояния темы).
-      let appliedPalette: 'day' | 'night' = palette();
-      const unTheme = themeStore.subscribe(() => {
+      // Стиль перезагружается только при смене палитры (день ⇄ ночь ⇄ «Игровая 3D»), а не на каждое изменение темы
+      // или настроек. В «Игровой 3D» палитра одна, поэтому смена темы стиль не трогает.
+      let appliedPalette = palette();
+      const restyle = (why: string) => {
         if (palette() === appliedPalette) return;
         appliedPalette = palette();
-        mapDiag.setStyle(`тема → ${appliedPalette}`);
+        mapDiag.setStyle(`${why} → ${appliedPalette}`);
         map.setStyle(styleUrl, { diff: false, transformStyle: paletteTransform(appliedPalette) });
-      });
-      cleanups.push(unTheme);
+        camera.current(true);
+      };
+      cleanups.push(themeStore.subscribe(() => restyle('тема')), settingsStore.subscribe(() => restyle('вид карты')));
 
       const drawRoute = () => {
         const s = navStore.get();
@@ -312,15 +327,16 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         const size = map.getContainer().getBoundingClientRect();
         const g = geoStore.get();
         if (!guiding.current) {
-          map.easeTo({ center: [to.lon, to.lat], zoom: Math.max(map.getZoom(), 15), bearing: 0, pitch: 0, duration: immediate ? 500 : 900, easing: (x) => x });
+          // «Игровая 3D»: и без маршрута — наклон, чтобы был виден объём города.
+          map.easeTo({ center: [to.lon, to.lat], zoom: Math.max(map.getZoom(), isGame() ? 16 : 15), bearing: isGame() ? map.getBearing() : 0, pitch: isGame() ? GAME_IDLE_PITCH : 0, duration: immediate ? 500 : 900, easing: (x) => x });
           return;
         }
         const course = settingsStore.get().cameraMode === 'course';
         const n = navStore.get();
-        const zoom = userZoom ? map.getZoom() : autoZoom(g.speedKmh, n.progress?.toStepM ?? null);
+        const zoom = userZoom ? map.getZoom() : autoZoom(g.speedKmh, n.progress?.toStepM ?? null) + (isGame() ? GAME_ZOOM_BONUS : 0);
         const heading = headingTarget ?? map.getBearing();
         const offset: [number, number] = course ? [0, size.height * 0.24] : (lookAheadOffset(heading, size.width, size.height).map((v) => -v) as [number, number]);
-        map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? PITCH : 0, zoom, offset, duration: immediate ? 600 : moveMs, easing: (x) => x, essential: true });
+        map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? (isGame() ? GAME_PITCH : PITCH) : isGame() ? GAME_IDLE_PITCH : 0, zoom, offset, duration: immediate ? 600 : moveMs, easing: (x) => x, essential: true });
       };
       cleanups.push(
         settingsStore.subscribe(() => camera.current(true)),
@@ -476,6 +492,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             car: c ? { x: c.x / r.width, y: c.y / r.height } : null,
             car3d: use3d() && !!map.getLayer('car-3d'),
             display: (({ mode, lineId, shift, lat, lon, reason }) => ({ mode, lineId, shift, lat, lon, reason }))(displayStore.get()),
+            look: settingsStore.get().mapLook,
+            gameLayers: ['game-buildings', 'game-roofs', 'game-trees'].filter((id) => !!map.getLayer(id)),
             styleReady: !!(map as unknown as { style?: { _loaded?: boolean } }).style?._loaded,
             raw: { lat: geoStore.get().lat, lon: geoStore.get().lon },
             accuracyCircle: accShown,
