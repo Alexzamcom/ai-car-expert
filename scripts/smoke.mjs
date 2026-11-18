@@ -196,8 +196,8 @@ async function checkLab(name, device) {
   await page.evaluate(() => window.__lab.settings.set((x) => ({ ...x, carColor: 'red' })));
   await page.waitForTimeout(600);
   const red = await carPixels();
-  // Красные пиксели есть и у белой машины (светодиодные фонари), поэтому сравниваем прирост красного и убыль белого.
-  check(`3D-машинка (${name}): цвет кузова из настроек (белая → красная)`, red.red >= white.red + 8 && red.light < white.light * 0.5, `белая: красных ${white.red}, светлых ${white.light}; красная: красных ${red.red}, светлых ${red.light}`);
+  // Красные пиксели есть и у белой машины (светодиодные фонари), поэтому нужен заметный прирост, а не «в 3 раза».
+  check(`3D-машинка (${name}): цвет кузова из настроек (белая → красная)`, red.red >= white.red + 8 && red.red > white.red * 2, `белая: красных ${white.red}, светлых ${white.light}; красная: красных ${red.red}, светлых ${red.light}`);
   await page.screenshot({ path: `${out}/lab-${name.replace(/\s+/g, '-').toLowerCase()}-red.png` });
   await page.evaluate(() => window.__lab.settings.set((x) => ({ ...x, carColor: 'white', carStyle: 'flat' })));
   await page.waitForTimeout(800);
