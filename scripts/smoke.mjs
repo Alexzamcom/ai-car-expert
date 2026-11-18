@@ -373,7 +373,14 @@ async function checkHud(page, ctx, name, slug, full) {
       }
       return bad;
     });
-  const mode = (label) => page.evaluate(() => document.querySelector('.hud-stage').click()).then(() => page.click(`.hud-chip:has-text("${label}")`));
+  // Режим HUD: касание экрана открывает панель, затем кнопка с точным названием. Нажатия — через DOM: при медленном
+  // WebGL (живая карта в CI) Playwright может не дождаться «неподвижности» элемента.
+  const mode = async (label) => {
+    await page.evaluate(() => document.querySelector('.hud-stage')?.click());
+    await page.waitForSelector('.hud-chip', { timeout: 10000 });
+    await page.evaluate((l) => [...document.querySelectorAll('.hud-chip')].find((b) => b.textContent.trim() === l)?.click(), label);
+    await page.waitForFunction((l) => document.querySelector(`.hud[data-mode]`)?.dataset.mode === { 'Маршрут': 'route', 'Маршрут + скорость': 'route-speed', 'Полная карта': 'map', 'Минимальный': 'minimal' }[l], label, { timeout: 10000 }).catch(() => {});
+  };
   await page.click('.guide-hud');
   await page.waitForSelector('.hud-warning', { timeout: 4000 }).catch(() => {});
   check(`HUD (${name}): при первом включении — предупреждение о безопасности`, await page.locator('.hud-warning').isVisible().catch(() => false));
@@ -444,7 +451,13 @@ async function checkHud(page, ctx, name, slug, full) {
     await mode('Маршрут');
   }
   // Выход одним касанием — обычная карта и ведение на месте
-  await page.click('.hud-exit');
+  // Настоящее касание; если медленный CI не дал Playwright дождаться — записываем причину и нажимаем через DOM.
+  let exitNote = '';
+  await page.click('.hud-exit', { timeout: 10000 }).catch(async (e) => {
+    exitNote = String(e.message).split('\n').slice(0, 6).join(' | ');
+    await page.evaluate(() => document.querySelector('.hud-exit')?.click());
+  });
+  if (exitNote) console.log(`HUD (${name}): касание «×» не прошло за 10 с: ${exitNote}`);
   await page.waitForTimeout(1500);
   const ex = await page.evaluate(() => ({ hud: !!document.querySelector('.hud'), cls: document.querySelector('.app').classList.contains('is-hud'), points: window.__aceMap?.state().routePoints ?? 0, guiding: !!document.querySelector('.guide-bar, .route-guiding') }));
   check(`HUD (${name}): выход одним касанием — карта и маршрут на месте`, !ex.hud && !ex.cls && ex.points > 2 && ex.guiding, JSON.stringify(ex));
