@@ -27,7 +27,7 @@ for (const [key, name, lat, lon] of PLACES) {
     await page.goto(url, { waitUntil: 'load' });
     await page.waitForFunction(() => window.__aceMap?.state?.().car3d, null, { timeout: 60000 }).catch(() => {});
     // Вид «миниатюры»: близко, с наклоном и поворотом; ждём, пока догрузятся тайлы.
-    await page.evaluate(([la, lo]) => window.__aceMap.map.jumpTo({ center: [lo, la], zoom: key === 'dnipro-park' ? 17.2 : 16.4, pitch: 58, bearing: 32 }), [lat, lon]);
+    await page.evaluate(([la, lo, z]) => window.__aceMap.map.jumpTo({ center: [lo, la], zoom: z, pitch: 58, bearing: 32 }), [lat, lon, key === 'dnipro-park' ? 17.2 : 16.4]);
     await page.waitForFunction(() => window.__aceMap.map.loaded() && window.__aceMap.map.areTilesLoaded(), null, { timeout: 60000 }).catch(() => {});
     await page.waitForTimeout(1500);
     const info = await page.evaluate(() => {
