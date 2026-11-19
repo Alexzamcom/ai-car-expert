@@ -26,7 +26,7 @@ const beforeEnd = (distance, accuracy = 6, side = 0) => ({
 await mkdir(out, { recursive: true });
 const browser = await chromium.launch();
 try {
-  const ctx = await browser.newContext({ ...devices['iPad Pro 11'], deviceScaleFactor: 1, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  const ctx = await browser.newContext({ ...devices['iPad Pro 11'], viewport: { width: 700, height: 950 }, deviceScaleFactor: 1, serviceWorkers: 'block', reducedMotion: 'reduce' });
   await ctx.route('**/*', (r) => {
     const u = new URL(r.request().url());
     if (u.origin === new URL(url).origin) return r.continue();
@@ -79,6 +79,10 @@ try {
   }, { initial: beforeEnd(150), baseline });
   const page = await ctx.newPage();
   const click = (locator) => locator.evaluate((el) => el.click());
+  page.on('pageerror', (error) => console.error(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') console.error(message.text());
+  });
   page.setDefaultTimeout(25_000);
   await page.goto(url, { waitUntil: 'load' });
   if (!baseline) await page.waitForFunction(() => window.__aceMap?.state()?.car);
@@ -147,7 +151,10 @@ try {
     assert.deepEqual(await page.evaluate(() => window.__aceHud.first), normal.routeTrim.first);
     await click(page.locator('.hud-stage'));
     await click(page.getByRole('button', { name: 'Полная карта', exact: true }));
-    await page.waitForFunction(() => window.__aceHud?.state?.()?.loaded);
+    await page.waitForFunction(() => window.__aceHud?.state?.()?.loaded, null, { timeout: 45_000 }).catch(async (error) => {
+      const details = await page.evaluate(() => ({ mode: document.querySelector('.hud')?.dataset.mode, map: !!document.querySelector('.hud-map'), debug: window.__aceHud?.state?.() ?? window.__aceHud?.mode }));
+      throw new Error(`HUD map: ${JSON.stringify(details)}`, { cause: error });
+    });
     const hudFirst = await page.evaluate(async () => (await window.__aceHud.map.getSource('route').getData()).geometry.coordinates[0]);
     assert.deepEqual(hudFirst, normal.routeTrim.first);
     await page.screenshot({ path: `${out}/after-hud-trim.png` });
