@@ -101,6 +101,8 @@ export interface Settings {
   mapEngineExplicit: boolean;
   /** Ориентация карты при ведении на MapLibre (свободный обзор — жестом). */
   cameraMode: 'course' | 'north';
+  /** Камера «по движению»: обычная, игровая (вид сзади) или динамическая (подъём перед поворотами). null — по виду карты. */
+  navCamera: 'normal' | 'game' | 'dynamic' | null;
   /** Вид карты MapLibre: обычная или «Игровая 3D» (пастельная миниатюра с объёмными зданиями и деревьями). */
   mapLook: 'normal' | 'game';
   /** Полноэкранный минималистичный режим во время ведения. */
@@ -153,6 +155,7 @@ export const settingsStore = createStore<Settings>(
     mapEngine: 'maplibre',
     mapEngineExplicit: false,
     cameraMode: 'course',
+    navCamera: null,
     mapLook: 'normal',
     minimalGuidance: true,
     speechLang: 'ru-RU',

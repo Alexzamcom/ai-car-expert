@@ -14,6 +14,7 @@ import { MUSIC_SOURCES } from '../lib/music/sources';
 import { CAR_COLORS, carSvg, type CarColor } from '../lib/carMarker';
 import { geoStore, navStore, setNavigationVoice, restartGeo, locatorState, guidanceUse, setDestination } from '../lib/nav';
 import { MyPlacesSection } from '../components/MyPlaces';
+import { NAV_CAMERAS, effectiveNavCamera } from '../lib/camera';
 import { FIX_SOURCE_LABEL } from '../lib/geo/locator';
 
 const FUELS: Record<VehicleProfile['fuel'], string> = {
@@ -897,6 +898,27 @@ function CarOnMapSettings() {
                 {label}
               </button>
             ))}
+          </div>
+        </div>
+      )}
+      {s.mapEngine === 'maplibre' && (
+        <div className="setting-row">
+          <div>
+            <strong>Камера по движению</strong>
+            <small>
+              {NAV_CAMERAS.find((c) => c.id === effectiveNavCamera(s.navCamera, s.mapLook === 'game'))?.hint}
+              {s.navCamera == null ? ` (по умолчанию для ${s.mapLook === 'game' ? '«Игровой 3D»' : 'обычной карты'})` : ''}. Повернуть и наклонить карту можно двумя пальцами — «К машине» плавно вернёт ракурс.
+            </small>
+          </div>
+          <div className="seg" role="radiogroup" aria-label="Камера по движению">
+            {NAV_CAMERAS.map((c) => {
+              const on = effectiveNavCamera(s.navCamera, s.mapLook === 'game') === c.id;
+              return (
+                <button key={c.id} type="button" role="radio" aria-checked={on} className={`chip ${on ? 'is-active' : ''}`} onClick={() => patch({ navCamera: c.id })}>
+                  {c.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}

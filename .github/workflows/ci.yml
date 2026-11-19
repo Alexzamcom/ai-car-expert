@@ -32,6 +32,8 @@ jobs:
           node scripts/smoke.mjs http://localhost:4173/ smoke-local --mock
       - name: «Мои места» — постоянный профиль браузера (перезапуск, резервная копия, перенос прежних данных)
         run: node scripts/places-check.mjs http://localhost:4173/ smoke-local/places --mock
+      - name: Динамическая камера «Игровой 3D» — движение, поворот, остановка, потеря GPS, ручной обзор
+        run: node scripts/camera-check.mjs http://localhost:4173/ smoke-local/camera
       - uses: actions/upload-artifact@v4
         if: always()
         with:
