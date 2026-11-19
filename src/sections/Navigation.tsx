@@ -1,4 +1,5 @@
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { CONTROLS_IDLE_MS, verticalSwipe } from '../lib/drivingControls';
 import type { MapApi } from './MapLibreMap';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -39,6 +40,7 @@ import {
   savedPlacesStore,
   setSavedPlace,
   type Place,
+  visibleRouteCoords,
 } from '../lib/nav';
 import { LongPressDetector } from '../lib/geo/longpress';
 import { fmtCoords } from '../lib/geo/geocode';
@@ -104,7 +106,7 @@ export function Navigation() {
   const themeOnly = useRef(false);
   const fitted = useRef<unknown>(null);
   const map = useRef<L.Map | null>(null);
-  const layers = useRef<{ me?: L.Marker; acc?: L.Circle; raw?: L.CircleMarker; dest?: L.Marker; via?: L.Marker; pick?: L.Marker; route?: L.LayerGroup; poi?: L.LayerGroup }>({});
+  const layers = useRef<{ me?: L.Marker; acc?: L.Circle; raw?: L.CircleMarker; dest?: L.Marker; via?: L.Marker; pick?: L.Marker; route?: L.LayerGroup; routeLines?: L.Polyline[]; poi?: L.LayerGroup }>({});
   const pick = useStore(pickStore);
   const geo = useStore(geoStore);
   const nav = useStore(navStore);
@@ -301,11 +303,11 @@ export function Navigation() {
     l.route?.remove();
     l.dest?.remove();
     l.via?.remove();
-    l.route = l.dest = l.via = undefined;
+    l.route = l.dest = l.via = l.routeLines = undefined;
     if (nav.dest) l.dest = L.marker([nav.dest.lat, nav.dest.lon], { icon: destIcon }).addTo(m);
     if (nav.via) l.via = L.marker([nav.via.lat, nav.via.lon], { icon: viaIcon }).addTo(m);
     if (nav.route) {
-      const pts = nav.route.coords.map((c) => [c.lat, c.lon] as L.LatLngTuple);
+      const pts = visibleRouteCoords(nav).map((c) => [c.lat, c.lon] as L.LatLngTuple);
       const tk = THEMES[theme.active];
       // Альтернативы — серые линии под основной; нажатие выбирает вариант.
       const alts = nav.status === 'guiding' ? [] : nav.routes.map((r, i) => ({ r, i })).filter(({ i }) => i !== nav.routeIndex);
@@ -316,11 +318,11 @@ export function Navigation() {
           L.polyline(ap, { color: tk.muted, weight: 6, opacity: 0.8, className: 'route-alt' }).on('click', () => selectRoute(i)),
         ];
       });
-      l.route = L.layerGroup([
-        ...altLines,
+      l.routeLines = [
         L.polyline(pts, { color: tk['route-casing'], weight: 14, opacity: 0.9, interactive: false, lineCap: 'round', lineJoin: 'round' }),
         L.polyline(pts, { color: tk.route, weight: 9, opacity: 1, interactive: false, className: 'route-main', lineCap: 'round', lineJoin: 'round' }),
-      ]).addTo(m);
+      ];
+      l.route = L.layerGroup([...altLines, ...l.routeLines]).addTo(m);
       // Камера подстраивается под новый набор вариантов, но не при выборе варианта или смене темы.
       if (nav.status === 'preview' && !themeOnly.current && fitted.current !== nav.routes) {
         fitted.current = nav.routes;
@@ -336,6 +338,11 @@ export function Navigation() {
     }
     themeOnly.current = false;
   }, [nav.route, nav.routes, nav.routeIndex, nav.dest, nav.via, nav.status, theme.active, engine]);
+
+  useEffect(() => {
+    const pts = visibleRouteCoords(nav).map((c) => [c.lat, c.lon] as L.LatLngTuple);
+    layers.current.routeLines?.forEach((line) => line.setLatLngs(pts));
+  }, [nav.route, nav.routes, nav.routeIndex, nav.dest, nav.via, nav.status, nav.routeCutM, theme.active, engine]);
 
   // Выбранная точка (долгое нажатие / результат поиска)
   useEffect(() => {
@@ -424,6 +431,60 @@ export function Navigation() {
     fitVisible(m, L.latLngBounds(r.coords.map((c) => [c.lat, c.lon] as L.LatLngTuple)), uiEl.current);
   };
   // Во время перестроения (статус «строю») полноэкранный режим сохраняется.
+  const [panelHidden, setPanelHidden] = useState(false);
+  const hideControls = () => {
+    setPanelHidden(true);
+    if (driveUiStore.get().sheet) driveUiStore.set((s) => ({ ...s, sheet: false }));
+  };
+  const showControls = () => {
+    setPanelHidden(false);
+    if (ui.minimal) driveUiStore.set((s) => ({ ...s, sheet: true }));
+  };
+  const revealSwipe = useVerticalSwipe(showControls, () => {});
+  const cardSwipe = useVerticalSwipe(() => {}, hideControls);
+
+  useEffect(() => {
+    if (!guiding) {
+      setPanelHidden(false);
+      return;
+    }
+    if (panelHidden) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const pointers = new Set<number>();
+    const reset = () => {
+      clearTimeout(timer);
+      if (!pointers.size) timer = setTimeout(hideControls, CONTROLS_IDLE_MS);
+    };
+    const down = (e: PointerEvent) => {
+      pointers.add(e.pointerId);
+      reset();
+    };
+    const up = (e: PointerEvent) => {
+      pointers.delete(e.pointerId);
+      reset();
+    };
+    const blur = () => {
+      pointers.clear();
+      reset();
+    };
+    const activity = ['pointermove', 'wheel', 'keydown', 'click'] as const;
+    const options = { capture: true, passive: true };
+    for (const event of activity) window.addEventListener(event, reset, options);
+    window.addEventListener('pointerdown', down, options);
+    window.addEventListener('pointerup', up, options);
+    window.addEventListener('pointercancel', up, options);
+    window.addEventListener('blur', blur);
+    reset();
+    return () => {
+      clearTimeout(timer);
+      for (const event of activity) window.removeEventListener(event, reset, true);
+      window.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', up, true);
+      window.removeEventListener('blur', blur);
+    };
+  }, [guiding, panelHidden]);
+
   const minimal = ui.minimal && !!nav.dest && (guiding || nav.status === 'routing');
 
   const recenter = () => {
@@ -513,7 +574,7 @@ export function Navigation() {
 
       <div
         ref={uiEl}
-        className={`map-ui ${(nav.dest && !guiding) || pick ? 'has-dest' : ''} ${nav.dest || poi.category || pick ? 'has-card' : ''} ${minimal ? 'is-minimal' : ''}`}
+        className={`map-ui ${(nav.dest && !guiding) || pick ? 'has-dest' : ''} ${nav.dest || poi.category || pick ? 'has-card' : ''} ${minimal ? 'is-minimal' : ''} ${guiding && panelHidden ? 'controls-hidden' : ''}`}
       >
         {/* Верх: поиск или манёвр */}
         <div className="map-top">
@@ -526,7 +587,7 @@ export function Navigation() {
           ) : guiding && step && nav.progress ? (
             <div className="maneuver" role="status">
               <div className="maneuver-icon">
-                <Icon name={stepIcon(step)} size="2.6rem" stroke={2.2} />
+                <Icon name={stepIcon(step)} size="1.85rem" stroke={2.2} />
               </div>
               <div className="maneuver-text">
                 <div className="maneuver-dist">{fmtDistance(nav.progress.toStepM, lang)}</div>
@@ -666,12 +727,22 @@ export function Navigation() {
         </div>
 
         {/* Полноэкранное ведение: только время прибытия, остаток и голос; свайп вверх — панель управления. */}
+        {guiding && panelHidden && (
+          <div className="driving-controls-compact">
+            <button className="driving-reveal" aria-label="Показать панель управления" aria-expanded={false} onClick={showControls} {...revealSwipe.handlers}>
+              <Icon name="chevronUp" size="1.4rem" />
+            </button>
+            <VoiceToggle className="guide-voice compact-voice" />
+          </div>
+        )}
         {minimal && nav.route && nav.progress && (
           <GuideBar
             eta={eta(remainingS ?? 0)}
             remaining={fmtDistance(nav.progress.remainingM, lang)}
             duration={fmtDuration(remainingS ?? 0, lang)}
             sheet={ui.sheet}
+            hidden={panelHidden}
+            onHide={hideControls}
             follow={follow}
             onRecenter={recenter}
             onOverview={showOverview}
@@ -770,7 +841,10 @@ export function Navigation() {
             {nav.dest && !poi.category && !pick && (
               <div className={`route-card card-float ${guiding ? 'is-guiding' : ''}`}>
                 {guiding && nav.route && nav.progress ? (
-                  <div className="route-guiding">
+                  <div className="route-guiding" {...cardSwipe.handlers}>
+                    <button className="driving-hide" onClick={hideControls} aria-label="Скрыть панель управления" aria-expanded>
+                      <span />
+                    </button>
                     <div className="route-stat">
                       <strong>{eta(remainingS ?? 0)}</strong>
                       <small>прибытие</small>
@@ -970,35 +1044,41 @@ function HudButton({ className = '' }: { className?: string }) {
 
 /** Свайп по вертикали на элементе (а не на карте — с жестами карты не конфликтует). */
 function useVerticalSwipe(onUp: () => void, onDown: () => void) {
-  const start = useRef<{ y: number; t: number } | null>(null);
+  const start = useRef<{ id: number; x: number; y: number; t: number } | null>(null);
   const swiped = useRef(false);
   return {
-    onPointerDown: (e: React.PointerEvent) => {
-      start.current = { y: e.clientY, t: Date.now() };
-      swiped.current = false;
-    },
-    onPointerUp: (e: React.PointerEvent) => {
-      const s0 = start.current;
-      start.current = null;
-      if (!s0) return;
-      const dy = e.clientY - s0.y;
-      if (Math.abs(dy) >= 30 && Date.now() - s0.t < 800) {
+    handlers: {
+      onPointerDown: (e: React.PointerEvent) => {
+        start.current = e.isPrimary && e.button === 0 ? { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp } : null;
+        swiped.current = false;
+        if (start.current && e.target instanceof Element) e.target.setPointerCapture(e.pointerId);
+      },
+      onPointerUp: (e: React.PointerEvent) => {
+        const initial = start.current;
+        start.current = null;
+        if (!initial || initial.id !== e.pointerId) return;
+        const dir = verticalSwipe(e.clientX - initial.x, e.clientY - initial.y, e.timeStamp - initial.t);
+        if (!dir) return;
         swiped.current = true;
-        if (dy < 0) onUp();
+        if (dir === 'up') onUp();
         else onDown();
-      }
+      },
+      onPointerCancel: () => (start.current = null),
+      onClickCapture: (e: React.MouseEvent) => {
+        if (!swiped.current || e.detail === 0) return;
+        swiped.current = false;
+        e.preventDefault();
+        e.stopPropagation();
+      },
     },
-    onPointerCancel: () => (start.current = null),
-    /** Касание после свайпа не считается нажатием. */
-    wasSwipe: () => swiped.current,
   };
 }
 
-function GuideBar(p: { eta: string; remaining: string; duration: string; sheet: boolean; follow: boolean; onRecenter: () => void; onOverview: () => void }) {
+function GuideBar(p: { eta: string; remaining: string; duration: string; sheet: boolean; hidden: boolean; onHide: () => void; follow: boolean; onRecenter: () => void; onOverview: () => void }) {
   const open = () => driveUiStore.set((s) => ({ ...s, sheet: true }));
   const close = () => driveUiStore.set((s) => ({ ...s, sheet: false }));
-  const barSwipe = useVerticalSwipe(open, close);
-  const sheetSwipe = useVerticalSwipe(() => {}, close);
+  const barSwipe = useVerticalSwipe(open, p.onHide);
+  const sheetSwipe = useVerticalSwipe(() => {}, p.onHide);
   const act = (fn: () => void) => () => {
     close();
     fn();
@@ -1010,9 +1090,9 @@ function GuideBar(p: { eta: string; remaining: string; duration: string; sheet: 
           <Icon name="locate" /> К машине
         </button>
       )}
-      {p.sheet && (
-        <div className="guide-sheet card-float" role="dialog" aria-label="Управление ведением" {...sheetSwipe}>
-          <button className="guide-grabber" onClick={() => !sheetSwipe.wasSwipe() && close()} aria-label="Свернуть панель">
+      {p.sheet && !p.hidden && (
+        <div className="guide-sheet card-float" role="dialog" aria-label="Управление ведением" {...sheetSwipe.handlers}>
+          <button className="guide-grabber" onClick={() => close()} aria-label="Свернуть панель">
             <span />
           </button>
           <div className="guide-sheet-grid">
@@ -1039,8 +1119,8 @@ function GuideBar(p: { eta: string; remaining: string; duration: string; sheet: 
           </div>
         </div>
       )}
-      <div className="guide-bar card-float" {...barSwipe}>
-        <button className="guide-grabber" onClick={() => !barSwipe.wasSwipe() && (p.sheet ? close() : open())} aria-label={p.sheet ? 'Свернуть панель' : 'Открыть панель управления'} aria-expanded={p.sheet}>
+      <div className="guide-bar card-float" hidden={p.hidden} {...barSwipe.handlers}>
+        <button className="guide-grabber" onClick={() => p.sheet ? close() : open()} aria-label={p.sheet ? 'Свернуть панель' : 'Открыть панель управления'} aria-expanded={p.sheet}>
           <span />
         </button>
         <div className="guide-stats" aria-label="Прибытие и остаток пути">

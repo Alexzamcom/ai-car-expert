@@ -1572,3 +1572,47 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .place-editor-found { display: grid; max-height: 240px; overflow: auto; }
 .place-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .place-editor-actions .spacer { flex: 1; }
+
+/* Свайпы управления начинаются на панели или кнопке, вокруг остаётся интерактивная карта. */
+.map-ui .maneuver { gap: 10px; padding: 8px 12px; border-radius: 16px; }
+.map-ui .maneuver-icon { width: 44px; height: 44px; border-radius: 12px; }
+.map-ui .maneuver-dist { font-size: 1.45rem; }
+.map-ui .maneuver-instr { line-height: 1.2; }
+.controls-hidden .map-controls, .controls-hidden .map-speed, .controls-hidden .route-card.is-guiding,
+.guide-bar[hidden] { display: none; }
+.driving-controls-compact {
+  position: absolute;
+  z-index: 2;
+  inset-inline-end: calc(12px + var(--safe-r));
+  bottom: max(16px, calc(8px + var(--safe-b)));
+  display: flex;
+  gap: 8px;
+}
+.driving-reveal, .compact-voice {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid var(--line-2);
+  background: var(--overlay);
+  touch-action: none;
+}
+.route-card.is-guiding { position: relative; }
+.route-guiding { touch-action: pan-x; }
+.driving-hide {
+  position: absolute;
+  top: -30px;
+  inset-inline-start: calc(50% - 32px);
+  width: 64px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  background: var(--overlay);
+  touch-action: none;
+}
+.driving-hide span { width: 32px; height: 4px; border-radius: 4px; background: var(--line-2); }
+.guide-grabber { height: 44px; width: 64px; }
+.guide-bar, .guide-sheet { padding-top: 44px; }
+.guide-wrap:has(.guide-bar[hidden]) .recenter-pill { margin-bottom: 54px; }
