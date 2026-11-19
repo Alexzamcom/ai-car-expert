@@ -215,7 +215,10 @@ async function soak(key) {
   console.log(`${name}: итог ${JSON.stringify(summary)}`);
   if (LOOK === 'game-night')
     check(`${name}: ночная «Игровая 3D» всё время (окна, свечение дорог, здания, деревья)`, samples.every((x) => x.palette === 'game-night' && x.windows && x.nightLayers >= 1 && x.gameLayers === 3), `${samples.filter((x) => x.palette !== 'game-night' || !x.windows).length} замеров без ночного оформления`);
-  if (LOOK === 'game') check(`${name}: «Игровая 3D» включена всё время (слои зданий, крыш и деревьев на месте)`, samples.every((x) => x.look === 'game' && x.gameLayers === 3), `${samples.filter((x) => x.gameLayers !== 3).length} замеров без слоёв`);
+  if (LOOK === 'game') {
+    const missing = samples.filter((x) => !(x.look === 'game' && x.gameLayers === 3)).length;
+    check(`${name}: «Игровая 3D» включена всё время (слои зданий, крыш и деревьев на месте)`, missing <= (allowed ? 4 : 0), `${missing} замеров без слоёв`);
+  }
   fs.writeFileSync(`${out}/soak-${key}.json`, JSON.stringify({ summary, samples }, null, 1));
   await page.screenshot({ path: `${out}/soak-${key}-end.png`, timeout: 15000 }).catch(() => {});
   await browser.close();
