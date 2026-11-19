@@ -316,7 +316,8 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
       const scale = (box.height * CAR_Y * 0.92) / range; // px на метр
       const cx = box.width / 2;
       const cy = box.height * CAR_Y;
-      const ahead = routeInCarFrame(visibleRouteCoords(), 0, car, h, range);
+      const coords = visibleRouteCoords();
+      const ahead = routeInCarFrame(coords, 0, car, h, range);
       const xy = ([x, y]: [number, number]) => `${(cx + x * scale).toFixed(1)} ${(cy - y * scale).toFixed(1)}`;
       const d = ahead.length >= 2 ? `M ${ahead.map(xy).join(' L ')}` : '';
       const step = p ? r.steps[p.stepIndex] : null;
@@ -334,7 +335,7 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
           turn.current.setAttribute('cy', (cy - tp[1] * scale).toFixed(1));
         }
       }
-      (window as unknown as { __aceHud?: unknown }).__aceHud = { mode: 'route', heading: h, range, points: ahead.length };
+      (window as unknown as { __aceHud?: unknown }).__aceHud = { mode: 'route', heading: h, range, points: ahead.length, first: coords[0] ? [coords[0].lon, coords[0].lat] : null };
     };
     raf = requestAnimationFrame(frame);
     return () => {

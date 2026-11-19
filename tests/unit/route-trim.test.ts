@@ -53,6 +53,15 @@ describe('Граница пройденного маршрута', () => {
     expect(step(tr, 924, 6)).toBe(924);
   });
 
+  it('повтор той же GPS-точки не подтверждает скачок на дальний сегмент', () => {
+    const tr = new RouteTrimmer();
+    step(tr, 0, 0);
+    step(tr, 14, 1);
+    for (let i = 0; i < CONFIRM; i++) expect(step(tr, 900, 2)).toBe(14);
+    expect(step(tr, 914, 3)).toBe(14);
+    expect(step(tr, 928, 4)).toBe(928);
+  });
+
   it('съезд с маршрута: граница замирает — ничего лишнего не скрывается до перестроения', () => {
     const tr = new RouteTrimmer();
     step(tr, 0, 0);

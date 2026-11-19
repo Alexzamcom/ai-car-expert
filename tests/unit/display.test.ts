@@ -69,13 +69,15 @@ describe('Отображаемая позиция и решения ведени
     let respond!: (response: Response) => void;
     vi.stubGlobal('fetch', () => new Promise<Response>((resolve) => { respond = resolve; }));
     const request = setDestination(dest, null, true);
-    const current = at(52);
+    t += 8_000;
+    vi.setSystemTime(t);
+    const current = at(238);
     fix(current);
     respond(new Response(JSON.stringify(next), { status: 200 }));
     await request;
 
     expect(navStore.get().status).toBe('guiding');
-    expect(navStore.get().routeCutM).toBeGreaterThan(20);
+    expect(navStore.get().routeCutM).toBeGreaterThan(200);
     const newLine = visibleRouteCoords();
     expect(distM(newLine[0], current)).toBeLessThan(1);
     expect(visibleRouteCoords()).toBe(newLine);

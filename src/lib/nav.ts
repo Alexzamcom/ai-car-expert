@@ -558,8 +558,18 @@ export function visibleRouteCoords(s = navStore.get()): LatLon[] {
   return visibleRoute.coords;
 }
 
-function updateRouteCut(route: Route, progress: Progress, t: number, speed: number | null) {
-  return routeTrimmer.update({ route, along: routeCache!.cum.at(-1)! - progress.remainingM, offRouteM: progress.offRouteM, t, speed });
+function updateRouteCut(route: Route, progress: Progress, t: number, speed: number | null, initialMaxM?: number) {
+  return routeTrimmer.update({ route, along: routeCache!.cum.at(-1)! - progress.remainingM, offRouteM: progress.offRouteM, t, speed, initialMaxM });
+}
+
+function initialRouteProgress(route: Route, from: LatLon, requestedAt: number, guiding: boolean) {
+  const fix = acceptedFix;
+  const trusted = fix && fix.accuracy <= FULL_GUIDANCE_ACCURACY && Date.now() - fix.timestamp <= 10_000;
+  const progress = routeProgress(route, currentPos() ?? from, routeCache!);
+  // Машина может проехать часть нового маршрута, пока сервер готовит ответ.
+  const initialMaxM = 150 + 45 * Math.min(30, Math.max(0, ((fix?.timestamp ?? requestedAt) - requestedAt) / 1000));
+  const routeCutM = guiding && trusted ? updateRouteCut(route, progress, fix.timestamp, fix.speed, initialMaxM) : 0;
+  return { progress, routeCutM };
 }
 
 function setRoute(route: Route) {
@@ -597,14 +607,13 @@ export async function setDestination(dest: Place, via: Place | null = null, keep
     return;
   }
   navStore.set({ ...base, route: null, routes: [], status: 'routing', error: null });
+  const requestedAt = Date.now();
   try {
     const routes = await buildRoutes(from, dest, via);
     if (navStore.get().dest !== dest) return;
     const status = keepStatus && prevStatus === 'guiding' ? 'guiding' : 'preview';
     setRoute(routes[0]);
-    const progress = routeProgress(routes[0], currentPos() ?? from, routeCache!);
-    const routeCutM = status === 'guiding' ? updateRouteCut(routes[0], progress, Date.now(), acceptedFix?.speed ?? null) : 0;
-    navStore.set({ ...base, route: routes[0], routes, status, error: null, progress, routeCutM });
+    navStore.set({ ...base, route: routes[0], routes, status, error: null, ...initialRouteProgress(routes[0], from, requestedAt, status === 'guiding') });
   } catch (e) {
     if ((e as Error).name === 'AbortError') return;
     navStore.set({ ...base, route: null, routes: [], status: 'preview', error: routeErrorText(e) });
@@ -697,15 +706,14 @@ function reroute(pos: LatLon) {
   pendingReroute = false;
   say(t('reroute'));
   navStore.set({ ...s, rerouting: true, notice: null });
+  const requestedAt = Date.now();
   buildRoutes(pos, s.dest, s.via)
     .then((routes) => {
       const cur = navStore.get();
       if (cur.route !== s.route || cur.status !== 'guiding' || !cur.rerouting) return;
       const route = routes[0];
       setRoute(route);
-      const progress = routeProgress(route, currentPos() ?? pos, routeCache!);
-      const routeCutM = updateRouteCut(route, progress, Date.now(), acceptedFix?.speed ?? null);
-      navStore.set({ ...cur, route, routes: [route], routeIndex: 0, rerouting: false, notice: null, progress, routeCutM });
+      navStore.set({ ...cur, route, routes: [route], routeIndex: 0, rerouting: false, notice: null, ...initialRouteProgress(route, pos, requestedAt, true) });
     })
     .catch((e) => {
       if ((e as Error).name === 'AbortError') return;

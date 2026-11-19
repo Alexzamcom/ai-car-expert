@@ -1044,12 +1044,12 @@ function HudButton({ className = '' }: { className?: string }) {
 
 /** Свайп по вертикали на элементе (а не на карте — с жестами карты не конфликтует). */
 function useVerticalSwipe(onUp: () => void, onDown: () => void) {
-  const start = useRef<{ id: number; x: number; y: number; t: number } | null>(null);
+  const start = useRef<{ id: number; x: number; y: number } | null>(null);
   const swiped = useRef(false);
   return {
     handlers: {
       onPointerDown: (e: React.PointerEvent) => {
-        start.current = e.isPrimary && e.button === 0 ? { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp } : null;
+        start.current = e.isPrimary && e.button === 0 ? { id: e.pointerId, x: e.clientX, y: e.clientY } : null;
         swiped.current = false;
         if (start.current && e.target instanceof Element) e.target.setPointerCapture(e.pointerId);
       },
@@ -1057,7 +1057,7 @@ function useVerticalSwipe(onUp: () => void, onDown: () => void) {
         const initial = start.current;
         start.current = null;
         if (!initial || initial.id !== e.pointerId) return;
-        const dir = verticalSwipe(e.clientX - initial.x, e.clientY - initial.y, e.timeStamp - initial.t);
+        const dir = verticalSwipe(e.clientX - initial.x, e.clientY - initial.y);
         if (!dir) return;
         swiped.current = true;
         if (dir === 'up') onUp();
