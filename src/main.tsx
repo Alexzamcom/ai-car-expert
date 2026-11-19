@@ -3,8 +3,11 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './styles/global.css';
 import { startTheme } from './lib/theme';
+import { startPlacesBackup } from './lib/places';
 
 startTheme();
+// «Мои места»: резервная копия в IndexedDB и запрос постоянного хранилища.
+void startPlacesBackup();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

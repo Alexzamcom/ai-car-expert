@@ -1,4 +1,5 @@
-import { createStore, uid } from './store';
+import { createStore } from './store';
+import { placesStore, savePlace, removePlace, placeOfType, findSaved } from './places';
 import {
   fetchRoutes,
   RouteError,
@@ -211,13 +212,29 @@ function saveLastPos(p: LatLon) {
 /** Запрос из голоса/помощника: найти место и построить маршрут. */
 export const navQueryStore = createStore<{ query: string; nonce: number } | null>(null);
 
-export const favoritesStore = createStore<Place[]>([], 'favorites');
 export const recentsStore = createStore<Place[]>([], 'recents');
-/** «Дом» и «Работа» — для команд «едем домой», «на работу» и кнопок в одно касание. */
+/* «Мои места» (src/lib/places.ts) — единственный источник. Ниже — производные списки для прежнего кода:
+   «Избранное» (все мои места, название — данное пользователем) и «Дом»/«Работа» (команды «едем домой», «на работу»).
+   Они же сохраняются в прежние ключи как зеркало. */
+export const favoritesStore = createStore<Place[]>([], 'favorites');
 export const savedPlacesStore = createStore<{ home: Place | null; work: Place | null }>({ home: null, work: null }, 'saved-places');
+const mirrorPlaces = () => {
+  const list = placesStore.get();
+  favoritesStore.set(list.map((p) => ({ ...p, name: p.label })));
+  savedPlacesStore.set({ home: placeOfType('home', list), work: placeOfType('work', list) });
+};
+mirrorPlaces();
+placesStore.subscribe(mirrorPlaces);
 
+/** «Сделать домом / работой» (null — убрать). Место с теми же координатами получает новый тип, а не дублируется. */
 export function setSavedPlace(kind: 'home' | 'work', place: Place | null) {
-  savedPlacesStore.set((s) => ({ ...s, [kind]: place ? { ...place, id: `${kind}:${place.lat},${place.lon}` } : null }));
+  if (!place) {
+    const cur = placeOfType(kind);
+    if (cur) removePlace(cur.id);
+    return;
+  }
+  const existing = findSaved(place);
+  savePlace({ ...place, id: existing?.id, placeType: kind, label: kind === 'home' ? 'Дом' : 'Работа', savedAt: existing?.savedAt });
 }
 
 /* ---------- Короткие фразы для озвучивания ---------- */
@@ -472,12 +489,11 @@ export function addRecent(p: Place) {
   recentsStore.set((l) => [p, ...l.filter((x) => x.lat !== p.lat || x.lon !== p.lon)].slice(0, 8));
 }
 
+/** Звёздочка в карточке маршрута: место в «Моих местах» — убрать, нет — добавить под своим названием. */
 export function toggleFavorite(p: Place) {
-  favoritesStore.set((l) =>
-    l.some((x) => x.lat === p.lat && x.lon === p.lon)
-      ? l.filter((x) => x.lat !== p.lat || x.lon !== p.lon)
-      : [...l, { ...p, id: uid() }],
-  );
+  const existing = findSaved(p);
+  if (existing) removePlace(existing.id);
+  else savePlace({ ...p, id: undefined, placeType: 'custom', label: p.name });
 }
 
 export function routeLinks(p: LatLon & { name?: string }) {

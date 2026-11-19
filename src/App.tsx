@@ -5,6 +5,7 @@ import { Panel } from './components/Panel';
 import { PageSheet } from './components/PageSheet';
 import { VoiceOverlay } from './components/VoiceOverlay';
 import { Toasts } from './components/Toasts';
+import { PlaceEditor } from './components/MyPlaces';
 import { Navigation } from './sections/Navigation';
 import { useStore } from './lib/store';
 import { layoutStore, settingsStore, closePage, driveUiStore } from './lib/state';
@@ -96,6 +97,7 @@ export function App() {
       <Dock />
       <VoiceOverlay />
       <YouTubeMusicFallback />
+      <PlaceEditor />
       <Toasts />
       <Hud />
     </div>
