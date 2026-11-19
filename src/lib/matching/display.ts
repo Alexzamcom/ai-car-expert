@@ -42,6 +42,7 @@ export interface DisplayFix {
   speed: number | null;
   /** сглаженный курс машинки (nav.updateHeading) */
   heading: number | null;
+  measuredCourse?: number | null;
 }
 
 /** Активный маршрут как дорога с известным направлением — только участок рядом (быстрее и без петель маршрута). */
@@ -85,11 +86,11 @@ export function updateDisplay(fix: DisplayFix, route: LatLon[] | null, now = Dat
   } catch {
     lines = routeNear(route, fix, radius);
   }
-  const r = matcher.update({ ...fix, t: now }, lines);
+  const course = fix.measuredCourse ?? fix.heading;
+  const r = matcher.update({ ...fix, heading: course, t: now }, lines);
   const prev = displayStore.get();
   // Курс: по дороге — только в движении и при уверенной привязке; стоим — прежний (без вращения от шума).
-  const moving = (fix.speed ?? 0) >= 2;
-  const heading = r.mode === 'matched' && moving && r.bearing != null ? r.bearing : (fix.heading ?? prev.heading);
+  const heading = r.mode === 'matched' && matcher.moving && course != null && r.bearing != null ? r.bearing : (fix.heading ?? prev.heading);
   displayStore.set({ lat: r.lat, lon: r.lon, heading, accuracy: r.accuracy, mode: r.mode, confidence: r.confidence, lineId: r.lineId, reason: r.reason, shift: r.shift, at: now });
   timer ??= setInterval(tick, 500);
 }
