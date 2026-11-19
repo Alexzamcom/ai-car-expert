@@ -10,7 +10,7 @@ import { themeStore, THEMES } from '../lib/theme';
 import { DEFAULT_STYLE_URL, paletteTransform, gameImage, type MapPalette } from '../lib/mapStyle';
 import { carSvg, unwrapAngle, CAR_COLORS } from '../lib/carMarker';
 import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
-import { autoZoom, lookAheadOffset } from '../lib/camera';
+import { autoZoom, lookAheadOffset, effectiveNavCamera, maneuverLift, navCameraPose, LiftFilter } from '../lib/camera';
 import { hudUiStore } from '../lib/hud';
 import { engineFallback } from '../lib/mapEngine';
 import { mapDiag, diagModeStore } from '../lib/diag';
@@ -402,6 +402,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       for (const ev of ['dragstart', 'rotatestart', 'pitchstart'] as const) map.on(ev, (e) => (e as { originalEvent?: Event }).originalEvent && follow.current && onUserMove.current());
       map.on('zoomstart', (e) => (e as { originalEvent?: Event }).originalEvent && (userZoom = true));
 
+      // Динамическая камера: подъём перед поворотом сглаживается во времени (без рывков при смене манёвра, перестроении, потере GPS).
+      const lift = new LiftFilter();
+      let liftAt = 0;
+      let camStyle: 'normal' | 'game' | 'dynamic' = 'normal';
       camera.current = (immediate = false) => {
         if (!to || !follow.current || touching > 0 || hudUiStore.get().active) return;
         const size = map.getContainer().getBoundingClientRect();
@@ -413,10 +417,23 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         }
         const course = settingsStore.get().cameraMode === 'course';
         const n = navStore.get();
-        const zoom = userZoom ? map.getZoom() : autoZoom(g.speedKmh, n.progress?.toStepM ?? null) + (isGame() ? GAME_ZOOM_BONUS : 0);
         const heading = headingTarget ?? map.getBearing();
-        const offset: [number, number] = course ? [0, size.height * 0.24] : (lookAheadOffset(heading, size.width, size.height).map((v) => -v) as [number, number]);
-        map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? (isGame() ? GAME_PITCH : PITCH) : isGame() ? GAME_IDLE_PITCH : 0, zoom, offset, duration: immediate ? 600 : moveMs, easing: (x) => x, essential: true });
+        // Камера по движению: обычная (прежняя), игровая (вид сзади) или динамическая (подъём перед поворотом —
+        // по расстоянию до манёвра из прогресса вдоль маршрута, не по ближайшей точке GPS).
+        camStyle = effectiveNavCamera(settingsStore.get().navCamera, isGame());
+        const step = n.route && n.progress ? n.route.steps[n.progress.stepIndex] : null;
+        const now = performance.now();
+        const l = lift.update(course && camStyle === 'dynamic' ? maneuverLift(step, n.progress?.toStepM, g.speedKmh) : 0, liftAt ? (now - liftAt) / 1000 : 0);
+        liftAt = now;
+        const pose = navCameraPose(camStyle, {
+          baseZoom: camStyle === 'normal' ? autoZoom(g.speedKmh, n.progress?.toStepM ?? null) + (isGame() ? GAME_ZOOM_BONUS : 0) : autoZoom(g.speedKmh, null),
+          normalPitch: isGame() ? GAME_PITCH : PITCH,
+          lift: l,
+          maxPitch: map.getMaxPitch(),
+        });
+        const zoom = userZoom ? map.getZoom() : pose.zoom;
+        const offset: [number, number] = course ? [0, size.height * pose.offset] : (lookAheadOffset(heading, size.width, size.height).map((v) => -v) as [number, number]);
+        map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? pose.pitch : isGame() ? GAME_IDLE_PITCH : 0, zoom, offset, duration: immediate ? 600 : moveMs, easing: (x) => x, essential: true });
       };
       cleanups.push(
         settingsStore.subscribe(() => camera.current(true)),
@@ -573,6 +590,16 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             car3d: use3d() && !!map.getLayer('car-3d'),
             display: (({ mode, lineId, shift, lat, lon, reason }) => ({ mode, lineId, shift, lat, lon, reason }))(displayStore.get()),
             look: settingsStore.get().mapLook,
+            camera: {
+              style: guiding.current ? camStyle : effectiveNavCamera(settingsStore.get().navCamera, isGame()),
+              lift: +lift.value.toFixed(3),
+              toStepM: navStore.get().progress?.toStepM ?? null,
+              step: (() => {
+                const n = navStore.get();
+                const st = n.route && n.progress ? n.route.steps[n.progress.stepIndex] : null;
+                return st ? `${st.type}${st.modifier ? ' ' + st.modifier : ''}` : null;
+              })(),
+            },
             gameLayers: ['game-buildings', 'game-roofs', 'game-trees'].filter((id) => !!map.getLayer(id)),
             palette: appliedPalette,
             nightLayers: ['game-road-glow', 'game-road-sheen', 'game-lamps'].filter((id) => !!map.getLayer(id)),

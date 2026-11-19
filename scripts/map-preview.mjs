@@ -14,11 +14,13 @@ const PLACES = [
   ['pavlograd', 'Павлоград, центр', 48.5318, 35.8708],
   // Парк имени Шевченко (Днепр) — деревья вблизи
   ['dnipro-park', 'Днепр, парк Шевченко', 48.4581, 35.0624],
+  // Вид сзади (игровая камера): наклон 66°, машинка внизу, впереди улица
+  ['dnipro-chase', 'Днепр, проспект Яворницкого — вид сзади', 48.4668, 35.0459],
 ];
 const browser = await chromium.launch();
 const report = [];
 for (const [key, name, lat, lon] of PLACES) {
-  for (const look of key === 'dnipro-park' ? ['game', 'game-night'] : ['game', 'game-night', 'normal']) {
+  for (const look of key === 'dnipro-park' || key === 'dnipro-chase' ? ['game', 'game-night'] : ['game', 'game-night', 'normal']) {
     const ctx = await browser.newContext({ viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 1, geolocation: { latitude: lat, longitude: lon, accuracy: 8 }, permissions: ['geolocation'], serviceWorkers: 'block' });
     // Ночь — та же «Игровая 3D» с ночной темой. Ядер как у iPad/iPhone/Pixel (≥ 6): полный вариант с фонарями.
     await ctx.addInitScript((lk) => {
@@ -31,7 +33,13 @@ for (const [key, name, lat, lon] of PLACES) {
     await page.goto(url, { waitUntil: 'load' });
     await page.waitForFunction(() => window.__aceMap?.state?.().car3d, null, { timeout: 60000 }).catch(() => {});
     // Вид «миниатюры»: близко, с наклоном и поворотом; ждём, пока догрузятся тайлы.
-    await page.evaluate(([la, lo, z]) => window.__aceMap.map.jumpTo({ center: [lo, la], zoom: z, pitch: 58, bearing: 32 }), [lat, lon, key === 'dnipro-park' ? 17.2 : 16.4]);
+    if (key === 'dnipro-chase')
+      // Как камера «по движению» в игровом виде: центр выше машинки на 30 % высоты, курс вдоль проспекта.
+      await page.evaluate(([la, lo]) => {
+        const m = window.__aceMap.map;
+        m.jumpTo({ center: [lo, la], zoom: 17.1, pitch: 66, bearing: -34, offset: [0, m.getContainer().clientHeight * 0.3] });
+      }, [lat, lon]);
+    else await page.evaluate(([la, lo, z]) => window.__aceMap.map.jumpTo({ center: [lo, la], zoom: z, pitch: 58, bearing: 32 }), [lat, lon, key === 'dnipro-park' ? 17.2 : 16.4]);
     await page.waitForFunction(() => window.__aceMap.map.loaded() && window.__aceMap.map.areTilesLoaded(), null, { timeout: 60000 }).catch(() => {});
     await page.waitForTimeout(1500);
     const info = await page.evaluate(() => {

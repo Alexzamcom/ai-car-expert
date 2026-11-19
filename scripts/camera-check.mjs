@@ -1,0 +1,175 @@
+// Динамическая камера «Игровой 3D» в браузере (тестовые данные маршрута): едем по маршруту к повороту и дальше.
+// Проверяется: вид сзади при движении прямо, плавный подъём перед поворотом, плавный возврат после него, остановка
+// без дрожания, потеря GPS без скачков, ручной поворот карты и плавное возвращение ракурса, iPad вертикально, ночь.
+//
+//   node scripts/camera-check.mjs <url> <папка>
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { chromium, devices } = require('playwright');
+const [url = 'http://localhost:4173/', out = 'camera-check'] = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+fs.mkdirSync(out, { recursive: true });
+const F = (n) => fs.readFileSync(new URL(`../tests/fixtures/${n}`, import.meta.url), 'utf8');
+const json = (b) => ({ status: 200, contentType: 'application/json', body: b });
+
+const results = [];
+const check = (name, ok, detail = '') => {
+  results.push({ name, ok });
+  console.log(`${ok ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}`);
+};
+
+const coords = JSON.parse(F('osrm-route.json')).routes[0].geometry.coordinates.map(([lon, lat]) => ({ lat, lon }));
+const dist = (a, b) => Math.hypot((a.lat - b.lat) * 111320, (a.lon - b.lon) * 111320 * Math.cos((a.lat * Math.PI) / 180));
+const cum = [0];
+for (let i = 1; i < coords.length; i++) cum.push(cum[i - 1] + dist(coords[i - 1], coords[i]));
+/** Точка маршрута на расстоянии d от начала. */
+const along = (d) => {
+  let i = 1;
+  while (i < cum.length - 1 && cum[i] < d) i++;
+  const k = Math.max(0, Math.min(1, (d - cum[i - 1]) / (cum[i] - cum[i - 1])));
+  return { latitude: coords[i - 1].lat + (coords[i].lat - coords[i - 1].lat) * k, longitude: coords[i - 1].lon + (coords[i].lon - coords[i - 1].lon) * k };
+};
+const angle = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
+
+async function run(name, dev, theme) {
+  const browser = await chromium.launch();
+  const { defaultBrowserType: _b, ...opts } = dev;
+  const ctx = await browser.newContext({ ...opts, geolocation: { ...along(0), accuracy: 6 }, permissions: ['geolocation'], serviceWorkers: 'block' });
+  await ctx.route(/openfreemap|\.pbf/, (r) => (r.request().url().includes('/styles/') ? r.fulfill(json(F('maplibre-style.json'))) : r.fulfill({ status: 204 })));
+  await ctx.route('**/nominatim.openstreetmap.org/**', (r) => r.fulfill(json(F(r.request().url().includes('/reverse') ? 'nominatim-reverse.json' : 'nominatim.json'))));
+  await ctx.route('**/photon.komoot.io/**', (r) => r.fulfill(json('{"features":[]}')));
+  for (const h of ['**/routing.openstreetmap.de/**', '**/router.project-osrm.org/**']) await ctx.route(h, (r) => r.fulfill(json(F('osrm-route.json'))));
+  // «Игровая 3D» без выбора камеры — по умолчанию динамическая.
+  await ctx.addInitScript((th) => localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre', mapEngineExplicit: true, mapLook: 'game', theme: th, carStyle: '3d' })), theme);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForFunction(() => window.__aceMap?.state?.().car3d, null, { timeout: 60000 }).catch(() => {});
+  const st = () => page.evaluate(() => window.__aceMap.state());
+  check(`${name}: «Игровая 3D» — по умолчанию динамическая камера`, (await st()).camera.style === 'dynamic');
+
+  // Маршрут и «Поехали» (нажатия через DOM — медленный программный WebGL)
+  await page.fill('#map-search', 'Театр Сатиры');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.map-panel .place-row', { timeout: 20000 }).catch(() => {});
+  await page.evaluate(() => document.querySelector('.map-panel .place-row')?.click());
+  await page.waitForSelector('.pick-card', { timeout: 10000 }).catch(() => {});
+  await page.evaluate(() => [...document.querySelectorAll('.pick-card .btn')].find((b) => b.textContent.includes('Маршрут сюда'))?.click());
+  await page.waitForSelector('.route-card .btn-primary', { timeout: 20000 }).catch(() => {});
+  await page.evaluate(() => [...document.querySelectorAll('.route-card .btn-primary')].find((b) => b.textContent.includes('Поехали'))?.click());
+  await page.waitForTimeout(4500);
+
+  // Едем ~35 м за 1,1 с (≈115 км/ч в тесте — укладывается в фильтр GPS), записываем камеру.
+  const samples = [];
+  let d = 20;
+  let turnAt = null;
+  const drive = async (to, step = 35) => {
+    for (; d <= to; d += step) {
+      await ctx.setGeolocation({ ...along(d), accuracy: 6 });
+      await page.waitForTimeout(1100);
+      const s = await st();
+      samples.push({ d, toStepM: s.camera.toStepM, step: s.camera.step, lift: s.camera.lift, pitch: s.pitch, zoom: s.zoom, bearing: s.bearing, heading: s.heading, carY: s.car?.y });
+      if (turnAt == null && s.camera.step?.startsWith('turn') && s.camera.toStepM != null) turnAt = d + s.camera.toStepM;
+    }
+  };
+  await drive(260);
+  const straight = samples.filter((x) => x.step?.startsWith('turn') && x.toStepM > 300).slice(-3);
+  check(
+    `${name}: прямо — вид сзади (наклон > 60°, курс камеры по движению, машинка в нижней части)`,
+    straight.length > 0 && straight.every((x) => x.lift === 0 && x.pitch > 60 && x.heading != null && angle(x.bearing, x.heading) < 15 && x.carY > 0.65),
+    JSON.stringify(straight.at(-1)),
+  );
+  if (turnAt == null) turnAt = 1300;
+  // Подъезд к повороту — с замедлением, как в городе (35 → 15 м за точку).
+  await drive(turnAt - 260);
+  await drive(turnAt - 80, 15);
+  // Остановка за ~80 м до поворота (светофор): GPS «гуляет» ±1.5 м — камера не дрожит (после плавного доезда до ракурса).
+  for (let i = 0; i < 6; i++) {
+    await ctx.setGeolocation({ ...along(d), accuracy: 8 });
+    await page.waitForTimeout(1100);
+  }
+  const hold = along(d);
+  const still = [];
+  for (let i = 0; i < 6; i++) {
+    await ctx.setGeolocation({ latitude: hold.latitude + ((i % 2 ? 1 : -1) * 1.5) / 111320, longitude: hold.longitude, accuracy: 10 });
+    await page.waitForTimeout(1100);
+    const s = await st();
+    still.push({ pitch: s.pitch, bearing: s.bearing, zoom: s.zoom });
+  }
+  const span = (k) => Math.max(...still.map((x) => x[k])) - Math.min(...still.map((x) => x[k]));
+  const bspan = Math.max(...still.map((x) => angle(x.bearing, still[0].bearing)));
+  // Дрожание — колебания туда-обратно; плавный доезд камеры до ракурса (монотонно) дрожанием не считается.
+  const diffs = still.slice(1).map((x, i) => x.pitch - still[i].pitch);
+  const flips = diffs.slice(1).filter((x, i) => Math.sign(x) !== Math.sign(diffs[i]) && Math.abs(x) > 0.5 && Math.abs(diffs[i]) > 0.5).length;
+  check(
+    `${name}: остановка у перекрёстка — без дрожания (курс неподвижен, наклон без колебаний, масштаб почти не меняется)`,
+    bspan < 3 && flips === 0 && span('pitch') < 6 && span('zoom') < 0.3,
+    JSON.stringify({ pitch: span('pitch').toFixed(2), flips, bearing: bspan.toFixed(1), zoom: span('zoom').toFixed(2) }),
+  );
+  await drive(turnAt - 15, 15);
+  const near = samples.filter((x) => x.toStepM != null && x.toStepM < 90 && x.step?.startsWith('turn'));
+  const peak = Math.max(...samples.map((x) => x.lift));
+  check(`${name}: перед поворотом — камера плавно поднимается (подъём > 0.5, наклон < 56°)`, near.some((x) => x.lift > 0.5 && x.pitch < 56), JSON.stringify(near.at(-1)));
+  const jumps = samples.slice(1).map((x, i) => Math.abs(x.lift - samples[i].lift));
+  check(`${name}: подъём без рывков (за шаг < 0.6)`, Math.max(0, ...jumps) < 0.6, `макс. ${Math.max(0, ...jumps).toFixed(2)}, пик ${peak.toFixed(2)}`);
+  await page.screenshot({ path: `${out}/camera-${name.replace(/\W+/g, '-')}-turn.png` });
+
+  // Проезд поворота и потеря GPS на 8 с — без скачков; затем плавный возврат к виду сзади
+  await drive(turnAt + 60);
+  await page.waitForTimeout(8000);
+  const beforeLoss = samples.at(-1);
+  await drive(turnAt + 420);
+  const afterLoss = samples[samples.indexOf(beforeLoss) + 1];
+  // За 8 с без точек камера не «прыгает»: следующая точка не поворачивает её резко и не меняет наклон скачком
+  // (возврат к виду сзади после поворота идёт постепенно).
+  check(
+    `${name}: потеря GPS на 8 с — без скачка камеры`,
+    afterLoss && Math.abs(afterLoss.pitch - beforeLoss.pitch) < 15 && afterLoss.heading != null && angle(afterLoss.heading, beforeLoss.heading) < 30,
+    JSON.stringify({ before: { lift: beforeLoss.lift, pitch: +beforeLoss.pitch.toFixed(1) }, after: { lift: afterLoss?.lift, pitch: +afterLoss?.pitch.toFixed(1) } }),
+  );
+  const after = samples.filter((x) => x.d > turnAt + 250);
+  check(
+    `${name}: после поворота — плавный возврат к виду сзади (подъём снижается, наклон растёт)`,
+    after.length >= 2 && after.at(-1).lift < peak * 0.6 && after.at(-1).pitch > Math.min(...samples.map((x) => x.pitch)) + 5,
+    JSON.stringify({ peak, last: after.at(-1) }),
+  );
+
+  // Ручной поворот карты двумя пальцами → свободный обзор; «К машине» — плавно обратно к ракурсу
+  const cdp = await ctx.newCDPSession(page);
+  const box = await page.evaluate(() => { const r = document.querySelector('.ml-map').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; });
+  const cx = box.x + box.w / 2;
+  const cy = box.y + box.h * 0.45;
+  const two = (a) => [[cx + 110 * Math.cos(a), cy + 110 * Math.sin(a)], [cx - 110 * Math.cos(a), cy - 110 * Math.sin(a)]].map(([x, y], i) => ({ x, y, id: i + 1 }));
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: two(0) });
+  for (let k = 1; k <= 10; k++) {
+    await page.waitForTimeout(16);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: two((k * Math.PI) / 20) });
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForSelector('.recenter-pill, .route-card .btn-primary:has-text("машине")', { timeout: 8000 }).catch(() => {});
+  const freeBearing = (await st()).bearing;
+  // Пока свободный обзор — новая точка GPS не возвращает камеру сама (нет борьбы с пользователем)
+  d += 35;
+  await ctx.setGeolocation({ ...along(d), accuracy: 6 });
+  await page.waitForTimeout(1500);
+  const held = await st();
+  check(`${name}: ручной поворот — свободный обзор, автоследование не мешает`, angle(held.bearing, freeBearing) < 3, JSON.stringify({ freeBearing, now: held.bearing }));
+  await page.evaluate(() => (document.querySelector('.recenter-pill') ?? [...document.querySelectorAll('.btn')].find((b) => /К машине|Вернуться к машине/.test(b.textContent)))?.click());
+  await page.waitForTimeout(2500);
+  const back = await st();
+  check(`${name}: «К машине» — ракурс сзади восстановлен`, back.pitch > 45 && back.heading != null && angle(back.bearing, back.heading) < 15, JSON.stringify({ pitch: back.pitch, bearing: back.bearing, heading: back.heading }));
+  const diag = await page.evaluate(() => window.__aceDiag.map());
+  check(`${name}: без мерцания и потери WebGL (стиль не перезагружался, контекст цел)`, diag.setStyles <= 1 && diag.contextLost === 0 && errors.length === 0, JSON.stringify({ setStyles: diag.setStyles, lost: diag.contextLost, errors: errors.slice(0, 2) }));
+  fs.writeFileSync(`${out}/camera-${name.replace(/\W+/g, '-')}.json`, JSON.stringify(samples, null, 1));
+  await browser.close();
+}
+
+try {
+  await run('iPad вертикально, день', { ...devices['iPad Pro 11'], viewport: { width: 1024, height: 1366 } }, 'day').catch((e) => check('iPad: сценарий выполнен', false, String(e).slice(0, 300)));
+  await run('iPhone 15, ночь', devices['iPhone 15'], 'night').catch((e) => check('iPhone: сценарий выполнен', false, String(e).slice(0, 300)));
+} finally {
+  const failed = results.filter((r) => !r.ok);
+  console.log(`\nПройдено ${results.length - failed.length}/${results.length}, провалов: ${failed.length}`);
+  process.exit(failed.length ? 1 : 0);
+}

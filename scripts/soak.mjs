@@ -211,7 +211,14 @@ async function soak(key) {
 }
 
 try {
-  await Promise.all(WANT.filter((k) => DEVICES[k]).map((k) => soak(k).catch((e) => check(`${DEVICES[k][0]}: сценарий выполнен`, false, String(e).slice(0, 300)))));
+  // Опубликованная версия ищет адрес через публичный Nominatim (не чаще 1 запроса в секунду с адреса): три браузера
+  // с одного адреса одновременно получали отказ. Устройства стартуют с разносом в 25 с.
+  await Promise.all(
+    WANT.filter((k) => DEVICES[k]).map(async (k, i) => {
+      if (!MOCK && i) await new Promise((r) => setTimeout(r, i * 25000));
+      return soak(k).catch((e) => check(`${DEVICES[k][0]}: сценарий выполнен`, false, String(e).slice(0, 300)));
+    }),
+  );
 } finally {
   const failed = results.filter((r) => !r.ok);
   console.log(`\nПройдено ${results.length - failed.length}/${results.length}, провалов: ${failed.length}`);
