@@ -26,11 +26,11 @@ describe('stepText', () => {
   it('русский', () => {
     expect(stepText(route.steps[1], 'ru')).toBe('Поверните направо на Садовая-Триумфальная улица');
     expect(stepText(route.steps[2], 'ru')).toBe('На кольце 2-й съезд на Краснопролетарская улица');
-    expect(stepText(route.steps[3], 'ru')).toBe('Вы прибыли');
+    expect(stepText(route.steps[3], 'ru')).toBe('Пункт назначения');
   });
   it('украинский', () => {
     expect(stepText(route.steps[1], 'uk')).toBe('Поверніть праворуч на Садовая-Триумфальная улица');
-    expect(stepText(route.steps[3], 'uk')).toBe('Ви прибули');
+    expect(stepText(route.steps[3], 'uk')).toBe('Пункт призначення');
   });
   it('иконки манёвров', () => {
     expect(stepIcon(route.steps[1])).toBe('arrowRight');

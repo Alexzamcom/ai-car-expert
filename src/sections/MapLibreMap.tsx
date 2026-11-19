@@ -4,7 +4,7 @@
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { GeoJSONSource, Map as MlMap, Marker } from 'maplibre-gl';
 import { useStore } from '../lib/store';
-import { geoStore, navStore, poiStore, pickStore, pickPoint, selectRoute, addStop, placeFromPoi, readLastPos, navLang } from '../lib/nav';
+import { geoStore, navStore, poiStore, pickStore, pickPoint, selectRoute, addStop, placeFromPoi, readLastPos, navLang, visibleRouteCoords } from '../lib/nav';
 import { settingsStore, toast } from '../lib/state';
 import { themeStore, THEMES } from '../lib/theme';
 import { DEFAULT_STYLE_URL, paletteTransform, gameImage, type MapPalette } from '../lib/mapStyle';
@@ -17,8 +17,7 @@ import { mapDiag, diagModeStore } from '../lib/diag';
 import { displayStore, setRoadProvider } from '../lib/matching/display';
 import type { RoadLine } from '../lib/matching/matcher';
 import { LongPressDetector } from '../lib/geo/longpress';
-import { cumulative, type LatLon, type Route } from '../lib/routing';
-import { RouteTrimmer, remainingCoords } from '../lib/routeTrim';
+import { cumulative, type LatLon } from '../lib/routing';
 
 export interface MapApi {
   /** Показать точки целиком, не заходя под поиск, кнопки и карточки. */
@@ -177,9 +176,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (!map.getLayer('alts')) map.addLayer({ id: 'alts', type: 'line', source: 'alts', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': t.muted, 'line-width': w(4, 12), 'line-opacity': 0.75 } }, before);
         if (!map.getLayer('route-casing')) map.addLayer({ id: 'route-casing', type: 'line', source: 'route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': t['route-casing'], 'line-width': w(7, 24) } }, before);
         if (!map.getLayer('route-line')) map.addLayer({ id: 'route-line', type: 'line', source: 'route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': t.route, 'line-width': w(4.5, 16) } }, before);
-        drawRoute();
+        drawRoute(true);
         // Источник маршрута создан заново (загрузка или смена стиля) — данные отправляются сразу, без ожидания сдвига.
-        sendRoute(performance.now(), true);
         drawAcc();
         syncCar();
       };
@@ -196,71 +194,15 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       };
       cleanups.push(themeStore.subscribe(() => restyle('тема')), settingsStore.subscribe(() => restyle('вид карты')));
 
-      /* ---------- Пройденная часть маршрута скрывается (только изображение; маршрут для подсказок не меняется) ---------- */
-      const trimmer = new RouteTrimmer();
-      const TRIM_MS = 900; // граница едет к новой точке так же плавно, как машинка
-      let trimRoute: Route | null = null;
-      let trimCum: number[] = [];
-      let cutFrom = 0;
-      let cutTo = 0;
-      let cutT0 = 0;
-      let cutSent = -1;
-      let cutSentAt = 0;
-      let routeShown: Route | null = null;
-      let routeShownGuiding = false;
-      // Последняя отправленная на карту линия маршрута (для диагностики и тестов).
-      let routeData: { geometry?: { coordinates: number[][] } } = {};
-      const shownCut = (now: number) => cutFrom + (cutTo - cutFrom) * Math.min(1, (now - cutT0) / TRIM_MS);
-      const updateTrim = () => {
-        const s = navStore.get();
-        if (!s.route || s.status !== 'guiding' || !s.progress) return;
-        const now = performance.now();
-        if (s.route !== trimRoute) {
-          trimRoute = s.route;
-          trimCum = cumulative(s.route.coords);
-          cutFrom = cutTo = 0;
-          cutSent = -1;
-        }
-        const total = trimCum[trimCum.length - 1] ?? 0;
-        const kmh = geoStore.get().speedKmh;
-        const next = trimmer.update({ route: s.route, along: total - s.progress.remainingM, offRouteM: s.progress.offRouteM, t: now, speed: kmh != null ? kmh / 3.6 : null });
-        if (next === cutTo) return;
-        // Откат назад (разворот на маршруте) или большой скачок — сразу; обычное движение — плавно.
-        cutFrom = next < cutTo || next - cutTo > 120 ? next : shownCut(now);
-        cutTo = next;
-        cutT0 = now;
-      };
-      const sendRoute = (now: number, force = false) => {
+      let shownCoords: LatLon[] | undefined;
+      const drawRoute = (force = false) => {
         const s = navStore.get();
         const src = map.getSource('route') as GeoJSONSource | undefined;
-        if (!src) return;
-        const guidingRoute = !!s.route && s.status === 'guiding' && s.route === trimRoute;
-        if (!guidingRoute) {
-          if (force || s.route !== routeShown || routeShownGuiding) {
-            const data = s.route ? line(s.route.coords) : empty;
-            src.setData(data);
-            routeData = data as typeof routeData;
-          }
-          routeShown = s.route;
-          routeShownGuiding = false;
-          return;
+        const coords = visibleRouteCoords(s);
+        if (src && (force || coords !== shownCoords)) {
+          src.setData(coords.length >= 2 ? line(coords) : empty);
+          shownCoords = coords;
         }
-        const cut = Math.max(0, shownCut(now) - 2); // чуть позади центра машинки — линия уходит под неё
-        // Не чаще ~3 раз в секунду и при сдвиге от 6 м: машинка на экране крупнее этого шага (≈ 50 м при обычном масштабе),
-        // поэтому граница всё равно выглядит плавной, а карта не делает лишней работы.
-        if (!force && routeShown === s.route && routeShownGuiding && (now - cutSentAt < 300 || Math.abs(cut - cutSent) < 6)) return;
-        const data = line(remainingCoords(s.route!.coords, trimCum, cut));
-        src.setData(data);
-        routeData = data as typeof routeData;
-        routeShown = s.route;
-        routeShownGuiding = true;
-        cutSent = cut;
-        cutSentAt = now;
-      };
-      const drawRoute = () => {
-        const s = navStore.get();
-        updateTrim();
-        sendRoute(performance.now(), s.route !== routeShown);
         const alts = s.status === 'guiding' ? [] : s.routes.map((r, i) => ({ r, i })).filter(({ i }) => i !== s.routeIndex);
         (map.getSource('alts') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: alts.map(({ r, i }) => line(r.coords, { idx: i })) });
         markers.dest = syncMarker(markers.dest, s.dest, 'dest');
@@ -307,7 +249,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           map.easeTo({ center: [pk.lon, pk.lat], zoom: Math.max(map.getZoom(), 16), bearing: 0, pitch: 0, duration: 600 });
         } else if (pk && !api.contains(pk, 0.15)) map.panTo([pk.lon, pk.lat]);
       };
-      cleanups.push(navStore.subscribe(drawRoute), poiStore.subscribe(drawPoi), pickStore.subscribe(drawPick));
+      cleanups.push(navStore.subscribe(() => drawRoute()), poiStore.subscribe(drawPoi), pickStore.subscribe(drawPick));
       map.on('click', 'alts', (e) => {
         const idx = Number(e.features?.[0]?.properties?.idx);
         if (Number.isFinite(idx)) selectRoute(idx);
@@ -385,7 +327,6 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             if (!flatOn) flatMarker.addTo(map);
           }
         }
-        if (trimRoute && routeShownGuiding) sendRoute(now);
         raf = requestAnimationFrame(frame);
       };
       raf = requestAnimationFrame(frame);
@@ -609,8 +550,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             accuracyCircle: accShown,
             routePoints: navStore.get().route?.coords.length ?? 0,
             routeTrim: (() => {
-              const c = routeData.geometry?.coordinates ?? [];
-              return { cut: Math.round(cutTo), total: Math.round(trimCum[trimCum.length - 1] ?? 0), shownPoints: c.length, first: c[0] ?? null };
+              const s = navStore.get();
+              const c = shownCoords ?? [];
+              const first = c[0] ? [c[0].lon, c[0].lat] : null;
+              return { cut: Math.round(s.routeCutM), total: Math.round(cumulative(s.route?.coords ?? []).at(-1) ?? 0), shownPoints: c.length, first };
             })(),
             lang: navLang(),
           };

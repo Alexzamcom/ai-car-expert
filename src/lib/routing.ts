@@ -174,9 +174,9 @@ const DIR: Record<Lang, Record<string, string>> = {
 };
 
 const T = {
-  ru: { depart: 'Начните движение', arrive: 'Вы прибыли', turn: 'Поверните', keep: 'Держитесь', roundabout: 'На кольце', exit: 'съезд', onto: 'на', merge: 'Перестройтесь', ramp: 'Съезд', fork: 'На развилке', continue: 'Продолжайте', uturn: 'Развернитесь', waypoint: 'Промежуточная точка' },
-  uk: { depart: 'Почніть рух', arrive: 'Ви прибули', turn: 'Поверніть', keep: 'Тримайтеся', roundabout: 'На колі', exit: "з'їзд", onto: 'на', merge: 'Перешикуйтеся', ramp: "З'їзд", fork: 'На розвилці', continue: 'Продовжуйте', uturn: 'Розверніться', waypoint: 'Проміжна точка' },
-  en: { depart: 'Start driving', arrive: 'You have arrived', turn: 'Turn', keep: 'Keep', roundabout: 'At the roundabout take', exit: 'exit', onto: 'onto', merge: 'Merge', ramp: 'Take the ramp', fork: 'At the fork keep', continue: 'Continue', uturn: 'Make a U-turn', waypoint: 'Waypoint reached' },
+  ru: { depart: 'Начните движение', arrive: 'Пункт назначения', turn: 'Поверните', keep: 'Держитесь', roundabout: 'На кольце', exit: 'съезд', onto: 'на', merge: 'Перестройтесь', ramp: 'Съезд', fork: 'На развилке', continue: 'Продолжайте', uturn: 'Развернитесь', waypoint: 'Промежуточная точка' },
+  uk: { depart: 'Почніть рух', arrive: 'Пункт призначення', turn: 'Поверніть', keep: 'Тримайтеся', roundabout: 'На колі', exit: "з'їзд", onto: 'на', merge: 'Перешикуйтеся', ramp: "З'їзд", fork: 'На розвилці', continue: 'Продовжуйте', uturn: 'Розверніться', waypoint: 'Проміжна точка' },
+  en: { depart: 'Start driving', arrive: 'Destination', turn: 'Turn', keep: 'Keep', roundabout: 'At the roundabout take', exit: 'exit', onto: 'onto', merge: 'Merge', ramp: 'Take the ramp', fork: 'At the fork keep', continue: 'Continue', uturn: 'Make a U-turn', waypoint: 'Waypoint reached' },
 };
 
 const ORD: Record<Lang, (n: number) => string> = {

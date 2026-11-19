@@ -57,6 +57,7 @@ export class RouteTrimmer {
       if (i.offRouteM <= ON_ROUTE_M && i.along < 150) this.cut = Math.max(0, i.along);
       return this.cut;
     }
+    if (i.t <= this.lastT) return this.cut;
     const dt = Math.min(10, Math.max(0.2, (i.t - this.lastT) / 1000));
     this.lastT = i.t;
     if (i.offRouteM > ON_ROUTE_M || !Number.isFinite(i.along)) {

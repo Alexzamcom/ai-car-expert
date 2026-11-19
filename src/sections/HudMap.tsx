@@ -2,7 +2,7 @@
    яркий маршрут, машинка; всегда по движению, с наклоном. Маршрут и GPS — общие с навигацией. */
 import { useEffect, useRef } from 'react';
 import type { GeoJSONSource, Map as MlMap } from 'maplibre-gl';
-import { geoStore, navStore, readLastPos } from '../lib/nav';
+import { geoStore, navStore, readLastPos, visibleRouteCoords } from '../lib/nav';
 import { DEFAULT_STYLE_URL, paletteTransform } from '../lib/mapStyle';
 import { autoZoom } from '../lib/camera';
 import { displayStore } from '../lib/matching/display';
@@ -52,24 +52,20 @@ export function HudMap({ color }: { color: string }) {
         if (!map.getSource('route')) map.addSource('route', { type: 'geojson', data: empty });
         const w = (a: number, b: number) => ['interpolate', ['linear'], ['zoom'], 12, a, 18, b] as unknown as number;
         if (!map.getLayer('hud-route')) map.addLayer({ id: 'hud-route', type: 'line', source: 'route', layout: { 'line-cap': 'round', 'line-join': 'round' }, paint: { 'line-color': colorRef.current, 'line-width': w(5, 18) } });
-        drawRoute();
+        drawRoute(true);
       };
       map.on('style.load', addLayers);
-      const drawRoute = () => {
-        const r = navStore.get().route;
-        (map.getSource('route') as GeoJSONSource | undefined)?.setData(
-          r ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: r.coords.map((c) => [c.lon, c.lat]) } } : empty,
-        );
+      let shownCoords: LatLon[] | undefined;
+      const drawRoute = (force = false) => {
+        const src = map.getSource('route') as GeoJSONSource | undefined;
+        const coords = visibleRouteCoords();
+        if (!src || (!force && coords === shownCoords)) return;
+        shownCoords = coords;
+        src.setData(coords.length >= 2
+          ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords.map((c) => [c.lon, c.lat]) } }
+          : empty);
       };
-      let lastRoute = navStore.get().route;
-      cleanups.push(
-        navStore.subscribe(() => {
-          if (navStore.get().route !== lastRoute) {
-            lastRoute = navStore.get().route;
-            drawRoute();
-          }
-        }),
-      );
+      cleanups.push(navStore.subscribe(() => drawRoute()));
 
       // Машинка — светлая стрелка в цвете HUD, лежит на карте.
       const carEl = document.createElement('div');

@@ -1,6 +1,6 @@
 /* Три позиции раздельно: сырая (решения ведения), отображаемая (привязка), прогноз (только показ). */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { handleFix, geoStore, __resetGeo, setDestination, startGuidance, stopNavigation, navStore, type RawFix } from '../../src/lib/nav';
+import { handleFix, geoStore, __resetGeo, setDestination, startGuidance, stopNavigation, navStore, visibleRouteCoords, type RawFix } from '../../src/lib/nav';
 import { displayStore, __tickDisplay } from '../../src/lib/matching/display';
 import { distM } from '../../src/lib/matching/matcher';
 import osrm from '../fixtures/osrm-route.json';
@@ -56,6 +56,30 @@ describe('Отображаемая позиция и решения ведени
     expect(distM(d as { lat: number; lon: number }, raw)).toBeGreaterThan(4); // показана на линии маршрута
     expect(geoStore.get()).toMatchObject({ lat: raw.lat, lon: raw.lon }); // сырая — без изменений
     expect(navStore.get().progress!.offRouteM).toBeGreaterThan(4); // решения — по сырой точке
+  });
+
+  it('новый маршрут публикуется сразу от последней принятой точки, даже если машина успела проехать вперёд', async () => {
+    fix(at(28));
+    const oldLine = visibleRouteCoords();
+    expect(oldLine[0]).not.toEqual(coords[0]);
+
+    const next = structuredClone(osrm);
+    const newStart = at(28);
+    next.routes[0].geometry.coordinates[0] = [newStart.lon, newStart.lat];
+    let respond!: (response: Response) => void;
+    vi.stubGlobal('fetch', () => new Promise<Response>((resolve) => { respond = resolve; }));
+    const request = setDestination(dest, null, true);
+    const current = at(52);
+    fix(current);
+    respond(new Response(JSON.stringify(next), { status: 200 }));
+    await request;
+
+    expect(navStore.get().status).toBe('guiding');
+    expect(navStore.get().routeCutM).toBeGreaterThan(20);
+    const newLine = visibleRouteCoords();
+    expect(distM(newLine[0], current)).toBeLessThan(1);
+    expect(visibleRouteCoords()).toBe(newLine);
+    expect(navStore.get().route?.coords[0]).toEqual(newStart);
   });
 
   it('прибытие не засчитывается по привязанной позиции, только по сырой', () => {
