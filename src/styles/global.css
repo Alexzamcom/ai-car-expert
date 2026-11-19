@@ -1010,6 +1010,10 @@ textarea.input { padding: 14px 16px; resize: none; }
   .map-ui.has-dest .route-actions::-webkit-scrollbar { display: none; }
   .map-ui.has-dest .route-actions .btn { flex: none; }
   .map-ui.has-dest .pick-actions .btn-primary { flex: 1 0 auto; }
+  /* Выбранная точка: кнопок немного — переносом, все видны сразу («В мои места», «Отмена»). */
+  .map-ui.has-dest .pick-actions { flex-wrap: wrap; overflow: visible; }
+  .map-ui.has-dest .pick-actions .btn { flex: 1 1 auto; }
+  .map-ui.has-dest .pick-actions .btn-primary { flex-basis: 100%; }
   .route-alts { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .route-alts::-webkit-scrollbar { display: none; }
   .route-alt-chip { flex: none; min-height: 44px; padding: 0 12px; }
@@ -1542,3 +1546,29 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .diag-dot-raw { background: var(--danger); }
 .diag-dot-car { background: var(--accent); }
 .diag-raw { width: 14px; height: 14px; border-radius: 50%; background: var(--danger); border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--line-2); pointer-events: none; }
+
+/* «Мои места» */
+.my-places { display: grid; gap: 4px; margin-top: 6px; }
+.my-places-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.my-places-add { min-height: 48px; font-size: 1.05rem; flex: 1 1 200px; max-width: 100%; }
+.my-place { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; padding: 0; width: 100%; min-width: 0; }
+.my-place-go { min-width: 0; width: 100%; display: flex; align-items: center; gap: 12px; padding: 10px 6px; background: none; border: none; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.my-place-go > span { display: grid; min-width: 0; flex: 1; }
+.my-place-go small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.my-place-go .place-dist { flex: none; }
+.my-place[data-type='home'] .my-place-go > svg, .my-place[data-type='work'] .my-place-go > svg { color: var(--accent); }
+.my-places-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 8px; }
+.my-places-foot small { flex: 1 1 100%; line-height: 1.35; }
+.my-places-note { color: var(--accent); }
+.place-editor-backdrop { z-index: 60; }
+.place-editor { display: grid; gap: 14px; max-height: calc(100dvh - 32px); overflow: auto; width: min(560px, 100%); }
+.place-editor h2 { font-size: 1.35rem; }
+.place-editor .field { display: grid; gap: 6px; }
+.place-editor .seg { flex-wrap: wrap; }
+.place-editor-point { display: grid; gap: 8px; }
+.place-editor-src { display: flex; flex-wrap: wrap; gap: 8px; }
+.place-editor-search { display: flex; gap: 8px; }
+.place-editor-search .input { flex: 1; min-width: 0; }
+.place-editor-found { display: grid; max-height: 240px; overflow: auto; }
+.place-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.place-editor-actions .spacer { flex: 1; }

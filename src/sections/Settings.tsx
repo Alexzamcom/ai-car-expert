@@ -12,7 +12,8 @@ import { chatgptPrefsStore } from '../lib/chatgpt';
 import { themeStore, setThemeMode, THEME_MODE_LABEL, type ThemeMode } from '../lib/theme';
 import { MUSIC_SOURCES } from '../lib/music/sources';
 import { CAR_COLORS, carSvg, type CarColor } from '../lib/carMarker';
-import { geoStore, navStore, setNavigationVoice, restartGeo, locatorState, guidanceUse } from '../lib/nav';
+import { geoStore, navStore, setNavigationVoice, restartGeo, locatorState, guidanceUse, setDestination } from '../lib/nav';
+import { MyPlacesSection } from '../components/MyPlaces';
 import { FIX_SOURCE_LABEL } from '../lib/geo/locator';
 
 const FUELS: Record<VehicleProfile['fuel'], string> = {
@@ -112,6 +113,7 @@ export function Settings() {
       </form>
 
       <CarOnMapSettings />
+      <MyPlacesCard />
       <HudSettingsCard />
 
       <GpsDiagnostics />
@@ -694,6 +696,20 @@ function HudLookSettings({ h, patch, seg }: { h: HudSettings; patch: (p: Partial
         </div>
       )}
     </>
+  );
+}
+
+/** «Мои места» в настройках: тот же список и редактор, что в панели поиска карты. */
+function MyPlacesCard() {
+  return (
+    <div className="card">
+      <MyPlacesSection
+        onRoute={(p) => {
+          closePage();
+          void setDestination(p);
+        }}
+      />
+    </div>
   );
 }
 

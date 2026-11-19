@@ -50,6 +50,7 @@ import { openHud } from '../lib/hud';
 import { displayStore } from '../lib/matching/display';
 import { diagModeStore, mapDiag } from '../lib/diag';
 import { DiagOverlay } from './DiagOverlay';
+import { MyPlacesSection, openPlaceEditor } from '../components/MyPlaces';
 import { effectiveEngine, webglAvailable, mapRuntimeStore, engineFallback } from '../lib/mapEngine';
 import { stepText, stepIcon, fmtDistance, fmtDuration, haversine } from '../lib/routing';
 import { POI_CATEGORIES, type PoiCategory, type Poi } from '../lib/poi';
@@ -553,7 +554,11 @@ export function Navigation() {
                 id="map-search"
                 className="map-search-input"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  // Строка стёрта — снова «Мои места» и подсказки, а не результаты прошлого поиска.
+                  if (!e.target.value.trim()) setResults(null);
+                }}
                 onFocus={() => setPanelOpen(true)}
                 placeholder="Куда едем?"
                 enterKeyHint="search"
@@ -609,6 +614,7 @@ export function Navigation() {
                       )}
                     </div>
                   )}
+                  <MyPlacesSection onRoute={selectPlace} />
                   <div className="poi-chips">
                     {(Object.keys(POI_CATEGORIES) as PoiCategory[]).map((c) => (
                       <button
@@ -623,16 +629,6 @@ export function Navigation() {
                       </button>
                     ))}
                   </div>
-                  {favorites.length > 0 && <div className="list-head">Избранное</div>}
-                  {favorites.map((p) => (
-                    <button key={p.id} className="place-row" onClick={() => selectPlace(p)}>
-                      <Icon name="star" size="1.5rem" />
-                      <span>
-                        <strong>{p.name}</strong>
-                        <small>{p.address}</small>
-                      </span>
-                    </button>
-                  ))}
                   {recents.length > 0 && <div className="list-head">Недавние</div>}
                   {recents.map((p) => (
                     <button key={p.id + p.lat} className="place-row" onClick={() => selectPlace(p)}>
@@ -758,6 +754,12 @@ export function Navigation() {
                       <Icon name="flag" /> Добавить остановку
                     </button>
                   )}
+                  <button
+                    className="btn btn-lg"
+                    onClick={() => openPlaceEditor({ lat: pick.lat, lon: pick.lon, name: pick.place?.name ?? '', address: pick.place?.address ?? '', kind: pick.place?.kind })}
+                  >
+                    <Icon name="star" /> В мои места
+                  </button>
                   <button className="btn btn-lg" onClick={cancelPick}>
                     Отмена
                   </button>
@@ -823,7 +825,7 @@ export function Navigation() {
                           </div>
                         )}
                       </div>
-                      <button className="icon-btn" onClick={() => toggleFavorite(nav.dest!)} aria-label="Избранное">
+                      <button className="icon-btn" onClick={() => toggleFavorite(nav.dest!)} aria-label={isFav ? 'Убрать из моих мест' : 'В мои места'}>
                         <Icon name="star" filled={isFav} className={isFav ? 'text-accent' : ''} />
                       </button>
                       <button className="icon-btn" onClick={stopNavigation} aria-label="Сбросить маршрут">
@@ -932,6 +934,9 @@ function SavedPlaceLinks({ dest, home, work }: { dest: Place; home: Place | null
       </button>
       <button className="link-btn" onClick={() => { setSavedPlace('work', dest); toast('Сохранено как «Работа». Скажите «поехали на работу».', 'ok'); }}>
         <Icon name="flag" size="1em" /> Сделать работой
+      </button>
+      <button className="link-btn" onClick={() => openPlaceEditor({ lat: dest.lat, lon: dest.lon, name: dest.name, address: dest.address, kind: dest.kind })}>
+        <Icon name="plus" size="1em" /> Другое место…
       </button>
     </div>
   );
