@@ -153,17 +153,28 @@ async function soak(key) {
     const wait = t0 + s * 1000 - Date.now();
     if (wait > 0) await page.waitForTimeout(wait);
     if (s % 300 === 0) {
-      await page.screenshot({ path: `${out}/soak-${key}-${s / 60}min.png` });
+      // Снимок — для отчёта, не для проверки: на перегруженном программном WebGL он может не успеть за 30 с.
+      await page.screenshot({ path: `${out}/soak-${key}-${s / 60}min.png`, timeout: 15000 }).catch(() => console.log(`${name}: снимок на ${s / 60} мин пропущен (медленный кадр)`));
       console.log(`${name}: ${s / 60} мин`);
     }
   }
   const last = samples[samples.length - 1];
   const d = (k) => last.map[k] - base.map[k];
   check(`${name}: экземпляр MapLibre не пересоздавался ${MINUTES} мин`, last.map.creates === base.map.creates && d('removes') === 0, JSON.stringify({ creates: last.map.creates, removes: last.map.removes }));
-  check(`${name}: стиль карты не перезагружался (нет мерцания от setStyle)`, d('setStyles') === 0 && d('styleLoads') === 0, JSON.stringify({ setStyles: d('setStyles'), styleLoads: d('styleLoads') }));
-  check(`${name}: стиль всё время загружен`, samples.every((x) => x.styleLoaded), `${samples.filter((x) => !x.styleLoaded).length} из ${samples.length} замеров без стиля`);
+  // Тема «по солнцу»: если за 15 минут наступил закат или рассвет, палитра один раз меняется — это не мерцание.
+  // Допускается ровно одна перезагрузка стиля с записью «тема →» в журнале карты и пара замеров на время загрузки.
+  const themeSwitches = (last.map.events ?? []).filter((e) => e.at > samples[0].at && /^setStyle: тема/.test(e.text)).length;
+  const allowed = Math.min(1, themeSwitches);
+  check(
+    `${name}: стиль карты не перезагружался (нет мерцания от setStyle${allowed ? '; одна смена темы на закате/рассвете допустима' : ''})`,
+    d('setStyles') <= allowed && d('styleLoads') <= allowed,
+    JSON.stringify({ setStyles: d('setStyles'), styleLoads: d('styleLoads'), themeSwitches }),
+  );
+  const noStyle = samples.filter((x) => !x.styleLoaded).length;
+  check(`${name}: стиль всё время загружен`, noStyle <= (allowed ? 4 : 0), `${noStyle} из ${samples.length} замеров без стиля`);
   check(`${name}: WebGL-контекст не терялся`, d('contextLost') === 0, JSON.stringify({ lost: d('contextLost') }));
-  check(`${name}: 3D-машинка всё время на карте`, samples.every((x) => x.car3d && x.car), `${samples.filter((x) => !x.car3d).length} замеров без машинки`);
+  const noCar = samples.filter((x) => !(x.car3d && x.car)).length;
+  check(`${name}: 3D-машинка всё время на карте`, noCar <= (allowed ? 4 : 0), `${noCar} замеров без машинки`);
   // Привязка к дороге — не дальше 20 м от GPS; прогноз (точки задержались > 1,5 с) — не дальше 40 м вперёд.
   const shiftOf = (mode) => samples.filter((x) => x.display?.lat != null && (mode === 'predicted' ? x.display.mode === 'predicted' : x.display.mode !== 'predicted')).map((x) => x.display.shift);
   const snap = shiftOf('snap');
@@ -204,9 +215,12 @@ async function soak(key) {
   console.log(`${name}: итог ${JSON.stringify(summary)}`);
   if (LOOK === 'game-night')
     check(`${name}: ночная «Игровая 3D» всё время (окна, свечение дорог, здания, деревья)`, samples.every((x) => x.palette === 'game-night' && x.windows && x.nightLayers >= 1 && x.gameLayers === 3), `${samples.filter((x) => x.palette !== 'game-night' || !x.windows).length} замеров без ночного оформления`);
-  if (LOOK === 'game') check(`${name}: «Игровая 3D» включена всё время (слои зданий, крыш и деревьев на месте)`, samples.every((x) => x.look === 'game' && x.gameLayers === 3), `${samples.filter((x) => x.gameLayers !== 3).length} замеров без слоёв`);
+  if (LOOK === 'game') {
+    const missing = samples.filter((x) => !(x.look === 'game' && x.gameLayers === 3)).length;
+    check(`${name}: «Игровая 3D» включена всё время (слои зданий, крыш и деревьев на месте)`, missing <= (allowed ? 4 : 0), `${missing} замеров без слоёв`);
+  }
   fs.writeFileSync(`${out}/soak-${key}.json`, JSON.stringify({ summary, samples }, null, 1));
-  await page.screenshot({ path: `${out}/soak-${key}-end.png` });
+  await page.screenshot({ path: `${out}/soak-${key}-end.png`, timeout: 15000 }).catch(() => {});
   await browser.close();
 }
 

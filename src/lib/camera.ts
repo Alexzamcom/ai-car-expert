@@ -125,12 +125,13 @@ export function navCameraPose(style: NavCamera, opts: { baseZoom: number; normal
   const maxPitch = opts.maxPitch ?? 70;
   if (style === 'normal') return { pitch: opts.normalPitch, zoom: opts.baseZoom, offset: 0.24 };
   // Вид сзади: круче наклон, ближе к машине, машинка ниже — впереди видно дорогу и здания.
-  const chase = { pitch: Math.min(maxPitch, 66), zoom: opts.baseZoom + 0.5, offset: 0.3 };
+  // Наклон 60° (не круче): дальше к горизонту карта подгружает заметно больше тайлов — тяжело для планшетов.
+  const chase = { pitch: Math.min(maxPitch, 60), zoom: opts.baseZoom + 0.6, offset: 0.3 };
   if (style === 'game') return chase;
   const l = Math.max(0, Math.min(1.3, opts.lift));
   // Перед поворотом: выше (меньше наклон), чуть дальше, машинка ближе к центру — виден перекрёсток и примыкающие улицы.
   return {
-    pitch: chase.pitch - 18 * l,
+    pitch: chase.pitch - 15 * l,
     zoom: chase.zoom - 0.45 * l,
     offset: chase.offset - 0.1 * Math.min(1, l),
   };

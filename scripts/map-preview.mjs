@@ -14,7 +14,7 @@ const PLACES = [
   ['pavlograd', 'Павлоград, центр', 48.5318, 35.8708],
   // Парк имени Шевченко (Днепр) — деревья вблизи
   ['dnipro-park', 'Днепр, парк Шевченко', 48.4581, 35.0624],
-  // Вид сзади (игровая камера): наклон 66°, машинка внизу, впереди улица
+  // Вид сзади (игровая камера): наклон 60°, машинка внизу, впереди улица
   ['dnipro-chase', 'Днепр, проспект Яворницкого — вид сзади', 48.4668, 35.0459],
 ];
 const browser = await chromium.launch();
@@ -37,7 +37,7 @@ for (const [key, name, lat, lon] of PLACES) {
       // Как камера «по движению» в игровом виде: центр выше машинки на 30 % высоты, курс вдоль проспекта.
       await page.evaluate(([la, lo]) => {
         const m = window.__aceMap.map;
-        m.jumpTo({ center: [lo, la], zoom: 17.1, pitch: 66, bearing: -34, offset: [0, m.getContainer().clientHeight * 0.3] });
+        m.jumpTo({ center: [lo, la], zoom: 17.2, pitch: 60, bearing: -34 });
       }, [lat, lon]);
     else await page.evaluate(([la, lo, z]) => window.__aceMap.map.jumpTo({ center: [lo, la], zoom: z, pitch: 58, bearing: 32 }), [lat, lon, key === 'dnipro-park' ? 17.2 : 16.4]);
     await page.waitForFunction(() => window.__aceMap.map.loaded() && window.__aceMap.map.areTilesLoaded(), null, { timeout: 60000 }).catch(() => {});
