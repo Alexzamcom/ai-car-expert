@@ -153,7 +153,8 @@ async function soak(key) {
     const wait = t0 + s * 1000 - Date.now();
     if (wait > 0) await page.waitForTimeout(wait);
     if (s % 300 === 0) {
-      await page.screenshot({ path: `${out}/soak-${key}-${s / 60}min.png` });
+      // Снимок — для отчёта, не для проверки: на перегруженном программном WebGL он может не успеть за 30 с.
+      await page.screenshot({ path: `${out}/soak-${key}-${s / 60}min.png`, timeout: 15000 }).catch(() => console.log(`${name}: снимок на ${s / 60} мин пропущен (медленный кадр)`));
       console.log(`${name}: ${s / 60} мин`);
     }
   }
@@ -206,7 +207,7 @@ async function soak(key) {
     check(`${name}: ночная «Игровая 3D» всё время (окна, свечение дорог, здания, деревья)`, samples.every((x) => x.palette === 'game-night' && x.windows && x.nightLayers >= 1 && x.gameLayers === 3), `${samples.filter((x) => x.palette !== 'game-night' || !x.windows).length} замеров без ночного оформления`);
   if (LOOK === 'game') check(`${name}: «Игровая 3D» включена всё время (слои зданий, крыш и деревьев на месте)`, samples.every((x) => x.look === 'game' && x.gameLayers === 3), `${samples.filter((x) => x.gameLayers !== 3).length} замеров без слоёв`);
   fs.writeFileSync(`${out}/soak-${key}.json`, JSON.stringify({ summary, samples }, null, 1));
-  await page.screenshot({ path: `${out}/soak-${key}-end.png` });
+  await page.screenshot({ path: `${out}/soak-${key}-end.png`, timeout: 15000 }).catch(() => {});
   await browser.close();
 }
 

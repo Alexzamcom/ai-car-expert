@@ -78,10 +78,11 @@ describe('Ракурс', () => {
   });
   it('игровая — круче наклон, ближе, машинка ниже; не выше предела карты', () => {
     const p = navCameraPose('game', base);
-    expect(p.pitch).toBeGreaterThan(60);
+    expect(p.pitch).toBeGreaterThanOrEqual(58);
+    expect(p.pitch).toBeLessThanOrEqual(60); // круче — заметно больше тайлов у горизонта
     expect(p.zoom).toBeGreaterThan(16.6);
     expect(p.offset).toBeGreaterThan(0.24);
-    expect(navCameraPose('game', { ...base, maxPitch: 60 }).pitch).toBe(60);
+    expect(navCameraPose('game', { ...base, maxPitch: 55 }).pitch).toBe(55);
   });
   it('динамическая: без поворота — как игровая; перед поворотом — выше, дальше, машинка ближе к центру', () => {
     expect(navCameraPose('dynamic', base)).toEqual(navCameraPose('game', base));

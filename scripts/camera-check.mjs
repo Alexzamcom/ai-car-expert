@@ -76,8 +76,8 @@ async function run(name, dev, theme) {
   await drive(260);
   const straight = samples.filter((x) => x.step?.startsWith('turn') && x.toStepM > 300).slice(-3);
   check(
-    `${name}: прямо — вид сзади (наклон > 60°, курс камеры по движению, машинка в нижней части)`,
-    straight.length > 0 && straight.every((x) => x.lift === 0 && x.pitch > 60 && x.heading != null && angle(x.bearing, x.heading) < 15 && x.carY > 0.65),
+    `${name}: прямо — вид сзади (наклон ≥ 58°, курс камеры по движению, машинка в нижней части)`,
+    straight.length > 0 && straight.every((x) => x.lift === 0 && x.pitch >= 58 && x.heading != null && angle(x.bearing, x.heading) < 15 && x.carY > 0.65),
     JSON.stringify(straight.at(-1)),
   );
   if (turnAt == null) turnAt = 1300;
@@ -110,7 +110,7 @@ async function run(name, dev, theme) {
   await drive(turnAt - 15, 15);
   const near = samples.filter((x) => x.toStepM != null && x.toStepM < 90 && x.step?.startsWith('turn'));
   const peak = Math.max(...samples.map((x) => x.lift));
-  check(`${name}: перед поворотом — камера плавно поднимается (подъём > 0.5, наклон < 56°)`, near.some((x) => x.lift > 0.5 && x.pitch < 56), JSON.stringify(near.at(-1)));
+  check(`${name}: перед поворотом — камера плавно поднимается (подъём > 0.5, наклон < 52°)`, near.some((x) => x.lift > 0.5 && x.pitch < 52), JSON.stringify(near.at(-1)));
   const jumps = samples.slice(1).map((x, i) => Math.abs(x.lift - samples[i].lift));
   check(`${name}: подъём без рывков (за шаг < 0.6)`, Math.max(0, ...jumps) < 0.6, `макс. ${Math.max(0, ...jumps).toFixed(2)}, пик ${peak.toFixed(2)}`);
   await page.screenshot({ path: `${out}/camera-${name.replace(/\W+/g, '-')}-turn.png` });
