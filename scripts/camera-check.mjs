@@ -64,10 +64,17 @@ async function run(name, dev, theme) {
   const samples = [];
   let d = 20;
   let turnAt = null;
-  const drive = async (to, step = 35) => {
+  const drive = async (to, step = 35, settle = false) => {
     for (; d <= to; d += step) {
-      await ctx.setGeolocation({ ...along(d), accuracy: 6 });
-      await page.waitForTimeout(1100);
+      const position = along(d);
+      await ctx.setGeolocation({ ...position, accuracy: 6 });
+      if (settle) {
+        await page.waitForFunction(({ latitude, longitude }) => {
+          const { map, state } = window.__aceMap;
+          const raw = state().raw;
+          return raw.lat === latitude && raw.lon === longitude && !map.isMoving();
+        }, position, { polling: 100, timeout: 15_000 });
+      } else await page.waitForTimeout(1100);
       const s = await st();
       samples.push({ d, toStepM: s.camera.toStepM, step: s.camera.step, lift: s.camera.lift, pitch: s.pitch, zoom: s.zoom, bearing: s.bearing, heading: s.heading, carY: s.car?.y });
       if (turnAt == null && s.camera.step?.startsWith('turn') && s.camera.toStepM != null) turnAt = d + s.camera.toStepM;
@@ -133,7 +140,7 @@ async function run(name, dev, theme) {
     };
   });
   const firstAfterGap = d;
-  await drive(firstAfterGap);
+  await drive(firstAfterGap, 35, true);
   const afterLoss = samples.at(-1);
   const frames = await page.evaluate(() => window.stopCameraTrace());
   const yawSteps = frames.slice(1).map((frame, i) => ({
