@@ -28,7 +28,7 @@ export interface MatchFix {
   accuracy: number;
   /** м/с, null — неизвестно */
   speed: number | null;
-  /** курс машины (уже сглаженный), null — неизвестен */
+  /** Измеренный курс движения, null — неизвестен. */
   heading: number | null;
   t: number;
 }
@@ -75,11 +75,14 @@ export const distM = (a: LatLon, b: LatLon) => {
   return Math.hypot(x, y);
 };
 
-/** Ближайшая точка каждой линии в радиусе (одна — лучшая по отрезкам линии). */
-export function candidates(fix: MatchFix, lines: RoadLine[], radius: number): Omit<Candidate, 'cost' | 'travel'>[] {
+type Projection = Omit<Candidate, 'cost' | 'travel'>;
+
+/** Лучшая проекция каждой линии. При сопоставлении учитывается курс каждого отрезка. */
+export function candidates(fix: MatchFix, lines: RoadLine[], radius: number, rank: (c: Projection) => number = (c) => c.dist): Projection[] {
   const out: Omit<Candidate, 'cost' | 'travel'>[] = [];
   for (const line of lines) {
-    let best: Omit<Candidate, 'cost' | 'travel'> | null = null;
+    let best: Projection | null = null;
+    let bestRank = Infinity;
     for (let i = 0; i < line.coords.length - 1; i++) {
       const [ax, ay] = toXY(line.coords[i], fix);
       const [bx, by] = toXY(line.coords[i + 1], fix);
@@ -91,7 +94,13 @@ export function candidates(fix: MatchFix, lines: RoadLine[], radius: number): Om
       const px = ax + dx * f;
       const py = ay + dy * f;
       const d = Math.hypot(px, py);
-      if (d <= radius && (!best || d < best.dist)) best = { line, seg: i, f, point: fromXY(px, py, fix), dist: d, bearing: bearingXY(dx, dy) };
+      if (d > radius) continue;
+      const c = { line, seg: i, f, point: fromXY(px, py, fix), dist: d, bearing: bearingXY(dx, dy) };
+      const score = rank(c);
+      if (score < bestRank) {
+        best = c;
+        bestRank = score;
+      }
     }
     if (best) out.push(best);
   }
@@ -142,7 +151,7 @@ export class Matcher {
   }
 
   /** Стоимость кандидата: меньше — вероятнее. */
-  private score(c: Omit<Candidate, 'cost' | 'travel'>, fix: MatchFix): Candidate {
+  private score(c: Omit<Candidate, 'cost' | 'travel'>, fix: MatchFix, useHistory = true): Candidate {
     const sigma = Math.max(4, fix.accuracy * 0.6);
     let cost = (c.dist / sigma) ** 2;
     const moving = fix.speed != null ? fix.speed >= 2 : false;
@@ -160,7 +169,7 @@ export class Matcher {
       cost += dh > 100 ? 12 : dh > 45 ? 8 + (dh / 30) ** 2 : (dh / 30) ** 2;
     }
     // История: держимся текущей дороги; переход на другую — небольшой штраф (на связанную — меньше).
-    if (this.cur) {
+    if (useHistory && this.cur) {
       if (c.line.id === this.cur.line.id) cost -= 1.2;
       else cost += connected(this.cur, c) ? 0.4 : 2.5;
     }
@@ -188,7 +197,12 @@ export class Matcher {
       return done(raw(!lines.length ? 'нет данных о дорогах и маршрута рядом' : `точность ±${Math.round(fix.accuracy)} м хуже ${this.opts.maxAccuracy} м`));
     }
     const radius = Math.min(80, Math.max(25, fix.accuracy * 2 + 15));
-    const cs = candidates(fix, lines, radius).map((c) => this.score(c, { ...fix, speed }));
+    const movingFix = { ...fix, speed };
+    // Дорогой проверки связности для всех отрезков не требуется: внутри линии
+    // выбираем правдоподобную проекцию, затем сравниваем выбранные дороги.
+    const projectionLimit = Math.min(MAX_SNAP_M, Math.max(8, fix.accuracy * 1.5));
+    const cs = candidates(fix, lines, radius, (c) => this.score(c, movingFix, false).cost + (c.dist > projectionLimit ? 100 : 0))
+      .map((c) => this.score(c, movingFix));
     if (!cs.length) {
       // Рядом нет известных дорог (съехали с маршрута, а карта дорог не загружена) — без ложной привязки.
       this.cur = null;
@@ -218,7 +232,7 @@ export class Matcher {
     const pBest = bestWeight / sum;
     // Не дальше заявленной точности и не дальше MAX_SNAP_M: иначе машинка «уезжает» на соседнюю дорогу из здания, двора, парковки.
     // Держимся своей дороги после уверенной привязки — до MAX_SNAP_M (одиночный выброс не уводит машинку с дороги).
-    const snapLimit = held ? MAX_SNAP_M : Math.min(MAX_SNAP_M, Math.max(8, fix.accuracy * 1.5));
+    const snapLimit = held ? MAX_SNAP_M : projectionLimit;
     const near = best.dist <= snapLimit;
     const why = `${best.line.id}${best.line.cls ? ` (${best.line.cls})` : ''}: ${Math.round(best.dist)} м, стоимость ${best.cost.toFixed(1)}${cs[1] && cs[1] !== best ? `; вторая ${cs[1].line.id === best.line.id ? cs[0].line.id : cs[1].line.id} — ${(cs[1] === best ? cs[0] : cs[1]).cost.toFixed(1)}` : '; других дорог рядом нет'}${held ? '; держимся своей дороги (переход не подтверждён)' : ''}`;
     // Стоим и давно не ехали (вошли в здание, двор, парковка): к дороге не тянем, кроме совсем близкой.

@@ -13,7 +13,7 @@ import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
 import { autoZoom, lookAheadOffset, effectiveNavCamera, maneuverLift, navCameraPose, LiftFilter } from '../lib/camera';
 import { hudUiStore } from '../lib/hud';
 import { engineFallback } from '../lib/mapEngine';
-import { mapDiag, diagModeStore } from '../lib/diag';
+import { mapDiag, diagModeStore, mapPositionStore } from '../lib/diag';
 import { displayStore, setRoadProvider } from '../lib/matching/display';
 import type { RoadLine } from '../lib/matching/matcher';
 import { LongPressDetector } from '../lib/geo/longpress';
@@ -131,6 +131,9 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const fpsTimer = setInterval(() => {
         mapDiag.fps(frames);
         frames = 0;
+        if (diagModeStore.get().on && carNow && to) {
+          mapPositionStore.set({ marker: { lat: carNow.lat, lon: carNow.lon }, target: to, following: follow.current && touching === 0 && !hudUiStore.get().active });
+        }
       }, 1000);
       cleanups.push(() => {
         clearInterval(fpsTimer);
@@ -353,7 +356,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         const g = geoStore.get();
         if (!guiding.current) {
           // «Игровая 3D»: и без маршрута — наклон, чтобы был виден объём города.
-          map.easeTo({ center: [to.lon, to.lat], zoom: Math.max(map.getZoom(), isGame() ? 16 : 15), bearing: isGame() ? map.getBearing() : 0, pitch: isGame() ? GAME_IDLE_PITCH : 0, duration: immediate ? 500 : 900, easing: (x) => x });
+          map.easeTo({ center: [to.lon, to.lat], zoom: Math.max(map.getZoom(), isGame() ? 16 : 15), bearing: isGame() ? map.getBearing() : 0, pitch: isGame() ? GAME_IDLE_PITCH : 0, duration: immediate ? 500 : moveMs, easing: (x) => x });
           return;
         }
         const course = settingsStore.get().cameraMode === 'course';
@@ -402,11 +405,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       type BoxedLine = RoadLine & { box: [number, number, number, number] };
       let roadCache: { at: number; lines: BoxedLine[] } | null = null;
       const loadRoads = (): BoxedLine[] => {
-        const src = Object.entries(map.getStyle()?.sources ?? {}).find(([, v]) => v.type === 'vector')?.[0];
-        if (!src) return [];
+        const style = map.getStyle();
+        const sources = new Set(style?.layers.flatMap((layer) =>
+          'source-layer' in layer && layer['source-layer'] === 'transportation' && 'source' in layer && style.sources[layer.source]?.type === 'vector'
+            ? [layer.source] : []) ?? []);
         const out: BoxedLine[] = [];
         const seen = new Set<string>();
-        for (const f of map.querySourceFeatures(src, { sourceLayer: 'transportation' })) {
+        for (const f of [...sources].flatMap((source) => map.querySourceFeatures(source, { sourceLayer: 'transportation' }))) {
           const cls = String(f.properties?.class ?? '');
           if (!ROAD_CLASSES.test(cls)) continue;
           const g = f.geometry;
@@ -428,6 +433,11 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         }
         return out;
       };
+      // Не используем снимок старого стиля/набора тайлов после загрузки новой дороги.
+      map.on('style.load', () => { roadCache = null; });
+      map.on('sourcedata', (event) => {
+        if ((event.tile || event.sourceDataType === 'content') && event.source?.type === 'vector') roadCache = null;
+      });
       setRoadProvider((pt, r) => {
         if (!roadCache || performance.now() - roadCache.at > 3000) roadCache = { at: performance.now(), lines: loadRoads() };
         const dLat = r / 111_320;
@@ -570,6 +580,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         p.apiRef.current = null;
         delete (window as unknown as { __aceMap?: unknown }).__aceMap;
         mapDiag.remove();
+        mapPositionStore.set(null);
         map.remove();
         mapRef.current = null;
       });

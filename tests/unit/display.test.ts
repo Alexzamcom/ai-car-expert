@@ -1,7 +1,8 @@
 /* Три позиции раздельно: сырая (решения ведения), отображаемая (привязка), прогноз (только показ). */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { handleFix, geoStore, __resetGeo, setDestination, startGuidance, stopNavigation, navStore, visibleRouteCoords, type RawFix } from '../../src/lib/nav';
-import { displayStore, __tickDisplay } from '../../src/lib/matching/display';
+import { displayStore, __tickDisplay, setRoadProvider } from '../../src/lib/matching/display';
+import { diagModeStore, positionSampleStore } from '../../src/lib/diag';
 import { distM } from '../../src/lib/matching/matcher';
 import osrm from '../fixtures/osrm-route.json';
 
@@ -42,9 +43,58 @@ describe('Отображаемая позиция и решения ведени
     startGuidance();
   });
   afterEach(() => {
+    diagModeStore.set({ on: false });
+    setRoadProvider(null);
+    __resetGeo();
     stopNavigation();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('точные входные данные для панели хранятся только при включённой диагностике', () => {
+    diagModeStore.set({ on: false });
+    fix(at(12));
+    expect(positionSampleStore.get()).toBeNull();
+    diagModeStore.set({ on: true });
+    const pos = at(25);
+    fix(pos, { heading: 320 });
+    expect(positionSampleStore.get()).toMatchObject({ fix: { ...pos, heading: 320, timestamp: t }, verdict: 'accept' });
+    diagModeStore.set({ on: false });
+    expect(positionSampleStore.get()).toBeNull();
+  });
+
+  it('кешированный стартовый GPS не привязывается и не блокирует свежую точку худшей заявленной точности', () => {
+    stopNavigation();
+    __resetGeo();
+    setRoadProvider(() => [{ id: 'tile-road', coords: coords.slice(0, 2), kind: 'road', oneway: 0 }]);
+    const cached = at(36, 5);
+    fix(cached, { accuracy: 5, speed: 12, heading: 320, timestamp: t - 60_000 });
+    expect(displayStore.get()).toMatchObject({ mode: 'raw', ...cached });
+    vi.setSystemTime(t + 1800);
+    __tickDisplay();
+    expect(displayStore.get().mode).toBe('raw');
+    const fresh = at(48, 5);
+    fix(fresh, { accuracy: 32, speed: 12, heading: null });
+    expect(geoStore.get()).toMatchObject({ ...fresh, held: null });
+    expect(displayStore.get()).toMatchObject({ mode: 'matched', mapRoads: 1, lineId: 'tile-road' });
+  });
+
+  it('без курса браузера не принимает сглаженный курс за наблюдение', () => {
+    fix(at(0), { speed: 10, heading: 270 });
+    fix(at(2), { speed: 10, heading: null });
+    expect(geoStore.get().heading).not.toBeNull();
+    expect(displayStore.get().course).toBeNull();
+    fix(at(20), { speed: null, heading: null });
+    expect(displayStore.get().course).not.toBeNull();
+  });
+
+  it('при отсутствии тайлов использует только близкий маршрут и показывает сырой GPS при съезде', () => {
+    setRoadProvider(() => []);
+    fix(at(30, 4));
+    expect(displayStore.get()).toMatchObject({ mode: 'matched', mapRoads: 0, routeRoads: 1 });
+    const outside = at(50, 42);
+    fix(outside, { speed: 0 });
+    expect(displayStore.get()).toMatchObject({ ...outside, mode: 'raw', mapRoads: 0, lineId: null });
   });
 
   it('точка в 7 м от маршрута: машинка на дороге, а сырая точка и прогресс — по GPS', () => {
@@ -102,5 +152,8 @@ describe('Отображаемая позиция и решения ведени
     expect(distM(d as { lat: number; lon: number }, raw as { lat: number; lon: number })).toBeGreaterThan(15); // ~12 м/с × 1,9 с вперёд
     expect(geoStore.get().lat).toBe(raw.lat);
     expect(navStore.get().progress).toBe(p0);
+    vi.setSystemTime(t + 2500);
+    __tickDisplay();
+    expect(displayStore.get()).toMatchObject({ lat: d.lat, lon: d.lon, confidence: 0 });
   });
 });

@@ -19,10 +19,10 @@ import { settingsStore, setMinimal, driveUiStore } from './state';
 import { speak, stopSpeaking } from './speech';
 import { recordFix } from './trip';
 import { L } from './i18n';
-import { Locator, type FixSource, type GeoErrorInfo } from './geo/locator';
+import { Locator, STALE_FIX_MS, type FixSource, type GeoErrorInfo } from './geo/locator';
 import { updateDisplay, resetDisplay } from './matching/display';
 import { remainingCoords, RouteTrimmer } from './routeTrim';
-import { recordArrival } from './diag';
+import { recordArrival, recordPositionSample } from './diag';
 import { searchPlaces as geoSearch, reverseGeocode, coordsPlace, type Place } from './geo/geocode';
 
 export type { Place };
@@ -87,8 +87,7 @@ export function classifyAccuracy(acc: number): GeoQuality {
   return acc <= 30 ? 'precise' : acc <= 200 ? 'approx' : 'coarse';
 }
 
-/** Точка старше этого — кешированная (iOS отдаёт её после пробуждения или возврата в приложение). */
-export const STALE_FIX_MS = 30_000;
+export { STALE_FIX_MS };
 
 /**
  * Принять ли новую точку. Не двигаем машинку:
@@ -100,9 +99,9 @@ export function acceptFix(prev: (RawFix & { at: number }) | null, fix: RawFix, n
   if (now - fix.timestamp > STALE_FIX_MS && prev) return 'stale';
   if (!prev) return 'accept';
   if (fix.timestamp < prev.timestamp) return 'stale';
-  const prevFresh = now - prev.at < 30_000;
+  const prevFresh = now - prev.timestamp <= STALE_FIX_MS;
   // Две точки почти одновременно (запасное слежение и слежение с высокой точностью): заметно худшая не сдвигает точную.
-  if (now - prev.at < 10_000 && fix.accuracy > Math.max(2 * prev.accuracy, prev.accuracy + 25)) return 'coarse';
+  if (prevFresh && now - prev.at < 10_000 && fix.accuracy > Math.max(2 * prev.accuracy, prev.accuracy + 25)) return 'coarse';
   if (prevFresh && prev.accuracy <= 100 && fix.accuracy > Math.max(3 * prev.accuracy, 250)) return 'coarse';
   const dt = Math.max(1, (fix.timestamp - prev.timestamp) / 1000);
   const d = haversine(prev, fix);
@@ -332,11 +331,21 @@ export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'hi
   if (verdict === 'jump' && lastJump && haversine(lastJump, fix) <= 70 * Math.max(1, (fix.timestamp - lastJump.timestamp) / 1000) + lastJump.accuracy + fix.accuracy + 30) verdict = 'accept';
   lastJump = verdict === 'jump' ? fix : null;
   recordArrival(verdict, now);
+  recordPositionSample(fix, verdict);
   if (verdict !== 'accept') {
     // Запасная менее точная точка рядом с точной — обычное дело, это не «слабый сигнал».
     if (verdict === 'coarse' && source !== 'high' && acceptedFix && now - acceptedFix.at < 10_000) return;
     geoStore.set((s) => ({ ...s, status: 'watching', held: verdict }));
     return;
+  }
+  const previous = acceptedFix;
+  const elapsed = previous ? (fix.timestamp - previous.timestamp) / 1000 : 0;
+  let measuredCourse: number | null = null;
+  if (validDeg(fix.heading) && (fix.speed ?? 0) >= 2.5 && fix.accuracy <= 30) measuredCourse = fix.heading;
+  else if (previous && elapsed >= 0.5 && elapsed <= 5 && (fix.speed == null || fix.speed >= 2) &&
+    Math.max(previous.accuracy, fix.accuracy) <= 25) {
+    const distance = haversine(previous, fix);
+    if (distance >= Math.max(6, previous.accuracy + fix.accuracy, 2 * elapsed) && distance <= 70 * elapsed) measuredCourse = bearing(previous, fix);
   }
   headingState = updateHeading(headingState, fix);
   const heading = headingState.heading;
@@ -346,8 +355,7 @@ export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'hi
   geoStore.set((s) => ({ ...s, status: 'watching', lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speedKmh, heading, updated: now, quality, held: null, fixAt: fix.timestamp, source }));
   // Отображаемая позиция (привязка к дороге) — отдельно; решения ведения ниже — только по сырой точке.
   const nav = navStore.get();
-  const measuredCourse = validDeg(fix.heading) && (fix.speed ?? 0) >= 2.5 && fix.accuracy <= 30 ? fix.heading : heading;
-  updateDisplay({ lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speed: validDeg(fix.speed) ? fix.speed : null, heading, measuredCourse }, nav.status === 'guiding' ? (nav.route?.coords ?? null) : null, now);
+  updateDisplay({ lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speed: validDeg(fix.speed) ? fix.speed : null, heading, measuredCourse, timestamp: fix.timestamp }, nav.status === 'guiding' ? (nav.route?.coords ?? null) : null, now);
   if (quality === 'precise') saveLastPos(fix);
   recordFix({ lat: fix.lat, lon: fix.lon }, fix.accuracy, speedKmh, now);
   onPosition(fix, now);
