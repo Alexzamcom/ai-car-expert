@@ -342,7 +342,6 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   pr = await layoutProblems(page);
   check(`MapLibre (${name}): ведение без наложений`, !pr.length, pr.join('; '));
   await page.screenshot({ path: `${out}/ml-${slug}-guiding.png` });
-  await revealGuidanceControls(page);
   await checkHud(page, ctx, name, slug, full);
   // После HUD: проезд по маршруту меняет курс, а HUD-проверка ждёт курс прежнего движения.
   if (MOCK) await checkRouteTrim(page, ctx, name, slug);
@@ -479,10 +478,12 @@ async function checkHud(page, ctx, name, slug, full) {
     await page.evaluate((l) => [...document.querySelectorAll('.hud-chip')].find((b) => b.textContent.trim() === l)?.click(), label);
     await page.waitForFunction((l) => document.querySelector(`.hud[data-mode]`)?.dataset.mode === { 'Маршрут': 'route', 'Маршрут + скорость': 'route-speed', 'Полная карта': 'map', 'Минимальный': 'minimal' }[l], label, { timeout: 10000 }).catch(() => {});
   };
-  await page.click('.guide-hud');
+  await revealGuidanceControls(page);
+  // Программный WebGL может задерживать проверку стабильности элемента в Playwright.
+  await page.locator('.guide-hud').evaluate((button) => button.click());
   await page.waitForSelector('.hud-warning', { timeout: 4000 }).catch(() => {});
   check(`HUD (${name}): при первом включении — предупреждение о безопасности`, await page.locator('.hud-warning').isVisible().catch(() => false));
-  await page.click('.hud-warning button:has-text("Понятно")');
+  await page.locator('.hud-warning button:has-text("Понятно")').evaluate((button) => button.click());
   await page.waitForFunction(() => (document.querySelector('.hud-line')?.getAttribute('d') ?? '').split('L').length > 2, null, { timeout: 8000 }).catch(() => {});
   const r1 = await page.evaluate(() => ({
     mode: document.querySelector('.hud')?.dataset.mode,
