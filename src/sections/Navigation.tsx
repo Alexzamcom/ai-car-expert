@@ -492,9 +492,10 @@ export function Navigation() {
     setFollow(true);
     startGeo();
     zoomBand.current = null; // масштаб по скорости — заново
-    if (geo.lat != null && geo.lon != null) {
-      if (engine === 'maplibre') mlApi.current?.centerOn({ lat: geo.lat, lon: geo.lon }, guiding ? undefined : 16);
-      else map.current?.setView([geo.lat, geo.lon], guiding ? 17 : 16);
+    const target = disp.lat != null && disp.lon != null ? disp : geo;
+    if (target.lat != null && target.lon != null) {
+      if (engine === 'maplibre') mlApi.current?.centerOn({ lat: target.lat, lon: target.lon }, guiding ? undefined : 16);
+      else map.current?.setView([target.lat, target.lon], guiding ? 17 : 16);
     }
     else if (geo.status === 'denied') toast(`Геопозиция запрещена. ${geoHelp()}`, 'warn');
     else toast('Ищу геопозицию…');

@@ -43,6 +43,17 @@ describe('Привязка к дороге', () => {
     expect(r).toMatchObject({ mode: 'matched', lineId: 'north', bearing: 0 });
   });
 
+  it('синтетический поворот: выбирает подходящий отрезок той же линии, даже если он на 2 м дальше', () => {
+    const bend = line('road', [[0, -100], [0, 0], [100, 0]]);
+    const m = new Matcher();
+    m.update(fix(0, -18, 0), [bend]);
+    m.update(fix(0, -5, 1), [bend]);
+    const turn = m.update(fix(3, -5, 2, { accuracy: 5, speed: 8, heading: 90 }), [bend]);
+    expect(turn).toMatchObject({ mode: 'matched', lineId: 'road', bearing: 90 });
+    expect(m.current?.seg).toBe(1);
+    expect(distM(turn, P(3, 0))).toBeLessThan(1);
+  });
+
   it('нет данных о дорогах — сырая точка, без ложной привязки', () => {
     const m = new Matcher();
     const r = m.update(fix(3, 0, 0), []);

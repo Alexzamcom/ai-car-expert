@@ -2,6 +2,8 @@
    или адрес с ?diag=1). Счётчики жизненного цикла MapLibre, поток точек GPS, причина привязки к дороге.
    Ничего не отправляет наружу — только показывает на экране. */
 import { createStore } from './store';
+import type { LatLon } from './routing';
+import type { RawFix } from './nav';
 
 export const diagModeStore = createStore<{ on: boolean }>({ on: false }, 'diag');
 try {
@@ -75,3 +77,17 @@ export function meanInterval(arrivals: number[]): number | null {
 
 /** Для длительного теста (scripts/soak.mjs): счётчики без открытия панели. */
 if (typeof window !== 'undefined') (window as unknown as { __aceDiag?: unknown }).__aceDiag = { map: () => mapDiagStore.get(), geo: () => geoDiagStore.get() };
+
+
+/** Только в памяти и только при включённой панели. */
+type FixVerdict = 'accept' | 'stale' | 'coarse' | 'jump';
+export const positionSampleStore = createStore<{ fix: RawFix; verdict: FixVerdict } | null>(null);
+export const mapPositionStore = createStore<{ marker: LatLon; target: LatLon; following: boolean } | null>(null);
+export function recordPositionSample(fix: RawFix, verdict: FixVerdict) {
+  if (diagModeStore.get().on) positionSampleStore.set({ fix, verdict });
+}
+diagModeStore.subscribe(() => {
+  if (diagModeStore.get().on) return;
+  positionSampleStore.set(null);
+  mapPositionStore.set(null);
+});

@@ -17,6 +17,9 @@ export const FIX_SOURCE_LABEL: Record<FixSource, string> = {
   low: 'запасное слежение (обычная точность)',
 };
 
+/** Точка старше этого считается кешированной. */
+export const STALE_FIX_MS = 30_000;
+
 export const QUICK_OPTS: PositionOptions = { enableHighAccuracy: false, maximumAge: 5 * 60_000, timeout: 10_000 };
 export const HIGH_OPTS: PositionOptions = { enableHighAccuracy: true, maximumAge: 2_000, timeout: 30_000 };
 export const LOW_OPTS: PositionOptions = { enableHighAccuracy: false, maximumAge: 30_000, timeout: 30_000 };

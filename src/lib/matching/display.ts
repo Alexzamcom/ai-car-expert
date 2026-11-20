@@ -1,6 +1,7 @@
 /* Отображаемая позиция машинки (карты, HUD). Сырая точка GPS — в geoStore, по ней принимаются решения ведения;
    здесь — только то, что рисуется: привязка к дороге, плавный переход, кратковременный прогноз. */
 import { createStore } from '../store';
+import { STALE_FIX_MS } from '../geo/locator';
 import type { LatLon } from '../routing';
 import { Matcher, type MatchResult, type RoadLine } from './matcher';
 
@@ -18,9 +19,14 @@ export interface DisplayPos {
   /** Расстояние от сырой точки GPS до показанной, м. */
   shift: number;
   at: number;
+  segment: number | null;
+  mapRoads: number | null;
+  routeRoads: number;
+  hasRoute: boolean;
+  course: number | null;
 }
 
-const EMPTY: DisplayPos = { lat: null, lon: null, heading: null, accuracy: null, mode: null, confidence: 0, lineId: null, reason: '', shift: 0, at: 0 };
+const EMPTY: DisplayPos = { lat: null, lon: null, heading: null, accuracy: null, mode: null, confidence: 0, lineId: null, reason: '', shift: 0, at: 0, segment: null, mapRoads: null, routeRoads: 0, hasRoute: false, course: null };
 export const displayStore = createStore<DisplayPos>(EMPTY);
 
 /** Дороги рядом из карты (MapLibre, векторные тайлы). Нет поставщика — привязка только к маршруту. */
@@ -42,7 +48,8 @@ export interface DisplayFix {
   speed: number | null;
   /** сглаженный курс машинки (nav.updateHeading) */
   heading: number | null;
-  measuredCourse?: number | null;
+  measuredCourse: number | null;
+  timestamp: number;
 }
 
 /** Активный маршрут как дорога с известным направлением — только участок рядом (быстрее и без петель маршрута). */
@@ -80,18 +87,25 @@ function routeNear(coords: LatLon[] | null, p: LatLon, radius: number): RoadLine
 export function updateDisplay(fix: DisplayFix, route: LatLon[] | null, now = Date.now()) {
   lastFixAt = now;
   const radius = 120;
-  let lines: RoadLine[] = [];
+  const routeRoads = routeNear(route, fix, radius);
+  let mapRoads: RoadLine[] | null = null;
   try {
-    lines = [...routeNear(route, fix, radius), ...(roadProvider?.(fix, radius) ?? [])];
+    mapRoads = roadProvider?.(fix, radius) ?? null;
   } catch {
-    lines = routeNear(route, fix, radius);
+    // Стиль или источник может исчезнуть при смене карты.
   }
-  const course = fix.measuredCourse ?? fix.heading;
-  const r = matcher.update({ ...fix, heading: course, t: now }, lines);
+  const stale = now - fix.timestamp > STALE_FIX_MS;
+  // Кешированную позицию можно показать при запуске, но не привязывать и не прогнозировать.
+  if (stale) matcher.reset();
+  const course = stale ? null : fix.measuredCourse;
+  const r: MatchResult = stale
+    ? { mode: 'raw', lat: fix.lat, lon: fix.lon, bearing: null, accuracy: fix.accuracy, confidence: 0, lineId: null, reason: 'кешированная точка GPS', shift: 0 }
+    : matcher.update({ ...fix, heading: course, t: fix.timestamp }, [...routeRoads, ...(mapRoads ?? [])]);
   const prev = displayStore.get();
-  // Курс: по дороге — только в движении и при уверенной привязке; стоим — прежний (без вращения от шума).
   const heading = r.mode === 'matched' && matcher.moving && course != null && r.bearing != null ? r.bearing : (fix.heading ?? prev.heading);
-  displayStore.set({ lat: r.lat, lon: r.lon, heading, accuracy: r.accuracy, mode: r.mode, confidence: r.confidence, lineId: r.lineId, reason: r.reason, shift: r.shift, at: now });
+  displayStore.set({ lat: r.lat, lon: r.lon, heading, accuracy: r.accuracy, mode: r.mode, confidence: r.confidence, lineId: r.lineId,
+    segment: r.lineId ? matcher.current?.seg ?? null : null, reason: r.reason, shift: r.shift, at: now,
+    mapRoads: mapRoads?.length ?? null, routeRoads: routeRoads.length, hasRoute: !!route, course });
   timer ??= setInterval(tick, 500);
 }
 
@@ -100,8 +114,13 @@ function tick() {
   const now = Date.now();
   if (now - lastFixAt < 1500) return;
   const p = matcher.predict(now);
-  if (!p) return;
   const prev = displayStore.get();
+  if (!p) {
+    if (prev.mode === 'predicted' && prev.confidence > 0) {
+      displayStore.set({ ...prev, confidence: 0, reason: 'GPS не обновляется; удерживается последняя оценка' });
+    }
+    return;
+  }
   displayStore.set({ ...prev, lat: p.lat, lon: p.lon, heading: p.bearing ?? prev.heading, accuracy: p.accuracy, mode: 'predicted', confidence: p.confidence, reason: p.reason, shift: p.shift, at: now });
 }
 
