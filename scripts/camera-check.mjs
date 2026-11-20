@@ -150,6 +150,8 @@ async function run(name, dev, theme) {
   }));
   const yaw = angle(afterLoss.bearing, beforeLoss.bearing);
   const pitch = Math.abs(afterLoss.pitch - beforeLoss.pitch);
+  // Частота кадров программного WebGL непостоянна. За короткий интервал
+  // камера может пройти только соответствующую долю секундной анимации.
   const intermediate = frames.slice(1, -1).some((frame) => {
     const turned = angle(frame.bearing, beforeLoss.bearing);
     const tilted = Math.abs(frame.pitch - beforeLoss.pitch);
@@ -160,13 +162,14 @@ async function run(name, dev, theme) {
     afterLoss.d === firstAfterGap && afterLoss.heading != null && pitch < 15 &&
       frames.length >= 3 && angle(frames[0].bearing, beforeLoss.bearing) < 1 &&
       Math.abs(frames[0].pitch - beforeLoss.pitch) < 1 &&
-      yawSteps.every(({ degrees, pitchDegrees, seconds }) => degrees <= 180 * seconds + 1 && degrees < 30 && pitchDegrees <= 15 * seconds + 1) &&
+      yawSteps.every(({ degrees, pitchDegrees, seconds }) =>
+        degrees <= Math.min(180, yaw + 5) * seconds + 1 && pitchDegrees <= Math.min(15, pitch + 3) * seconds + 1) &&
       (yaw < 1 && pitch < 1 || intermediate),
     JSON.stringify({
       before: { lift: beforeLoss.camera.lift, pitch: beforeLoss.pitch, bearing: beforeLoss.bearing, heading: beforeLoss.heading },
       after: { lift: afterLoss.lift, pitch: afterLoss.pitch, bearing: afterLoss.bearing, heading: afterLoss.heading },
       headingChange: angle(afterLoss.heading, beforeLoss.heading), frames: frames.length, intermediate,
-      maxFrameYaw: Math.max(0, ...yawSteps.map(({ degrees }) => degrees)),
+      largestFrame: yawSteps.reduce((max, step) => step.degrees > max.degrees ? step : max, { degrees: 0, seconds: 0 }),
     }),
   );
   await drive(turnAt + 420);
