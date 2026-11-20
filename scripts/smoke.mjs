@@ -276,6 +276,14 @@ async function checkRouteTrim(page, ctx, name, slug) {
   check(`MapLibre (${name}): остановка и шум GPS — линия позади не «отрастает»`, s2.routeTrim.cut >= s1.routeTrim.cut, JSON.stringify({ before: s1.routeTrim.cut, after: s2.routeTrim.cut }));
 }
 
+async function revealGuidanceControls(page) {
+  const reveal = page.locator('.driving-reveal');
+  if (await reveal.isVisible()) {
+    await reveal.evaluate((button) => button.click());
+    await page.locator('.guide-bar .guide-grabber[aria-expanded="true"]').evaluate((button) => button.click());
+  }
+}
+
 async function checkMapLibreNav(name, device, { full = false } = {}) {
   // С --mock — без service worker: иначе он загружает настоящие тайлы в обход подмены сети и тест зависит от сети.
   const { ctx, page } = await newPage(device, MOCK ? { serviceWorkers: 'block' } : {}, 'maplibre');
@@ -340,6 +348,7 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   if (!full) return ctx.close();
   await checkMatching(page, ctx, name);
   // Север сверху и обратно
+  await revealGuidanceControls(page);
   await page.click('.guide-cam:not(.guide-hud)');
   await page.waitForFunction(() => window.__aceMap.state().pitch < 1, null, { timeout: 8000 }).catch(() => {});
   s0 = await st();
@@ -369,6 +378,7 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   s0 = await st();
   check(`MapLibre (${name}): «К машине» — снова по движению`, d(s0.bearing, s0.heading) < 12 && s0.pitch > 40 && !(await pill.isVisible().catch(() => false)), JSON.stringify({ bearing: Math.round(s0.bearing), heading: Math.round(s0.heading) }));
   // Голос
+  await revealGuidanceControls(page);
   await page.click('.guide-voice:not(.guide-cam)');
   check(`MapLibre (${name}): кнопка голоса`, (await page.locator('.guide-voice:not(.guide-cam)').getAttribute('aria-pressed')) === 'true');
   await page.click('.guide-voice:not(.guide-cam)');
@@ -383,6 +393,7 @@ async function checkMapLibreNav(name, device, { full = false } = {}) {
   s0 = await st();
   check(`MapLibre (${name}): после возврата в приложение — ведение и карта на месте`, (await page.locator('.maneuver').isVisible()) && s0.routePoints > 2 && s0.pitch > 40, JSON.stringify({ points: s0.routePoints, pitch: Math.round(s0.pitch) }));
   // Резерв: переключение на Leaflet во время ведения не сбрасывает маршрут
+  await revealGuidanceControls(page);
   await page.click('.guide-bar .guide-grabber');
   await page.click('.guide-sheet button:has-text("Обычный интерфейс")');
   await page.click('.dock [aria-label="Ещё разделы"]');
@@ -467,10 +478,12 @@ async function checkHud(page, ctx, name, slug, full) {
     await page.evaluate((l) => [...document.querySelectorAll('.hud-chip')].find((b) => b.textContent.trim() === l)?.click(), label);
     await page.waitForFunction((l) => document.querySelector(`.hud[data-mode]`)?.dataset.mode === { 'Маршрут': 'route', 'Маршрут + скорость': 'route-speed', 'Полная карта': 'map', 'Минимальный': 'minimal' }[l], label, { timeout: 10000 }).catch(() => {});
   };
-  await page.click('.guide-hud');
+  await revealGuidanceControls(page);
+  // Программный WebGL может задерживать проверку стабильности элемента в Playwright.
+  await page.locator('.guide-hud').evaluate((button) => button.click());
   await page.waitForSelector('.hud-warning', { timeout: 4000 }).catch(() => {});
   check(`HUD (${name}): при первом включении — предупреждение о безопасности`, await page.locator('.hud-warning').isVisible().catch(() => false));
-  await page.click('.hud-warning button:has-text("Понятно")');
+  await page.locator('.hud-warning button:has-text("Понятно")').evaluate((button) => button.click());
   await page.waitForFunction(() => (document.querySelector('.hud-line')?.getAttribute('d') ?? '').split('L').length > 2, null, { timeout: 8000 }).catch(() => {});
   const r1 = await page.evaluate(() => ({
     mode: document.querySelector('.hud')?.dataset.mode,
@@ -1198,7 +1211,7 @@ try {
       await page.waitForTimeout(300);
       check('Ведение: «К машине» возвращает камеру', backShown && !(await back.isVisible().catch(() => false)));
       // Обычный интерфейс из панели
-      await page.locator('.guide-grabber').last().click();
+      await page.getByRole('button', { name: 'Показать панель управления', exact: true }).click();
       await page.click('.guide-sheet button:has-text("Обычный интерфейс")');
       await page.waitForTimeout(400);
       check('«Обычный интерфейс» возвращает панели, ведение продолжается', !(await page.locator('.app.is-minimal').count()) && (await page.locator('.route-guiding').isVisible()) && (await page.locator('.dock').isVisible()));

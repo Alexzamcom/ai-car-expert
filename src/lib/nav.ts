@@ -21,6 +21,7 @@ import { recordFix } from './trip';
 import { L } from './i18n';
 import { Locator, type FixSource, type GeoErrorInfo } from './geo/locator';
 import { updateDisplay, resetDisplay } from './matching/display';
+import { remainingCoords, RouteTrimmer } from './routeTrim';
 import { recordArrival } from './diag';
 import { searchPlaces as geoSearch, reverseGeocode, coordsPlace, type Place } from './geo/geocode';
 
@@ -277,6 +278,7 @@ export function routeSummary(): string {
   );
   const p = s.progress;
   const step = p ? s.route.steps[p.stepIndex] : null;
+  if (s.status === 'guiding' && step?.type === 'arrive') return head;
   if (s.status === 'guiding' && step && p) return `${head} ${L('Через', 'Через')} ${fmtDistance(p.toStepM, lang)} ${stepText(step, lang)}.`;
   return s.status === 'preview' ? `${head} ${L('Скажите «поехали», чтобы начать.', 'Скажіть «поїхали», щоб почати.')}` : head;
 }
@@ -336,7 +338,7 @@ export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'hi
     geoStore.set((s) => ({ ...s, status: 'watching', held: verdict }));
     return;
   }
-  headingState = updateHeading(headingState, fix, roadHint(fix));
+  headingState = updateHeading(headingState, fix);
   const heading = headingState.heading;
   acceptedFix = { ...fix, at: now };
   const speedKmh = fix.speed != null && fix.speed >= 0 ? fix.speed * 3.6 : null;
@@ -344,10 +346,11 @@ export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'hi
   geoStore.set((s) => ({ ...s, status: 'watching', lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speedKmh, heading, updated: now, quality, held: null, fixAt: fix.timestamp, source }));
   // Отображаемая позиция (привязка к дороге) — отдельно; решения ведения ниже — только по сырой точке.
   const nav = navStore.get();
-  updateDisplay({ lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speed: fix.speed != null && fix.speed >= 0 ? fix.speed : null, heading }, nav.status === 'guiding' ? (nav.route?.coords ?? null) : null, now);
+  const measuredCourse = validDeg(fix.heading) && (fix.speed ?? 0) >= 2.5 && fix.accuracy <= 30 ? fix.heading : heading;
+  updateDisplay({ lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speed: validDeg(fix.speed) ? fix.speed : null, heading, measuredCourse }, nav.status === 'guiding' ? (nav.route?.coords ?? null) : null, now);
   if (quality === 'precise') saveLastPos(fix);
   recordFix({ lat: fix.lat, lon: fix.lon }, fix.accuracy, speedKmh, now);
-  onPosition({ lat: fix.lat, lon: fix.lon }, fix.accuracy);
+  onPosition(fix, now);
 }
 
 export function __resetGeo() {
@@ -520,15 +523,17 @@ export interface NavState {
   status: 'idle' | 'routing' | 'preview' | 'guiding' | 'arrived';
   error: string | null;
   progress: Progress | null;
+  routeCutM: number;
   rerouting: boolean;
   /** Сообщение во время ведения (нет сети для перестроения и т. п.). */
   notice: string | null;
 }
 
-const emptyNav = (): NavState => ({ dest: null, via: null, route: null, routes: [], routeIndex: 0, status: 'idle', error: null, progress: null, rerouting: false, notice: null });
+const emptyNav = (): NavState => ({ dest: null, via: null, route: null, routes: [], routeIndex: 0, status: 'idle', error: null, progress: null, routeCutM: 0, rerouting: false, notice: null });
 export const navStore = createStore<NavState>(emptyNav());
 
-let routeCache: { cum: number[]; offsets: number[] } | null = null;
+const routeTrimmer = new RouteTrimmer();
+let routeCache: { route: Route; cum: number[]; offsets: number[] } | null = null;
 let routeAbort: AbortController | null = null;
 let lastReroute = 0;
 let offRouteCount = 0;
@@ -540,16 +545,47 @@ export function navLang(): Lang {
   return l === 'uk' || l === 'en' ? l : 'ru';
 }
 
+const emptyRouteCoords: LatLon[] = [];
+let visibleRoute: { route: Route; cut: number; coords: LatLon[] } | undefined;
+
+/** Одна линия для основной карты и обоих режимов HUD. */
+export function visibleRouteCoords(s = navStore.get()): LatLon[] {
+  if (!s.route || s.status === 'arrived') return emptyRouteCoords;
+  if (s.status !== 'guiding' || s.routeCutM <= 0) return s.route.coords;
+  if (visibleRoute?.route !== s.route || visibleRoute.cut !== s.routeCutM) {
+    visibleRoute = { route: s.route, cut: s.routeCutM, coords: remainingCoords(s.route.coords, routeCache?.route === s.route ? routeCache.cum : cumulative(s.route.coords), s.routeCutM) };
+  }
+  return visibleRoute.coords;
+}
+
+function updateRouteCut(route: Route, progress: Progress, t: number, speed: number | null, initialMaxM?: number) {
+  return routeTrimmer.update({ route, along: routeCache!.cum.at(-1)! - progress.remainingM, offRouteM: progress.offRouteM, t, speed, initialMaxM });
+}
+
+function initialRouteProgress(route: Route, from: LatLon, requestedAt: number, guiding: boolean) {
+  const fix = acceptedFix;
+  const trusted = fix && fix.accuracy <= FULL_GUIDANCE_ACCURACY && Date.now() - fix.timestamp <= 10_000;
+  const progress = routeProgress(route, currentPos() ?? from, routeCache!);
+  // Машина может проехать часть нового маршрута, пока сервер готовит ответ.
+  const initialMaxM = 150 + 45 * Math.min(30, Math.max(0, ((fix?.timestamp ?? requestedAt) - requestedAt) / 1000));
+  const routeCutM = guiding && trusted ? updateRouteCut(route, progress, fix.timestamp, fix.speed, initialMaxM) : 0;
+  return { progress, routeCutM };
+}
+
 function setRoute(route: Route) {
-  routeCache = { cum: cumulative(route.coords), offsets: stepOffsets(route) };
+  const cum = cumulative(route.coords);
+  routeCache = { route, cum, offsets: stepOffsets(route, cum) };
+  routeTrimmer.reset();
+  visibleRoute = undefined;
   announced.clear();
 }
 
 async function buildRoutes(from: LatLon, dest: Place, via?: Place | null) {
   routeAbort?.abort();
   routeAbort = new AbortController();
-  const routes = await fetchRoutes(from, dest, { signal: routeAbort.signal, via: via ?? undefined });
-  setRoute(routes[0]);
+  const { signal } = routeAbort;
+  const routes = await fetchRoutes(from, dest, { signal, via: via ?? undefined });
+  if (signal.aborted) throw new DOMException('Route request cancelled', 'AbortError');
   return routes;
 }
 
@@ -564,18 +600,20 @@ export async function setDestination(dest: Place, via: Place | null = null, keep
   poiStore.set(emptyPoi());
   const prevStatus = navStore.get().status;
   pickStore.set(null);
-  const base = { dest, via, progress: null, rerouting: false, notice: null, routeIndex: 0 };
+  const base = { dest, via, progress: null, routeCutM: 0, rerouting: false, notice: null, routeIndex: 0 };
   const from = currentPos();
   if (!from) {
     navStore.set({ ...base, route: null, routes: [], status: 'preview', error: 'Нет геопозиции — маршрут построить нельзя. Разрешите геолокацию или откройте маршрут во внешнем навигаторе.' });
     return;
   }
   navStore.set({ ...base, route: null, routes: [], status: 'routing', error: null });
+  const requestedAt = Date.now();
   try {
     const routes = await buildRoutes(from, dest, via);
     if (navStore.get().dest !== dest) return;
     const status = keepStatus && prevStatus === 'guiding' ? 'guiding' : 'preview';
-    navStore.set({ ...base, route: routes[0], routes, status, error: null, progress: routeProgress(routes[0], from, routeCache!) });
+    setRoute(routes[0]);
+    navStore.set({ ...base, route: routes[0], routes, status, error: null, ...initialRouteProgress(routes[0], from, requestedAt, status === 'guiding') });
   } catch (e) {
     if ((e as Error).name === 'AbortError') return;
     navStore.set({ ...base, route: null, routes: [], status: 'preview', error: routeErrorText(e) });
@@ -613,10 +651,11 @@ export function startGuidance() {
   if (settingsStore.get().minimalGuidance) setMinimal(true);
   guidanceStarts += 1;
   offRouteCount = 0;
-  const pos = currentPos();
-  if (pos) onPosition(pos);
-  const p = navStore.get().progress;
-  if (p) say(`${stepText(s.route.steps[p.stepIndex], navLang())}, ${t('through')} ${fmtDistance(p.toStepM, navLang())}`);
+  if (acceptedFix && geoStore.get().held == null) onPosition(acceptedFix, Date.now());
+  const current = navStore.get();
+  const p = current.progress;
+  const step = p && s.route.steps[p.stepIndex];
+  if (current.status === 'guiding' && p && step && step.type !== 'arrive') say(`${stepText(step, navLang())}, ${t('through')} ${fmtDistance(p.toStepM, navLang())}`);
 }
 
 /** Голосовые подсказки навигации: выключение сразу прерывает текущую фразу, но не музыку, радио и ведение. */
@@ -633,6 +672,8 @@ export function stopNavigation() {
   if (driveUiStore.get().minimal) setMinimal(false);
   routeAbort?.abort();
   routeCache = null;
+  routeTrimmer.reset();
+  visibleRoute = undefined;
   pendingReroute = false;
   navStore.set(emptyNav());
   poiStore.set(emptyPoi());
@@ -665,11 +706,14 @@ function reroute(pos: LatLon) {
   pendingReroute = false;
   say(t('reroute'));
   navStore.set({ ...s, rerouting: true, notice: null });
+  const requestedAt = Date.now();
   buildRoutes(pos, s.dest, s.via)
     .then((routes) => {
       const cur = navStore.get();
-      if (cur.dest !== s.dest) return;
-      navStore.set({ ...cur, route: routes[0], routes: [routes[0]], routeIndex: 0, rerouting: false, notice: null, progress: routeProgress(routes[0], pos, routeCache!) });
+      if (cur.route !== s.route || cur.status !== 'guiding' || !cur.rerouting) return;
+      const route = routes[0];
+      setRoute(route);
+      navStore.set({ ...cur, route, routes: [route], routeIndex: 0, rerouting: false, notice: null, ...initialRouteProgress(route, pos, requestedAt, true) });
     })
     .catch((e) => {
       if ((e as Error).name === 'AbortError') return;
@@ -687,23 +731,33 @@ if (typeof window !== 'undefined') {
   });
 }
 
-function onPosition(pos: LatLon, accuracy = 20) {
+function onPosition(pos: RawFix, now: number) {
+  const { accuracy } = pos;
   const s = navStore.get();
   if (!s.route || !routeCache || (s.status !== 'guiding' && s.status !== 'preview')) return;
   const use = guidanceUse(accuracy);
   // Приблизительная точка (> 100 м) только показывается на карте: прогресс по маршруту не сдвигаем, если он уже есть.
   if (use === 'display' && s.progress && s.status === 'guiding') return;
   const p = routeProgress(s.route, pos, routeCache, s.progress?.segIndex ?? 0);
-  navStore.set({ ...s, progress: p });
-  if (s.status !== 'guiding' || use === 'display') return;
   const full = use === 'full';
-
-  if (full && p.remainingM < 30) {
-    navStore.set({ ...navStore.get(), status: 'arrived' });
+  const guiding = s.status === 'guiding';
+  const finish = s.route.coords.at(-1);
+  // Проверяем сырую точку, дорожный финиш и выбранную цель. Проекция сама по себе
+  // может попасть на конец линии с соседней улицы; погрешность расходует запас до финиша.
+  if (guiding && finish && s.dest && accuracy <= 25 &&
+    now - pos.timestamp <= 10_000 && p.remainingM <= 30 &&
+    haversine(pos, finish) + accuracy <= 40 && haversine(pos, s.dest) + accuracy <= 65) {
+    navStore.set({ ...s, status: 'arrived', progress: { ...p, remainingM: 0, toStepM: 0 } });
     if (driveUiStore.get().minimal) setMinimal(false);
     say(t('arrived'));
     return;
   }
+
+  const routeCutM = guiding && full && now - pos.timestamp <= 10_000
+    ? updateRouteCut(s.route, p, pos.timestamp, pos.speed)
+    : s.routeCutM;
+  navStore.set({ ...s, progress: p, routeCutM });
+  if (!guiding || use === 'display') return;
 
   // Сход с маршрута: 3 точки подряд дальше 60 м (с учётом точности GPS) → перестроение.
   // Неточная точка (50–100 м) не считается ни сходом, ни возвратом на маршрут.
@@ -720,7 +774,7 @@ function onPosition(pos: LatLon, accuracy = 20) {
 
   // Голосовые подсказки перед манёвром: ~600 м, ~200 м и в момент манёвра.
   const step = s.route.steps[p.stepIndex];
-  if (!step) return;
+  if (!step || step.type === 'arrive') return;
   const lang = navLang();
   const thresholds: [string, number][] = [
     ['far', 600],

@@ -253,6 +253,21 @@ describe('Ведение по неточным точкам: без ложных
     expect(navStore.get().progress).toBe(p0); // ведение не тронуто
   });
 
+  it('не принимает проекцию на конец маршрута за прибытие с соседней улицы', () => {
+    const now = Date.now() + 90_000;
+    handleFix({ ...dest, lon: dest.lon + 0.0025, accuracy: 8, speed: 5, heading: 0, timestamp: now }, now);
+    expect(navStore.get().progress?.remainingM).toBeLessThan(30);
+    expect(navStore.get().status).toBe('guiding');
+  });
+
+  it('не озвучивает прибытие как предстоящий манёвр', () => {
+    const now = Date.now() + 90_000;
+    handleFix({ ...dest, lat: dest.lat - 0.00135, accuracy: 8, speed: 5, heading: 0, timestamp: now }, now);
+    expect(navStore.get().route?.steps[navStore.get().progress!.stepIndex].type).toBe('arrive');
+    expect(navStore.get().status).toBe('guiding');
+    expect(speak.mock.calls.map(([utterance]) => utterance.text).join(' ')).not.toMatch(/Вы прибыли/);
+  });
+
   it('у цели по неточной точке «вы прибыли» не срабатывает', () => {
     handleFix({ lat: dest.lat, lon: dest.lon, accuracy: 90, speed: null, heading: null, timestamp: Date.now() + 60_000 }, Date.now() + 60_000, 'low');
     expect(navStore.get().status).toBe('guiding');

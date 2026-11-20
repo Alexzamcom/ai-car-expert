@@ -3,7 +3,7 @@
    Отрисовывает только упрощённую картинку: чёрный фон, яркие линии, крупные символы. */
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useStore } from '../lib/store';
-import { geoStore, navStore, navLang, setNavigationVoice, readNavSession } from '../lib/nav';
+import { geoStore, navStore, navLang, setNavigationVoice, readNavSession, visibleRouteCoords } from '../lib/nav';
 import { settingsStore } from '../lib/state';
 import { themeStore } from '../lib/theme';
 import { setKeepAwake } from '../lib/wakeLock';
@@ -316,21 +316,18 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
       const scale = (box.height * CAR_Y * 0.92) / range; // px на метр
       const cx = box.width / 2;
       const cy = box.height * CAR_Y;
-      const pts = routeInCarFrame(r.coords, p?.segIndex ?? 0, car, h, range);
-      // Пройденная часть не рисуется: линия начинается у машинки.
-      const skip = (p?.segIndex ?? 0) >= 1 ? 2 : 1; // вершины до машинки: [segIndex − 1], segIndex
-      const ahead = pts.slice(skip);
-      const d = ['M', cx.toFixed(1), cy.toFixed(1), ...ahead.flatMap(([x, y]) => ['L', (cx + x * scale).toFixed(1), (cy - y * scale).toFixed(1)])].join(' ');
+      const coords = visibleRouteCoords();
+      const ahead = routeInCarFrame(coords, 0, car, h, range);
       const xy = ([x, y]: [number, number]) => `${(cx + x * scale).toFixed(1)} ${(cy - y * scale).toFixed(1)}`;
-      const roadD = `M ${[...pts.slice(0, skip).map(xy), `${cx.toFixed(1)} ${cy.toFixed(1)}`, ...ahead.map(xy)].join(' L ')}`;
+      const d = ahead.length >= 2 ? `M ${ahead.map(xy).join(' L ')}` : '';
       const step = p ? r.steps[p.stepIndex] : null;
       const tp = step ? toCarFrame(step.location, car, h) : null;
-      const key = d + roadD + (tp ? tp.join() : '');
+      const key = d + (tp ? tp.join() : '');
       if (key === last) return;
       last = key;
       line.current?.setAttribute('d', d);
       carG.current?.setAttribute('transform', `translate(${cx.toFixed(1)} ${cy.toFixed(1)})`);
-      road.current?.setAttribute('d', roadD);
+      road.current?.setAttribute('d', d);
       if (turn.current) {
         turn.current.style.display = tp && Math.hypot(tp[0], tp[1]) < range * 1.6 && step?.type !== 'depart' ? '' : 'none';
         if (tp) {
@@ -338,7 +335,7 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
           turn.current.setAttribute('cy', (cy - tp[1] * scale).toFixed(1));
         }
       }
-      (window as unknown as { __aceHud?: unknown }).__aceHud = { mode: 'route', heading: h, range, points: ahead.length };
+      (window as unknown as { __aceHud?: unknown }).__aceHud = { mode: 'route', heading: h, range, points: ahead.length, first: coords[0] ? [coords[0].lon, coords[0].lat] : null };
     };
     raf = requestAnimationFrame(frame);
     return () => {

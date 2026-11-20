@@ -22,6 +22,27 @@ describe('Привязка к дороге', () => {
     expect(r!.mode).toBe('raw');
   });
 
+  it('ось из маршрута и дубликаты из тайлов не снижают уверенность в одной дороге', () => {
+    const axis: [number, number][] = [[0, -200], [0, 200]];
+    const m = new Matcher();
+    const r = m.update(fix(6, 0, 1), [
+      line('route:0', axis, { kind: 'route', oneway: 1 }),
+      line('tile-a', axis),
+      line('tile-b', [...axis].reverse()),
+    ]);
+    expect(r).toMatchObject({ mode: 'matched', lineId: 'route:0', bearing: 0 });
+    expect(r.shift).toBeCloseTo(6, 0);
+  });
+
+  it('курс исключает поперечную ось даже когда браузер не отдаёт скорость', () => {
+    const east = line('east', [[-150, 12], [150, 12]]);
+    const north = line('north', [[6, -150], [6, 150]]);
+    const m = new Matcher();
+    m.update(fix(0, 0, 0, { speed: null }), [east, north]);
+    const r = m.update(fix(0, 12, 1, { speed: null }), [east, north]);
+    expect(r).toMatchObject({ mode: 'matched', lineId: 'north', bearing: 0 });
+  });
+
   it('нет данных о дорогах — сырая точка, без ложной привязки', () => {
     const m = new Matcher();
     const r = m.update(fix(3, 0, 0), []);

@@ -23,13 +23,16 @@ jobs:
       - name: Unit-тесты
         run: npm test
       - run: npm run build
-      - name: Smoke test (локальная сборка, сервисы подменены тестовыми данными)
+      - name: Подготовка Chromium и локальной сборки
         run: |
           npm i --no-save playwright@1.49.1
           npx playwright install --with-deps chromium
           npx vite preview --port 4173 --strictPort &
           npx --yes wait-on@8.0.1 -t 30000 http://localhost:4173/
-          node scripts/smoke.mjs http://localhost:4173/ smoke-local --mock
+      - name: Интерфейс ведения, прибытие и прогресс HUD
+        run: node scripts/driving-ux-check.mjs http://localhost:4173/ smoke-local/driving-ux
+      - name: Smoke test (локальная сборка, сервисы подменены тестовыми данными)
+        run: node scripts/smoke.mjs http://localhost:4173/ smoke-local --mock
       - name: «Мои места» — постоянный профиль браузера (перезапуск, резервная копия, перенос прежних данных)
         run: node scripts/places-check.mjs http://localhost:4173/ smoke-local/places --mock
       - name: Динамическая камера «Игровой 3D» — движение, поворот, остановка, потеря GPS, ручной обзор

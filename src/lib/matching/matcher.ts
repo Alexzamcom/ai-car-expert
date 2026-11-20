@@ -137,6 +137,10 @@ export class Matcher {
     return this.cur;
   }
 
+  get moving() {
+    return (this.last?.speed ?? 0) >= 2;
+  }
+
   /** Стоимость кандидата: меньше — вероятнее. */
   private score(c: Omit<Candidate, 'cost' | 'travel'>, fix: MatchFix): Candidate {
     const sigma = Math.max(4, fix.accuracy * 0.6);
@@ -184,7 +188,7 @@ export class Matcher {
       return done(raw(!lines.length ? 'нет данных о дорогах и маршрута рядом' : `точность ±${Math.round(fix.accuracy)} м хуже ${this.opts.maxAccuracy} м`));
     }
     const radius = Math.min(80, Math.max(25, fix.accuracy * 2 + 15));
-    const cs = candidates(fix, lines, radius).map((c) => this.score(c, fix));
+    const cs = candidates(fix, lines, radius).map((c) => this.score(c, { ...fix, speed }));
     if (!cs.length) {
       // Рядом нет известных дорог (съехали с маршрута, а карта дорог не загружена) — без ложной привязки.
       this.cur = null;
@@ -206,9 +210,12 @@ export class Matcher {
     } else this.pending = null;
 
     // Уверенность: насколько лучший лучше остальных и насколько он близко.
-    const ps = cs.map((c) => Math.exp(-(c.cost - cs[0].cost) / 2));
-    const sum = ps.reduce((a, b) => a + b, 0);
-    const pBest = Math.exp(-(best.cost - cs[0].cost) / 2) / sum;
+    // Маршрут и тайлы часто содержат одну ось дороги. Совпадающие проекции
+    // с одинаковым курсом — одно наблюдение, а не конкурирующие дороги.
+    const sameRoad = (c: Candidate) => distM(c.point, best.point) < 3 && adiff(c.travel, best.travel) < 15;
+    const bestWeight = Math.exp(-(best.cost - cs[0].cost) / 2);
+    const sum = cs.reduce((total, c) => sameRoad(c) ? total : total + Math.exp(-(c.cost - cs[0].cost) / 2), bestWeight);
+    const pBest = bestWeight / sum;
     // Не дальше заявленной точности и не дальше MAX_SNAP_M: иначе машинка «уезжает» на соседнюю дорогу из здания, двора, парковки.
     // Держимся своей дороги после уверенной привязки — до MAX_SNAP_M (одиночный выброс не уводит машинку с дороги).
     const snapLimit = held ? MAX_SNAP_M : Math.min(MAX_SNAP_M, Math.max(8, fix.accuracy * 1.5));
@@ -231,7 +238,7 @@ export class Matcher {
     this.cur = best;
     const bearing = best.travel;
     // Одиночный выброс к соседней дороге: остаёмся на своей (прыжок туда-обратно хуже, чем одна неточная точка).
-    if (held && this.last?.res.mode === 'matched' && this.last.res.lineId === best.line.id)
+    if (plausible && held && this.last?.res.mode === 'matched' && this.last.res.lineId === best.line.id)
       return done({ mode: 'matched', lat: best.point.lat, lon: best.point.lon, bearing, accuracy: fix.accuracy, confidence: Math.max(confidence, 0.5), lineId: best.line.id, reason: why, shift: 0 });
     if (confidence >= 0.7) return done({ mode: 'matched', lat: best.point.lat, lon: best.point.lon, bearing, accuracy: Math.min(fix.accuracy, 10), confidence, lineId: best.line.id, reason: why, shift: 0 });
     if (confidence >= 0.35) {

@@ -28,6 +28,8 @@ export interface TrimInput {
   t: number;
   /** Скорость, м/с (null — неизвестна). */
   speed?: number | null;
+  /** Допустимый ход за время ожидания нового маршрута. Учитывается только при смене маршрута. */
+  initialMaxM?: number;
 }
 
 export class RouteTrimmer {
@@ -54,9 +56,10 @@ export class RouteTrimmer {
       this.pending = null;
       this.lastT = i.t;
       // Новый маршрут строится от машины: если она уже на линии — граница сразу у неё.
-      if (i.offRouteM <= ON_ROUTE_M && i.along < 150) this.cut = Math.max(0, i.along);
+      if (i.offRouteM <= ON_ROUTE_M && i.along <= (i.initialMaxM ?? 150)) this.cut = Math.max(0, i.along);
       return this.cut;
     }
+    if (i.t <= this.lastT) return this.cut;
     const dt = Math.min(10, Math.max(0.2, (i.t - this.lastT) / 1000));
     this.lastT = i.t;
     if (i.offRouteM > ON_ROUTE_M || !Number.isFinite(i.along)) {
