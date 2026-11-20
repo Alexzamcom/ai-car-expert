@@ -115,19 +115,54 @@ async function run(name, dev, theme) {
   check(`${name}: подъём без рывков (за шаг < 0.6)`, Math.max(0, ...jumps) < 0.6, `макс. ${Math.max(0, ...jumps).toFixed(2)}, пик ${peak.toFixed(2)}`);
   await page.screenshot({ path: `${out}/camera-${name.replace(/\W+/g, '-')}-turn.png` });
 
-  // Проезд поворота и потеря GPS на 8 с — без скачков; затем плавный возврат к виду сзади
+  // Проверяем отрисованную камеру при возвращении GPS. Курс-цель может
+  // сразу стать курсом следующей улицы, а карта должна повернуться плавно.
   await drive(turnAt + 60);
   await page.waitForTimeout(8000);
-  const beforeLoss = samples.at(-1);
-  await drive(turnAt + 420);
-  const afterLoss = samples[samples.indexOf(beforeLoss) + 1];
-  // За 8 с без точек камера не «прыгает»: следующая точка не поворачивает её резко и не меняет наклон скачком
-  // (возврат к виду сзади после поворота идёт постепенно).
+  const beforeLoss = await st();
+  await page.evaluate(() => {
+    const { map } = window.__aceMap;
+    const frames = [];
+    const sample = () => frames.push({ t: performance.now(), bearing: map.getBearing(), pitch: map.getPitch() });
+    map.once('movestart', sample);
+    map.on('move', sample);
+    window.stopCameraTrace = () => {
+      map.off('movestart', sample);
+      map.off('move', sample);
+      return frames;
+    };
+  });
+  const firstAfterGap = d;
+  await drive(firstAfterGap);
+  const afterLoss = samples.at(-1);
+  const frames = await page.evaluate(() => window.stopCameraTrace());
+  const yawSteps = frames.slice(1).map((frame, i) => ({
+    degrees: angle(frame.bearing, frames[i].bearing),
+    pitchDegrees: Math.abs(frame.pitch - frames[i].pitch),
+    seconds: (frame.t - frames[i].t) / 1000,
+  }));
+  const yaw = angle(afterLoss.bearing, beforeLoss.bearing);
+  const pitch = Math.abs(afterLoss.pitch - beforeLoss.pitch);
+  const intermediate = frames.slice(1, -1).some((frame) => {
+    const turned = angle(frame.bearing, beforeLoss.bearing);
+    const tilted = Math.abs(frame.pitch - beforeLoss.pitch);
+    return (turned > 0.2 && turned < yaw - 0.2) || (tilted > 0.2 && tilted < pitch - 0.2);
+  });
   check(
     `${name}: потеря GPS на 8 с — без скачка камеры`,
-    afterLoss && Math.abs(afterLoss.pitch - beforeLoss.pitch) < 15 && afterLoss.heading != null && angle(afterLoss.heading, beforeLoss.heading) < 30,
-    JSON.stringify({ before: { lift: beforeLoss.lift, pitch: +beforeLoss.pitch.toFixed(1) }, after: { lift: afterLoss?.lift, pitch: +afterLoss?.pitch.toFixed(1) } }),
+    afterLoss.d === firstAfterGap && afterLoss.heading != null && pitch < 15 &&
+      frames.length >= 3 && angle(frames[0].bearing, beforeLoss.bearing) < 1 &&
+      Math.abs(frames[0].pitch - beforeLoss.pitch) < 1 &&
+      yawSteps.every(({ degrees, pitchDegrees, seconds }) => degrees <= 180 * seconds + 1 && degrees < 30 && pitchDegrees <= 15 * seconds + 1) &&
+      (yaw < 1 && pitch < 1 || intermediate),
+    JSON.stringify({
+      before: { lift: beforeLoss.camera.lift, pitch: beforeLoss.pitch, bearing: beforeLoss.bearing, heading: beforeLoss.heading },
+      after: { lift: afterLoss.lift, pitch: afterLoss.pitch, bearing: afterLoss.bearing, heading: afterLoss.heading },
+      headingChange: angle(afterLoss.heading, beforeLoss.heading), frames: frames.length, intermediate,
+      maxFrameYaw: Math.max(0, ...yawSteps.map(({ degrees }) => degrees)),
+    }),
   );
+  await drive(turnAt + 420);
   const after = samples.filter((x) => x.d > turnAt + 250);
   check(
     `${name}: после поворота — плавный возврат к виду сзади (подъём снижается, наклон растёт)`,
