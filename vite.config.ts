@@ -40,9 +40,10 @@ export default defineConfig(({ mode }) => ({
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.1.0'),
   },
   // mode=artifact — однофайловая сборка без service worker (scripts/build-artifact.mjs).
-  plugins: mode === 'artifact' ? [react()] : [react(), serviceWorker()],
+  plugins: mode === 'artifact' || mode === 'android' ? [react()] : [react(), serviceWorker()],
   build: {
     target: 'safari16',
+    ...(mode === 'android' ? { outDir: 'dist-android' } : {}),
     chunkSizeWarningLimit: 1600,
     ...(mode === 'artifact'
       ? {}

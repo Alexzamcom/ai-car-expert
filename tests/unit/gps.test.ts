@@ -167,7 +167,7 @@ describe('Машинка', () => {
 });
 
 import osrm from '../fixtures/osrm-route.json';
-import { setDestination, startGuidance, stopNavigation, addStop, setNavigationVoice, guidanceStartCount, navStore } from '../../src/lib/nav';
+import { setAndroidGeoActive, startGeo, locatorState, setDestination, startGuidance, stopNavigation, addStop, setNavigationVoice, guidanceStartCount, navStore } from '../../src/lib/nav';
 import { driveUiStore, settingsStore } from '../../src/lib/state';
 import { playerStore } from '../../src/lib/player';
 
@@ -183,6 +183,30 @@ describe('Полноэкранное ведение и голос', () => {
     handleFix({ lat: 55.757, lon: 37.6156, accuracy: 8, speed: null, heading: null, timestamp: Date.now() });
   });
   afterEach(() => stopNavigation());
+
+  it('Android останавливает GPS в фоне и запускает новое слежение с тем же маршрутом', async () => {
+    const watchPosition = vi.fn(() => 7);
+    const clearWatch = vi.fn();
+    vi.stubGlobal('navigator', { onLine: true, geolocation: { getCurrentPosition: vi.fn(), watchPosition, clearWatch } });
+    await setDestination(dest);
+    startGuidance();
+    const route = navStore.get().route;
+    try {
+      startGeo();
+      expect(watchPosition).toHaveBeenCalledTimes(1);
+      setAndroidGeoActive(false);
+      expect(clearWatch).toHaveBeenCalledWith(7);
+      expect(locatorState().running).toBe(false);
+      startGeo();
+      expect(watchPosition).toHaveBeenCalledTimes(1);
+      setAndroidGeoActive(true);
+      expect(watchPosition).toHaveBeenCalledTimes(2);
+      expect(navStore.get()).toMatchObject({ status: 'guiding', route });
+    } finally {
+      setAndroidGeoActive(true);
+      __resetGeo();
+    }
+  });
 
   it('«Поехали» — полный экран; остановка не выключает его и не повторяет обзор; завершение — обычный интерфейс', async () => {
     await setDestination(dest);
