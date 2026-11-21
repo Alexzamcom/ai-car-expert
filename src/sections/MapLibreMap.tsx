@@ -15,6 +15,7 @@ import { hudUiStore } from '../lib/hud';
 import { engineFallback } from '../lib/mapEngine';
 import { mapDiag, diagModeStore, mapPositionStore } from '../lib/diag';
 import { displayStore, setRoadProvider } from '../lib/matching/display';
+import { autonomyMap } from '../lib/autonomy/map';
 import type { RoadLine } from '../lib/matching/matcher';
 import { LongPressDetector } from '../lib/geo/longpress';
 import { cumulative, type LatLon } from '../lib/routing';
@@ -26,6 +27,7 @@ export interface MapApi {
   panTo(p: LatLon): void;
   contains(p: LatLon, pad?: number): boolean;
   resize(): void;
+  center?(): LatLon;
 }
 
 const PITCH = 50;
@@ -59,7 +61,7 @@ function pinEl(kind: 'dest' | 'via' | 'pick') {
   return el;
 }
 
-export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: MutableRefObject<HTMLDivElement | null>; follow: boolean; guiding: boolean; onUserMove: () => void }) {
+export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: MutableRefObject<HTMLDivElement | null>; follow: boolean; guiding: boolean; onUserMove: () => void; autonomous?: boolean }) {
   const el = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MlMap | null>(null);
   const follow = useRef(p.follow);
@@ -93,14 +95,14 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       // «Игровая 3D» — тоже день/ночь по той же теме (авто по солнцу или вручную): светлая миниатюра или ночной город.
       const palette = (): MapPalette => {
         const dark = themeStore.get().active === 'night';
-        if (settingsStore.get().mapLook === 'game') return dark ? 'game-night' : 'game';
+        if (isGame()) return dark ? 'game-night' : 'game';
         return dark ? 'night' : 'day';
       };
       // Слабое устройство (мало ядер) — ночью без пятен света фонарей; окна, свечение дорог и фары остаются.
       const lite = (navigator.hardwareConcurrency ?? 8) <= 4;
       const styleOf = (p: MapPalette) => ({ diff: false, transformStyle: paletteTransform(p, { lite }) });
       const LABEL: Record<MapPalette, string> = { day: 'день', night: 'ночная палитра', hud: 'HUD', game: 'игровая 3D', 'game-night': 'игровая 3D, ночь' };
-      const isGame = () => settingsStore.get().mapLook === 'game';
+      const isGame = () => !!p.autonomous || settingsStore.get().mapLook === 'game';
       let map: MlMap;
       try {
         map = new ml.Map({
@@ -131,7 +133,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const fpsTimer = setInterval(() => {
         mapDiag.fps(frames);
         frames = 0;
-        if (diagModeStore.get().on && carNow && to) {
+        if (!p.autonomous && diagModeStore.get().on && carNow && to) {
           mapPositionStore.set({ marker: { lat: carNow.lat, lon: carNow.lon }, target: to, following: follow.current && touching === 0 && !hudUiStore.get().active });
         }
       }, 1000);
@@ -207,21 +209,22 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const drawRoute = (force = false) => {
         const s = navStore.get();
         const src = map.getSource('route') as GeoJSONSource | undefined;
-        const coords = visibleRouteCoords(s);
+        const experimental = p.autonomous ? autonomyMap.get() : null;
+        const coords = experimental ? experimental.route?.coords ?? [] : visibleRouteCoords(s);
         if (src && (force || coords !== shownCoords)) {
           src.setData(coords.length >= 2 ? line(coords) : empty);
           shownCoords = coords;
         }
-        const alts = s.status === 'guiding' ? [] : s.routes.map((r, i) => ({ r, i })).filter(({ i }) => i !== s.routeIndex);
+        const alts = experimental || s.status === 'guiding' ? [] : s.routes.map((r, i) => ({ r, i })).filter(({ i }) => i !== s.routeIndex);
         (map.getSource('alts') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: alts.map(({ r, i }) => line(r.coords, { idx: i })) });
-        markers.dest = syncMarker(markers.dest, s.dest, 'dest');
-        markers.via = syncMarker(markers.via, s.via, 'via');
+        markers.dest = syncMarker(markers.dest, experimental ? experimental.destination : s.dest, 'dest');
+        markers.via = syncMarker(markers.via, experimental ? null : s.via, 'via');
       };
       let accShown = 0;
       const drawAcc = () => {
         const g = geoStore.get();
         const src = map.getSource('acc') as GeoJSONSource | undefined;
-        const show = g.lat != null && g.lon != null && (g.accuracy ?? 0) > 30;
+        const show = !p.autonomous && g.lat != null && g.lon != null && (g.accuracy ?? 0) > 30;
         src?.setData(show ? circle({ lat: g.lat!, lon: g.lon! }, g.accuracy!) : empty);
         accShown = src && show ? g.accuracy! : 0;
       };
@@ -258,7 +261,15 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           map.easeTo({ center: [pk.lon, pk.lat], zoom: Math.max(map.getZoom(), 16), bearing: 0, pitch: 0, duration: 600 });
         } else if (pk && !api.contains(pk, 0.15)) map.panTo([pk.lon, pk.lat]);
       };
-      cleanups.push(navStore.subscribe(() => drawRoute()), poiStore.subscribe(drawPoi), pickStore.subscribe(drawPick));
+      if (p.autonomous) {
+        let previous = autonomyMap.get();
+        cleanups.push(autonomyMap.subscribe(() => {
+          const next = autonomyMap.get();
+          if (next.route !== previous.route || next.destination !== previous.destination) drawRoute();
+          previous = next;
+        }));
+      }
+      else cleanups.push(navStore.subscribe(() => drawRoute()), poiStore.subscribe(drawPoi), pickStore.subscribe(drawPick));
       map.on('click', 'alts', (e) => {
         const idx = Number(e.features?.[0]?.properties?.idx);
         if (Number.isFinite(idx)) selectRoute(idx);
@@ -271,7 +282,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const rawMarker = new ml.Marker({ element: rawEl });
       const drawRaw = () => {
         const g = geoStore.get();
-        if (diagModeStore.get().on && g.lat != null && g.lon != null) rawMarker.setLngLat([g.lon, g.lat]).addTo(map);
+        if (!p.autonomous && diagModeStore.get().on && g.lat != null && g.lon != null) rawMarker.setLngLat([g.lon, g.lat]).addTo(map);
         else rawMarker.remove();
       };
       cleanups.push(geoStore.subscribe(drawRaw), diagModeStore.subscribe(drawRaw), () => rawMarker.remove());
@@ -291,7 +302,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const carEl = document.createElement('div');
       carEl.className = 'ml-car';
       const flatMarker = new ml.Marker({ element: carEl, rotationAlignment: 'map', pitchAlignment: 'map' });
-      const use3d = () => settingsStore.get().carStyle !== 'flat' && !car3d.failed;
+      const use3d = () => (p.autonomous || settingsStore.get().carStyle !== 'flat') && !car3d.failed;
       const paintFlat = () => (carEl.innerHTML = carSvg(settingsStore.get().carColor, 32));
       paintFlat();
       const syncCar = () => {
@@ -360,26 +371,27 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       camera.current = (immediate = false) => {
         if (!to || !follow.current || touching > 0 || hudUiStore.get().active) return;
         const size = map.getContainer().getBoundingClientRect();
-        const g = geoStore.get();
+        const experimental = p.autonomous ? autonomyMap.get() : null;
+        const speedKmh = experimental ? (experimental.position?.speed ?? 0) * 3.6 : geoStore.get().speedKmh;
         if (!guiding.current) {
           // «Игровая 3D»: и без маршрута — наклон, чтобы был виден объём города.
           map.easeTo({ center: [to.lon, to.lat], zoom: Math.max(map.getZoom(), isGame() ? 16 : 15), bearing: isGame() ? map.getBearing() : 0, pitch: isGame() ? GAME_IDLE_PITCH : 0, duration: immediate ? 500 : moveMs, easing: (x) => x });
           return;
         }
-        const course = settingsStore.get().cameraMode === 'course';
-        const n = navStore.get();
+        const course = p.autonomous || settingsStore.get().cameraMode === 'course';
+        const n = experimental ?? navStore.get();
         const heading = headingTarget ?? map.getBearing();
         // Камера по движению: обычная (прежняя), игровая (вид сзади) или динамическая (подъём перед поворотом —
         // по расстоянию до манёвра из прогресса вдоль маршрута, не по ближайшей точке GPS).
-        camStyle = effectiveNavCamera(settingsStore.get().navCamera, isGame());
+        camStyle = p.autonomous ? 'dynamic' : effectiveNavCamera(settingsStore.get().navCamera, isGame());
         const step = n.route && n.progress ? n.route.steps[n.progress.stepIndex] : null;
         const now = performance.now();
-        const l = lift.update(course && camStyle === 'dynamic' ? maneuverLift(step, n.progress?.toStepM, g.speedKmh) : 0, liftAt ? (now - liftAt) / 1000 : 0);
+        const l = lift.update(course && camStyle === 'dynamic' ? maneuverLift(step, n.progress?.toStepM, speedKmh) : 0, liftAt ? (now - liftAt) / 1000 : 0);
         liftAt = now;
         const pose = navCameraPose(camStyle, {
           baseZoom: camStyle === 'normal'
-            ? autoZoom(g.speedKmh, n.progress?.toStepM ?? null) + (isGame() ? GAME_ZOOM_BONUS : 0)
-            : isGame() ? gameFollowZoom(g.speedKmh) : autoZoom(g.speedKmh, null),
+            ? autoZoom(speedKmh, n.progress?.toStepM ?? null) + (isGame() ? GAME_ZOOM_BONUS : 0)
+            : isGame() ? gameFollowZoom(speedKmh) : autoZoom(speedKmh, null),
           normalPitch: isGame() ? GAME_PITCH : PITCH,
           lift: l,
           maxPitch: map.getMaxPitch(),
@@ -396,8 +408,14 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         hudUiStore.subscribe(() => !hudUiStore.get().active && (map.resize(), camera.current(true))),
         // Круг точности — вокруг сырой точки GPS; машинка и камера — по отображаемой позиции (привязка к дороге).
         geoStore.subscribe(drawAcc),
-        displayStore.subscribe(() => {
-          const g = displayStore.get();
+        (p.autonomous ? autonomyMap : displayStore).subscribe(() => {
+          const g = p.autonomous ? autonomyMap.get().position : displayStore.get();
+          if (!g) {
+            to = from = carNow = null;
+            flatMarker.remove();
+            map.triggerRepaint();
+            return;
+          }
           if (g.lat == null || g.lon == null) return;
           if (to && to.lat === g.lat && to.lon === g.lon && headingTarget === g.heading) return;
           const now = performance.now();
@@ -449,13 +467,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       map.on('sourcedata', (event) => {
         if ((event.tile || event.sourceDataType === 'content') && event.source?.type === 'vector') roadCache = null;
       });
-      setRoadProvider((pt, r) => {
+      if (!p.autonomous) setRoadProvider((pt, r) => {
         if (!roadCache || performance.now() - roadCache.at > 3000) roadCache = { at: performance.now(), lines: loadRoads() };
         const dLat = r / 111_320;
         const dLon = r / (111_320 * Math.cos((pt.lat * Math.PI) / 180));
         return roadCache.lines.filter((l) => l.box[0] <= pt.lat + dLat && l.box[2] >= pt.lat - dLat && l.box[1] <= pt.lon + dLon && l.box[3] >= pt.lon - dLon);
       });
-      cleanups.push(() => setRoadProvider(null));
+      if (!p.autonomous) cleanups.push(() => setRoadProvider(null));
 
       /* ---------- Долгое нажатие и правый клик — выбор точки ---------- */
       const lp = new LongPressDetector({
@@ -465,7 +483,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           const r = box.getBoundingClientRect();
           const ll = map.unproject([x - r.left, y - r.top]);
           navigator.vibrate?.(25);
-          void pickPoint({ lat: ll.lat, lon: ll.lng });
+          if (!p.autonomous) void pickPoint({ lat: ll.lat, lon: ll.lng });
         },
       });
       let lastTouch = 0;
@@ -491,7 +509,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       map.on('movestart', (e) => (e as { originalEvent?: Event }).originalEvent && lp.cancel());
       map.on('contextmenu', (e) => {
         if (Date.now() - lastTouch < 1500 || Date.now() - lp.lastFired < 1500) return;
-        void pickPoint({ lat: e.lngLat.lat, lon: e.lngLat.lng });
+        if (!p.autonomous) void pickPoint({ lat: e.lngLat.lat, lon: e.lngLat.lng });
       });
 
       /* ---------- API для общего интерфейса навигации ---------- */
@@ -526,6 +544,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           const c = map.getContainer().getBoundingClientRect();
           const pt = map.project([q.lon, q.lat]);
           return pt.x > c.width * padFrac && pt.x < c.width * (1 - padFrac) && pt.y > c.height * padFrac && pt.y < c.height * (1 - padFrac);
+        },
+        center() {
+          const center = map.getCenter().wrap();
+          return { lat: center.lat, lon: center.lng };
         },
         resize() {
           map.resize();
@@ -603,11 +625,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         mapRef.current = null;
       });
       // Начальное состояние (маршрут, метки, позиция) — сразу после загрузки.
-      drawPoi();
-      drawPick();
+      if (!p.autonomous) {
+        drawPoi();
+        drawPick();
+      }
       const d = displayStore.get();
-      const g = d.lat != null ? d : geoStore.get();
-      if (g.lat != null && g.lon != null) {
+      const g = p.autonomous ? autonomyMap.get().position : d.lat != null ? d : geoStore.get();
+      if (g && g.lat != null && g.lon != null) {
         to = { lat: g.lat, lon: g.lon };
         headingTarget = g.heading;
         headingShown = g.heading ?? 0;
