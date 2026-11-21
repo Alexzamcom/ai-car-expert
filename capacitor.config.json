@@ -1,0 +1,8 @@
+{
+  "appId": "com.aicarexpert.app",
+  "appName": "AI Car Expert",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
