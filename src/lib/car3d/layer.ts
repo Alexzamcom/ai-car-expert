@@ -1,5 +1,5 @@
 /* 3D-машинка как пользовательский WebGL-слой MapLibre: несколько сотен треугольников, один проход, без библиотек.
-   Размер постоянный в пикселях экрана (как в навигаторах), курс — от севера по часовой, наклон и поворот карты — от MapLibre. */
+   Размер в обычном режиме постоянный, в игровом зависит от масштаба, курс — от севера по часовой, наклон и поворот карты — от MapLibre. */
 import type { CustomLayerInterface, CustomRenderMethodInput, Map as MlMap } from 'maplibre-gl';
 import { MercatorCoordinate } from 'maplibre-gl';
 import { CAR_MODELS, MAT_COLOR, type CarModelId, type CarMesh } from './mesh';
@@ -157,6 +157,51 @@ export function mul4(a: ArrayLike<number>, b: ArrayLike<number>): Float32Array {
 /** Метров на пиксель экрана (тайлы MapLibre 512 px). */
 export const metersPerPixel = (lat: number, zoom: number) => (40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** zoom);
 
+/** Целевой габарит модели в CSS-пикселях для игрового вида. */
+export function gameCarSizePx(zoom: number, shortEdge: number): number {
+  const t = Math.max(0, Math.min(1, (zoom - 15) / 4));
+  return Math.min(42 + 58 * t ** 1.5, Math.max(42, shortEdge * 0.28));
+}
+
+/** Крайние вершины кузова и колёс в 26 направлениях. Углы прямоугольного
+ * бокса завышали бы размер: над капотом и багажником таких вершин нет. */
+function meshOutline(positions: Float32Array): [number, number, number][] {
+  const indices = new Set<number>();
+  for (const x of [-1, 0, 1]) {
+    for (const y of [-1, 0, 1]) {
+      for (const z of [-1, 0, 1]) {
+        if (!x && !y && !z) continue;
+        let best = 0;
+        let distance = -Infinity;
+        for (let i = 0; i < positions.length; i += 3) {
+          const dot = x * positions[i] + y * positions[i + 1] + z * positions[i + 2];
+          if (dot > distance) {
+            best = i;
+            distance = dot;
+          }
+        }
+        indices.add(best);
+      }
+    }
+  }
+  return [...indices].map((i) => [positions[i], positions[i + 1], positions[i + 2]]);
+}
+
+function projectedSize(m: Float32Array, outline: [number, number, number][], width: number, height: number): number {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y, z] of outline) {
+    const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+    if (w <= 0) return 0;
+    const px = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w;
+    const py = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w;
+    minX = Math.min(minX, px);
+    maxX = Math.max(maxX, px);
+    minY = Math.min(minY, py);
+    maxY = Math.max(maxY, py);
+  }
+  return Math.max((maxX - minX) * width / 2, (maxY - minY) * height / 2);
+}
+
 /**
  * Матрица модели (по столбцам): поворот на курс, масштаб, перенос в координаты Меркатора.
  * Ось y модели (нос) → курс: север — это −y Меркатора, восток — +x.
@@ -191,14 +236,16 @@ export function hexToRgb(hex: string): [number, number, number] {
 export interface Car3dLayer extends CustomLayerInterface {
   /** Ошибка WebGL — вызывающий переключается на плоскую машинку. */
   failed: boolean;
+  renderedSizePx: number | null;
 }
 
 export function createCar3dLayer(
   get: () => Car3dState | null,
-  opts: { model?: CarModelId; sizePx?: () => number; onError?: (e: unknown) => void; night?: () => boolean } = {},
+  opts: { model?: CarModelId; sizePx?: () => number; gameSize?: () => boolean; onError?: (e: unknown) => void; night?: () => boolean } = {},
 ): Car3dLayer {
   const mesh: CarMesh = CAR_MODELS[opts.model ?? 'ev'].build();
   const count = mesh.positions.length / 3;
+  const outline = meshOutline(mesh.positions);
   let map: MlMap | null = null;
   let prog: WebGLProgram | null = null;
   let shadow: WebGLProgram | null = null;
@@ -212,6 +259,7 @@ export function createCar3dLayer(
     type: 'custom',
     renderingMode: '3d',
     failed: false,
+    renderedSizePx: null,
     onAdd(m, gl) {
       map = m;
       try {
@@ -241,13 +289,25 @@ export function createCar3dLayer(
       if (!st || !map || !prog || !shadow || layer.failed) return;
       const g = gl as WebGLRenderingContext;
       const mc = MercatorCoordinate.fromLngLat([st.lon, st.lat], 0);
-      const sizePx = opts.sizePx?.() ?? 60;
-      // Постоянный размер на экране: длина модели = sizePx пикселей.
-      const k = (sizePx * metersPerPixel(st.lat, map.getZoom())) / mesh.length;
-      const unit = mc.meterInMercatorCoordinateUnits() * k;
-      // mainMatrix переводит координаты Меркатора 0…1 в экранные (для проекции Меркатора).
+      const zoom = map.getZoom();
+      const baseUnit = mc.meterInMercatorCoordinateUnits() * metersPerPixel(st.lat, zoom) / mesh.length;
       const main = (args.defaultProjectionData?.mainMatrix ?? args.modelViewProjectionMatrix) as unknown as ArrayLike<number>;
-      const mvp = mul4(main, modelMatrix(mc.x, mc.y, st.heading, unit));
+      let unit = baseUnit * (opts.sizePx?.() ?? 60);
+      let mvp = mul4(main, modelMatrix(mc.x, mc.y, st.heading, unit));
+      layer.renderedSizePx = null;
+      if (opts.gameSize?.()) {
+        const { clientWidth: width, clientHeight: height } = map.getCanvas();
+        const size = gameCarSizePx(zoom, Math.min(width, height));
+        // Наклон и смещение меняют перспективный масштаб. Компенсируем их
+        // общим коэффициентом для всех осей, теней и огней.
+        for (let pass = 0; pass < 2; pass++) {
+          const actual = projectedSize(mvp, outline, width, height);
+          if (!(actual > 1)) break;
+          unit *= Math.max(0.5, Math.min(2, size / actual));
+          mvp = mul4(main, modelMatrix(mc.x, mc.y, st.heading, unit));
+        }
+        layer.renderedSizePx = projectedSize(mvp, outline, width, height);
+      }
 
       g.clear(g.DEPTH_BUFFER_BIT);
       g.disable(g.CULL_FACE);
@@ -314,6 +374,7 @@ export function createCar3dLayer(
       if (prog) g.deleteProgram(prog);
       if (shadow) g.deleteProgram(shadow);
       if (glow) g.deleteProgram(glow);
+      layer.renderedSizePx = null;
       map = null;
     },
   };

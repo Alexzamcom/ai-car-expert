@@ -29,6 +29,12 @@ const along = (d) => {
   const k = Math.max(0, Math.min(1, (d - cum[i - 1]) / (cum[i] - cum[i - 1])));
   return { latitude: coords[i - 1].lat + (coords[i].lat - coords[i - 1].lat) * k, longitude: coords[i - 1].lon + (coords[i].lon - coords[i - 1].lon) * k };
 };
+if (process.argv.includes('--visual')) {
+  const { gameCameraVisual } = await import('./game-camera-visual.mjs');
+  await gameCameraVisual({ chromium, devices, url, out, fixture: F, coords, along });
+  process.exit(0);
+}
+
 const angle = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
 
 async function run(name, dev, theme) {
@@ -76,7 +82,7 @@ async function run(name, dev, theme) {
         }, position, { polling: 100, timeout: 15_000 });
       } else await page.waitForTimeout(1100);
       const s = await st();
-      samples.push({ d, toStepM: s.camera.toStepM, step: s.camera.step, lift: s.camera.lift, pitch: s.pitch, zoom: s.zoom, bearing: s.bearing, heading: s.heading, carY: s.car?.y });
+      samples.push({ d, toStepM: s.camera.toStepM, step: s.camera.step, lift: s.camera.lift, pitch: s.pitch, zoom: s.zoom, bearing: s.bearing, heading: s.heading, carY: s.car?.y, carSizePx: s.carSizePx });
       if (turnAt == null && s.camera.step?.startsWith('turn') && s.camera.toStepM != null) turnAt = d + s.camera.toStepM;
     }
   };
@@ -84,7 +90,7 @@ async function run(name, dev, theme) {
   const straight = samples.filter((x) => x.step?.startsWith('turn') && x.toStepM > 300).slice(-3);
   check(
     `${name}: прямо — вид сзади (наклон ≥ 58°, курс камеры по движению, машинка в нижней части)`,
-    straight.length > 0 && straight.every((x) => x.lift === 0 && x.pitch >= 58 && x.heading != null && angle(x.bearing, x.heading) < 15 && x.carY > 0.65),
+    straight.length > 0 && straight.every((x) => x.lift === 0 && x.pitch >= 58 && x.heading != null && angle(x.bearing, x.heading) < 15 && x.carY > 0.65 && x.carY < 0.82 && x.carSizePx >= 58 && x.carSizePx <= 72),
     JSON.stringify(straight.at(-1)),
   );
   if (turnAt == null) turnAt = 1300;

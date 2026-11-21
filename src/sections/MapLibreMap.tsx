@@ -10,7 +10,7 @@ import { themeStore, THEMES } from '../lib/theme';
 import { DEFAULT_STYLE_URL, paletteTransform, gameImage, type MapPalette } from '../lib/mapStyle';
 import { carSvg, unwrapAngle, CAR_COLORS } from '../lib/carMarker';
 import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
-import { autoZoom, lookAheadOffset, effectiveNavCamera, maneuverLift, navCameraPose, LiftFilter } from '../lib/camera';
+import { autoZoom, lookAheadOffset, effectiveNavCamera, maneuverLift, navCameraPose, gameFollowZoom, LiftFilter } from '../lib/camera';
 import { hudUiStore } from '../lib/hud';
 import { engineFallback } from '../lib/mapEngine';
 import { mapDiag, diagModeStore, mapPositionStore } from '../lib/diag';
@@ -188,6 +188,12 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       // Стиль перезагружается только при смене палитры (день ⇄ ночь ⇄ «Игровая 3D»), а не на каждое изменение темы
       // или настроек. В «Игровой 3D» палитра одна, поэтому смена темы стиль не трогает.
       let appliedPalette = palette();
+      const normalFov = map.getVerticalFieldOfView();
+      const applyFov = () => {
+        const fov = isGame() ? 42 : normalFov;
+        if (map.getVerticalFieldOfView() !== fov) map.setVerticalFieldOfView(fov);
+      };
+      applyFov();
       const restyle = (why: string) => {
         if (palette() === appliedPalette) return;
         appliedPalette = palette();
@@ -276,6 +282,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const car3d = createCar3dLayer(
         () => (carNow ? { ...carNow, color: hexToRgb(CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
         {
+          gameSize: isGame,
           sizePx: () => Math.min(76, Math.max(50, Math.min(innerWidth, innerHeight) * 0.095)),
           // Фары и задние огни — только в ночной «Игровой 3D».
           night: () => appliedPalette === 'game-night',
@@ -370,17 +377,21 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         const l = lift.update(course && camStyle === 'dynamic' ? maneuverLift(step, n.progress?.toStepM, g.speedKmh) : 0, liftAt ? (now - liftAt) / 1000 : 0);
         liftAt = now;
         const pose = navCameraPose(camStyle, {
-          baseZoom: camStyle === 'normal' ? autoZoom(g.speedKmh, n.progress?.toStepM ?? null) + (isGame() ? GAME_ZOOM_BONUS : 0) : autoZoom(g.speedKmh, null),
+          baseZoom: camStyle === 'normal'
+            ? autoZoom(g.speedKmh, n.progress?.toStepM ?? null) + (isGame() ? GAME_ZOOM_BONUS : 0)
+            : isGame() ? gameFollowZoom(g.speedKmh) : autoZoom(g.speedKmh, null),
           normalPitch: isGame() ? GAME_PITCH : PITCH,
           lift: l,
           maxPitch: map.getMaxPitch(),
+          landscape: size.width > size.height,
+          gameLook: isGame(),
         });
         const zoom = userZoom ? map.getZoom() : pose.zoom;
         const offset: [number, number] = course ? [0, size.height * pose.offset] : (lookAheadOffset(heading, size.width, size.height).map((v) => -v) as [number, number]);
         map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? pose.pitch : isGame() ? GAME_IDLE_PITCH : 0, zoom, offset, duration: immediate ? 600 : moveMs, easing: (x) => x, essential: true });
       };
       cleanups.push(
-        settingsStore.subscribe(() => camera.current(true)),
+        settingsStore.subscribe(() => { applyFov(); camera.current(true); }),
         // Выход из HUD — карта сразу на месте машинки.
         hudUiStore.subscribe(() => !hudUiStore.get().active && (map.resize(), camera.current(true))),
         // Круг точности — вокруг сырой точки GPS; машинка и камера — по отображаемой позиции (привязка к дороге).
@@ -521,7 +532,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         },
       };
       p.apiRef.current = api;
-      const ro = new ResizeObserver(() => map.resize());
+      const ro = new ResizeObserver(() => {
+        map.resize();
+        if (isGame() && guiding.current) camera.current(true);
+      });
       ro.observe(el.current);
       cleanups.push(() => ro.disconnect());
 
@@ -539,11 +553,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             heading: headingTarget,
             car: c ? { x: c.x / r.width, y: c.y / r.height } : null,
             car3d: use3d() && !!map.getLayer('car-3d'),
+            carSizePx: car3d.renderedSizePx,
             display: (({ mode, lineId, shift, lat, lon, reason }) => ({ mode, lineId, shift, lat, lon, reason }))(displayStore.get()),
             look: settingsStore.get().mapLook,
             camera: {
               style: guiding.current ? camStyle : effectiveNavCamera(settingsStore.get().navCamera, isGame()),
               lift: +lift.value.toFixed(3),
+              fov: map.getVerticalFieldOfView(),
               toStepM: navStore.get().progress?.toStepM ?? null,
               step: (() => {
                 const n = navStore.get();

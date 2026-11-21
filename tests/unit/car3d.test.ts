@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { gameCarSizePx } from '../../src/lib/car3d/layer';
 import { Builder, buildSuv, MAT, CAR_MODELS } from '../../src/lib/car3d/mesh';
 
 /** Доля треугольников, нормаль которых смотрит от центра тела (наружу). */
@@ -121,5 +122,21 @@ describe('3D-машинка: электрокроссовер', () => {
   });
   it('по умолчанию — электрокроссовер', () => {
     expect(Object.keys(CAR_MODELS)[0]).toBe('ev');
+  });
+});
+
+
+describe('Размер габарита игровой модели', () => {
+  it('от 42 px на дальнем плане до 100 px при приближении, без ступеней', () => {
+    expect(gameCarSizePx(13, 700)).toBe(42);
+    expect(gameCarSizePx(17.2, 700)).toBeGreaterThan(60);
+    expect(gameCarSizePx(17.2, 700)).toBeLessThan(70);
+    expect(gameCarSizePx(21, 700)).toBe(100);
+    expect(gameCarSizePx(21, 320)).toBeCloseTo(89.6);
+    for (let zoom = 14; zoom <= 20; zoom += 0.01) {
+      const step = gameCarSizePx(zoom + 0.01, 700) - gameCarSizePx(zoom, 700);
+      expect(step).toBeGreaterThanOrEqual(0);
+      expect(step).toBeLessThan(0.25);
+    }
   });
 });
