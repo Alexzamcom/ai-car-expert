@@ -1,0 +1,47 @@
+name: Android debug APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feature/android-capacitor-apk]
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install existing locked dependencies
+        run: npm ci
+      - name: Install Capacitor build tools (temporary, no lockfile changes)
+        run: npm install --no-save --package-lock=false @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+      - name: Existing unit tests
+        run: npm test
+      - name: Build web assets
+        run: npm run build
+      - name: Generate Android native project
+        run: |
+          npx cap add android
+          npx cap sync android
+      - name: Compile Android debug APK
+        working-directory: android
+        run: bash gradlew assembleDebug --no-daemon
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-car-expert-android-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
