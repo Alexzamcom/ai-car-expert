@@ -543,6 +543,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       (window as unknown as { __aceMap?: unknown }).__aceMap = {
         engine: 'maplibre',
         map,
+        frameClock: { set: ml.setNow, restore: ml.restoreNow },
         state: () => {
           const r = map.getContainer().getBoundingClientRect();
           const c = carNow ? map.project([carNow.lon, carNow.lat]) : null;

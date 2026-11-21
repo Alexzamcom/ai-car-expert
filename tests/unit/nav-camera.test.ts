@@ -62,6 +62,15 @@ describe('Плавность подъёма и возврата', () => {
     const f = new LiftFilter();
     expect(f.update(1, 60)).toBeLessThan(0.6);
   });
+  it('ограничивает шаг для полной высоты сложного манёвра, включая восстановление GPS', () => {
+    const f = new LiftFilter();
+    const first = f.update(1.3, 1);
+    expect(first).toBeGreaterThan(0.4);
+    expect(first).toBeLessThan(0.6);
+    expect(f.update(1.3, 1) - first).toBeLessThan(0.6);
+    f.reset();
+    expect(f.update(1.3, 8)).toBe(first);
+  });
   it('стоим перед поворотом — значение не дрожит', () => {
     const f = new LiftFilter();
     for (let i = 0; i < 20; i++) f.update(1, 1);

@@ -118,8 +118,11 @@ export class LiftFilter {
     // Не больше 1 с за обновление: после паузы (потеря GPS, перестроение) камера догоняет за несколько шагов, без рывка.
     const dt = Math.min(1, Math.max(0, dtSec));
     const tau = target > this.value ? 1.1 : 2.2;
-    this.value += (target - this.value) * (1 - Math.exp(-dt / tau));
-    if (Math.abs(this.value - target) < 0.005) this.value = target;
+    const difference = target - this.value;
+    const step = difference * (1 - Math.exp(-dt / tau));
+    const delta = Math.abs(difference - step) < 0.005 ? difference : step;
+    // Даже если очередная точка сразу переносит нас к сложному манёвру.
+    this.value += Math.max(-0.59, Math.min(0.59, delta));
     return this.value;
   }
   reset() {
