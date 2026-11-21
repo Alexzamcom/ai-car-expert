@@ -1,6 +1,6 @@
 /* Камера ведения: обычная, игровая (вид сзади), динамическая (подъём перед поворотами, плавный возврат). */
 import { describe, it, expect } from 'vitest';
-import { effectiveNavCamera, maneuverLift, navCameraPose, LiftFilter } from '../../src/lib/camera';
+import { effectiveNavCamera, maneuverLift, navCameraPose, gameFollowZoom, LiftFilter } from '../../src/lib/camera';
 
 const turn = { type: 'turn', modifier: 'right' };
 
@@ -62,6 +62,15 @@ describe('Плавность подъёма и возврата', () => {
     const f = new LiftFilter();
     expect(f.update(1, 60)).toBeLessThan(0.6);
   });
+  it('ограничивает шаг для полной высоты сложного манёвра, включая восстановление GPS', () => {
+    const f = new LiftFilter();
+    const first = f.update(1.3, 1);
+    expect(first).toBeGreaterThan(0.4);
+    expect(first).toBeLessThan(0.6);
+    expect(f.update(1.3, 1) - first).toBeLessThan(0.6);
+    f.reset();
+    expect(f.update(1.3, 8)).toBe(first);
+  });
   it('стоим перед поворотом — значение не дрожит', () => {
     const f = new LiftFilter();
     for (let i = 0; i < 20; i++) f.update(1, 1);
@@ -83,6 +92,24 @@ describe('Ракурс', () => {
     expect(p.zoom).toBeGreaterThan(16.6);
     expect(p.offset).toBeGreaterThan(0.24);
     expect(navCameraPose('game', { ...base, maxPitch: 55 }).pitch).toBe(55);
+  });
+  it('игровая настройка держит машинку в нижней трети в обеих ориентациях', () => {
+    const portrait = navCameraPose('dynamic', { ...base, gameLook: true });
+    const landscape = navCameraPose('dynamic', { ...base, gameLook: true, landscape: true });
+    expect(portrait).toMatchObject({ pitch: 64, offset: 0.24 });
+    expect(landscape).toMatchObject({ pitch: 62, offset: 0.21 });
+    const turn = navCameraPose('dynamic', { ...base, gameLook: true, lift: 1 });
+    expect(turn.pitch).toBeLessThan(portrait.pitch);
+    expect(turn.offset).toBeLessThan(portrait.offset);
+  });
+  it('игровой масштаб плавно отдаляется с ростом скорости', () => {
+    expect(gameFollowZoom(null)).toBeCloseTo(16.6);
+    expect(gameFollowZoom(120)).toBeCloseTo(14.6);
+    for (let speed = 0; speed < 130; speed++) {
+      const step = gameFollowZoom(speed) - gameFollowZoom(speed + 1);
+      expect(step).toBeGreaterThanOrEqual(0);
+      expect(step).toBeLessThan(0.05);
+    }
   });
   it('динамическая: без поворота — как игровая; перед поворотом — выше, дальше, машинка ближе к центру', () => {
     expect(navCameraPose('dynamic', base)).toEqual(navCameraPose('game', base));
