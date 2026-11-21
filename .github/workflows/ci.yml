@@ -33,6 +33,13 @@ jobs:
         run: node scripts/driving-ux-check.mjs http://localhost:4173/ smoke-local/driving-ux
       - name: Привязка машинки к векторным тайлам
         run: node scripts/road-matching-check.mjs http://localhost:4173/
+      - name: Скриншоты игровой камеры, масштаб, ориентация и HUD
+        run: node scripts/camera-check.mjs http://localhost:4173/ game-camera-visuals --visual
+      - uses: actions/upload-artifact@v4
+        with:
+          name: game-camera-visuals
+          path: game-camera-visuals/*.png
+          if-no-files-found: error
       - name: Smoke test (локальная сборка, сервисы подменены тестовыми данными)
         run: node scripts/smoke.mjs http://localhost:4173/ smoke-local --mock
       - name: «Мои места» — постоянный профиль браузера (перезапуск, резервная копия, перенос прежних данных)

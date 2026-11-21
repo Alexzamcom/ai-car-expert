@@ -54,6 +54,16 @@ export function autoZoom(speedKmh: number | null, toStepM: number | null): numbe
 
 /* ---------- Камера ведения: обычная, игровая (вид сзади), динамическая (подъём перед поворотами) ---------- */
 
+/** Плавный переход между городским и трассовым масштабами игрового вида. */
+export function gameFollowZoom(speedKmh: number | null): number {
+  const smooth = (x: number) => {
+    const t = Math.max(0, Math.min(1, x));
+    return t * t * (3 - 2 * t);
+  };
+  const speed = speedKmh ?? 0;
+  return 16.6 - smooth((speed - 30) / 35) - smooth((speed - 65) / 45);
+}
+
 export type NavCamera = 'normal' | 'game' | 'dynamic';
 export const NAV_CAMERAS: { id: NavCamera; label: string; hint: string }[] = [
   { id: 'normal', label: 'Обычная', hint: 'Прежний вид: наклон 50°, машинка в нижней части' },
@@ -121,12 +131,17 @@ export class LiftFilter {
  * Параметры камеры по движению. base — обычный масштаб (autoZoom без приближения перед манёвром — его заменяет подъём).
  * offset — доля высоты экрана, на которую центр карты выше машинки (машинка ближе к нижнему краю).
  */
-export function navCameraPose(style: NavCamera, opts: { baseZoom: number; normalPitch: number; lift: number; maxPitch?: number }): { pitch: number; zoom: number; offset: number } {
+export function navCameraPose(style: NavCamera, opts: { baseZoom: number; normalPitch: number; lift: number; maxPitch?: number; landscape?: boolean; gameLook?: boolean }): { pitch: number; zoom: number; offset: number } {
   const maxPitch = opts.maxPitch ?? 70;
   if (style === 'normal') return { pitch: opts.normalPitch, zoom: opts.baseZoom, offset: 0.24 };
   // Вид сзади: круче наклон, ближе к машине, машинка ниже — впереди видно дорогу и здания.
-  // Наклон 60° (не круче): дальше к горизонту карта подгружает заметно больше тайлов — тяжело для планшетов.
-  const chase = { pitch: Math.min(maxPitch, 60), zoom: opts.baseZoom + 0.6, offset: 0.3 };
+  // На широком экране чуть выше обзор и больше запаса под машинкой.
+  const game = opts.gameLook === true;
+  const chase = {
+    pitch: Math.min(maxPitch, game ? (opts.landscape ? 62 : 64) : 60),
+    zoom: opts.baseZoom + 0.6,
+    offset: game ? (opts.landscape ? 0.21 : 0.24) : 0.3,
+  };
   if (style === 'game') return chase;
   const l = Math.max(0, Math.min(1.3, opts.lift));
   // Перед поворотом: выше (меньше наклон), чуть дальше, машинка ближе к центру — виден перекрёсток и примыкающие улицы.
