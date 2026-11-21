@@ -6,6 +6,7 @@ import { startTheme } from './lib/theme';
 import { startPlacesBackup } from './lib/places';
 
 startTheme();
+if (import.meta.env.MODE === 'android') void import('./lib/geo/androidLifecycle');
 // «Мои места»: резервная копия в IndexedDB и запрос постоянного хранилища.
 void startPlacesBackup();
 
@@ -15,7 +16,7 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-if ('serviceWorker' in navigator && import.meta.env.PROD && import.meta.env.MODE !== 'artifact') {
+if ('serviceWorker' in navigator && import.meta.env.PROD && import.meta.env.MODE !== 'artifact' && import.meta.env.MODE !== 'android') {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   });

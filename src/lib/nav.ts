@@ -407,9 +407,23 @@ function watchPermission() {
     .catch(() => {});
 }
 
+let geoActive = true;
+
+/** Capacitor останавливает наблюдатель при уходе Activity с переднего плана. */
+export function setAndroidGeoActive(active: boolean) {
+  if (geoActive === active) return;
+  geoActive = active;
+  if (!active) {
+    locator?.stop();
+    locator = null;
+  } else if (geoStore.get().status !== 'denied') {
+    startGeo();
+  }
+}
+
 /** Начать определение позиции: быстрая доступная точка, затем непрерывное уточнение (см. geo/locator.ts). */
 export function startGeo() {
-  if (locator?.state.running) return;
+  if (!geoActive || locator?.state.running) return;
   if (!('geolocation' in navigator)) {
     geoStore.set((s) => ({ ...s, status: 'unavailable' }));
     return;
