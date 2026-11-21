@@ -85,6 +85,32 @@ try {
   await position(37.6156, 55.757);
 
   const click = (locator) => locator.evaluate((node) => node.click());
+  if (process.env.EXPECT_AUTONOMY === '1') {
+    assert(await page.evaluate(() => window.Capacitor.isPluginAvailable('TripSensors')));
+    const button = (name) => page.getByRole('button', { name, exact: true });
+    const open = 'GPS показывает неверное местоположение';
+    await click(button(open));
+    await page.waitForFunction(() => window.__aceMap?.state()?.styleReady && document.querySelector('.autonomy-crosshair'));
+    const [lon, lat] = JSON.parse(route).routes[0].geometry.coordinates[0];
+    await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x, y], zoom: 17 }), [lon, lat]);
+    await click(button('Установить автомобиль'));
+    await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x + 0.003, y], zoom: 17 }), [lon, lat]);
+    await click(button('Построить маршрут сюда'));
+    await click(button('Начать поездку без GPS'));
+    const end = button('Завершить поездку');
+    const unavailable = page.getByText(/Датчики движения недоступны|Не удалось запустить датчики/);
+    await end.or(unavailable).first().waitFor();
+    if (await end.isVisible()) {
+      await click(end);
+      await click(button('Выйти без записи'));
+      console.log('✓ Android native sensor bridge started the manually anchored experimental trip');
+    } else {
+      await click(button('Отмена'));
+      console.log('✓ Android native sensor bridge reports missing emulator sensors and preserves manual setup');
+    }
+    await page.waitForFunction(() => window.__aceMap?.state()?.styleReady && document.querySelector('#map-search'));
+    await position(37.6156, 55.757);
+  }
   await page.locator('#map-search').fill('55.779, 37.617');
   await page.locator('form.map-search').evaluate((form) => form.requestSubmit());
   await click(page.locator('.map-panel .place-row').first());

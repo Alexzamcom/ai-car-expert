@@ -1,15 +1,18 @@
 name: Android debug APK
 
 on:
+  pull_request:
+    paths: [android/**, src/lib/autonomy/**, src/sections/AutonomousNavigation.tsx, .github/workflows/android-apk.yml]
   workflow_dispatch:
   push:
-    branches: [feature/android-capacitor-apk, codex/gps-denied-navigation]
+    branches: [feature/android-capacitor-apk]
 
 permissions:
   contents: read
 
 jobs:
   android:
+    if: github.event_name != 'pull_request' || (github.head_ref == 'codex/gps-denied-navigation' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -78,6 +81,8 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - uses: reactivecircus/android-emulator-runner@v2
+        env:
+          EXPECT_AUTONOMY: ${{ github.head_ref == 'codex/gps-denied-navigation' && '1' || '0' }}
         with:
           api-level: 35
           target: google_apis

@@ -29,6 +29,9 @@ jobs:
           npx playwright install --with-deps chromium
           npx vite preview --port 4173 --strictPort &
           npx --yes wait-on@8.0.1 -t 30000 http://localhost:4173/
+      - name: Автономная навигация с тестовым мостом датчиков
+        if: github.head_ref == 'codex/gps-denied-navigation'
+        run: node scripts/autonomy-webview-check.mjs http://localhost:4173/
       - name: Интерфейс ведения, прибытие и прогресс HUD
         run: node scripts/driving-ux-check.mjs http://localhost:4173/ smoke-local/driving-ux
       - name: Привязка машинки к векторным тайлам
