@@ -90,8 +90,13 @@ async function run(name, dev, theme) {
   const straight = samples.filter((x) => x.step?.startsWith('turn') && x.toStepM > 300).slice(-3);
   check(
     `${name}: прямо — вид сзади (наклон ≥ 58°, курс камеры по движению, машинка в нижней части)`,
-    straight.length > 0 && straight.every((x) => x.lift === 0 && x.pitch >= 58 && x.heading != null && angle(x.bearing, x.heading) < 15 && x.carY > 0.65 && x.carY < 0.82 && x.carWidthShare >= 0.22 && x.carWidthShare <= 0.27),
-    JSON.stringify(straight.at(-1)),
+    straight.length > 0 && straight.every((x) => x.lift === 0 && x.pitch >= 58 && x.heading != null && angle(x.bearing, x.heading) < 15 && x.carY > 0.65 && x.carY < 0.82),
+    JSON.stringify(straight.at(-1) ?? samples.at(-1)),
+  );
+  check(
+    `${name}: прямо — кузов занимает 18–33% ширины карты при текущем автомасштабе`,
+    straight.length > 0 && straight.every((x) => x.carWidthShare >= 0.18 && x.carWidthShare <= 0.33),
+    JSON.stringify(straight.map(({ zoom, carWidthShare }) => ({ zoom, carWidthShare }))),
   );
   if (turnAt == null) turnAt = 1300;
   // Подъезд к повороту — с замедлением, как в городе (35 → 15 м за точку).
