@@ -279,6 +279,7 @@ export function AutonomousNavigation({ close }: { close(): void }) {
             : <div>Недостаточно уверенности для указаний о повороте.</div>}
           {!follow && <button className="btn" onClick={() => setFollow(true)}>К машине</button>}
           <button className="btn" disabled={!stationary} onClick={() => { pause('Подтвердите точку только на остановке.'); setStage('correct'); setHeading(String(Math.round(estimate.heading) % 360)); }}>Уточнить после остановки</button>
+          <button className="btn" onClick={() => pause('Для коррекции и возобновления дождитесь полной остановки.')}>Пауза</button>
           <button className="btn" disabled={busy} onClick={() => void finish()}>Завершить поездку</button>
         </>}
         {stage === 'paused' && <>

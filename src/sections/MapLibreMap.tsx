@@ -76,7 +76,11 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
   useEffect(() => {
     let disposed = false;
     const cleanups: (() => void)[] = [];
-    const fail = (reason: string) => !disposed && engineFallback(reason, (t) => toast(t, 'warn'));
+    const fail = (reason: string) => {
+      if (disposed) return;
+      if (p.autonomous) toast(`Экспериментальная карта недоступна: ${reason}`, 'warn');
+      else engineFallback(reason, (t) => toast(t, 'warn'));
+    };
     void (async () => {
       let ml: typeof import('maplibre-gl');
       let workerUrl: string;

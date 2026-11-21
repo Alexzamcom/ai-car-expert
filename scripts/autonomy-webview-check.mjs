@@ -72,6 +72,11 @@ try {
       return state().car3d && state().car && state().experimentalEstimate.lat > 40 && map.getCenter().lat > 40 &&
         document.querySelector('.autonomy-panel')?.textContent.match(/Оценка скорости [1-9]/);
     }, null, { polling: 200 });
+    await click('Пауза');
+    await click('Уточнить точку на остановке');
+    await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x, y + 0.0003], zoom: 17 }), [lon, lat]);
+    await click('Подтвердить коррекцию');
+    assert(Math.abs(await page.evaluate(() => window.__aceMap.state().experimentalEstimate.lat) - lat - 0.0003) < 0.000001);
     await click('Завершить поездку');
     await click('Оценка 4 из 5');
     await click('Сохранить и выйти');
@@ -80,7 +85,7 @@ try {
     await click('Сравнить');
     await page.getByText(/Инерциальный:.*С дорожной привязкой:/s).last().waitFor();
     assert.equal(await page.getByText('Записей пока нет.').count(), 0);
-    console.log(`✓ ${profile}: ручной старт, датчики, изоляция GPS, согласие, локальная запись и воспроизведение`);
+    console.log(`✓ ${profile}: ручной старт, датчики, изоляция GPS, коррекция, согласие, локальная запись и воспроизведение`);
     await ctx.close();
   }
 } finally { await browser.close(); }
