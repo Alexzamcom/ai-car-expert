@@ -94,6 +94,9 @@ try {
     const [lon, lat] = JSON.parse(route).routes[0].geometry.coordinates[0];
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x, y], zoom: 17 }), [lon, lat]);
     await click(button('Установить автомобиль'));
+    await position(37.6201, 55.7601);
+    const manual = await page.evaluate(() => window.__aceMap.state().experimentalEstimate);
+    assert(Math.abs(manual.lat - lat) < 0.00001 && Math.abs(manual.lon - lon) < 0.00001);
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x + 0.003, y], zoom: 17 }), [lon, lat]);
     await click(button('Построить маршрут сюда'));
     await click(button('Начать поездку без GPS'));

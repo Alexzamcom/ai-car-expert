@@ -61,6 +61,17 @@ describe('Автономная поездка', () => {
     expect(fix(e, 9000, advance(origin.position, 90, 24), 12).gps).toBe('rejected');
     expect(haversine(e.state, baseline)).toBe(0);
   });
+  it('не принимает неподвижный GPS за доказательство остановки при начале движения', () => {
+    const e = new Estimator(origin, [], 'hybrid');
+    const control = new Estimator(origin, [], 'inertial');
+    for (let sec = 0; sec < 4; sec++) {
+      fix(e, 1000 + sec * 1000);
+      feed(e, 1000 + sec * 1000, 20, 2);
+      feed(control, 1000 + sec * 1000, 20, 2);
+    }
+    expect(e.state.speed).toBe(control.state.speed);
+    expect(e.state.speed).toBeGreaterThan(5);
+  });
   it('даже согласованный GPS используется только как относительная скорость', () => {
     const e = new Estimator(origin, [], 'hybrid');
     feed(e, 1000, 75, 3);

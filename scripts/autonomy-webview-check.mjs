@@ -69,7 +69,7 @@ try {
     });
     await page.waitForFunction(() => {
       const { state, map } = window.__aceMap;
-      return state().car3d && state().car && map.getCenter().lat > 40 &&
+      return state().car3d && state().car && state().experimentalEstimate.lat > 40 && map.getCenter().lat > 40 &&
         document.querySelector('.autonomy-panel')?.textContent.match(/Оценка скорости [1-9]/);
     }, null, { polling: 200 });
     await click('Завершить поездку');

@@ -25,6 +25,23 @@ jobs:
             -configuration Debug -derivedDataPath "$RUNNER_TEMP/ace-ios" \
             CODE_SIGNING_ALLOWED=NO build
           ditto -c -k --keepParent "$RUNNER_TEMP/ace-ios/Build/Products/Debug-iphonesimulator/App.app" ios-simulator.zip
+      - name: Install and launch on iPhone Simulator
+        timeout-minutes: 6
+        run: |
+          device="$(xcrun simctl list devices available --json | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          for runtime in sorted(devices, reverse=True):
+              iphone = next((d["udid"] for d in devices[runtime] if d["name"].startswith("iPhone")), None)
+              if iphone:
+                  print(iphone)
+                  break
+          ')"
+          test -n "$device"
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl install "$device" "$RUNNER_TEMP/ace-ios/Build/Products/Debug-iphonesimulator/App.app"
+          xcrun simctl launch "$device" com.aicarexpert.app
       - uses: actions/upload-artifact@v4
         with:
           name: ai-car-expert-ios-simulator

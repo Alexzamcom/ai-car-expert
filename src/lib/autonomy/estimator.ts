@@ -2,12 +2,15 @@ import { cumulative, haversine, type LatLon } from '../routing';
 
 export const ALGORITHM_VERSION = 'dr-1';
 export type Motion = { at: number; x: number; y: number; yawRate: number; orientation?: number[] };
-export type Fix = LatLon & { at: number; accuracy: number; speed: number | null };
+export type Fix = LatLon & {
+  at: number; accuracy: number; speed: number | null; speedAccuracy?: number;
+  verticalAccuracy?: number; course?: number; courseAccuracy?: number;
+};
 export type Variant = 'inertial' | 'road' | 'hybrid';
 export type Measurement =
   | { type: 'motion'; sample: Motion }
   | { type: 'gps'; sample: Fix }
-  | { type: 'vehicle'; at: number; speedMps?: number; distanceM?: number }
+  | { type: 'vehicle'; at: number; speedMps?: number; distanceM?: number; wheelSpeedMps?: number[] }
   | { type: 'correction'; at: number; position: LatLon; heading: number }
   | { type: 'pause'; at: number };
 
@@ -88,14 +91,22 @@ export class Estimator {
     const dt = previous ? (fix.at - previous.at) / 1000 : 0;
     const distance = previous ? haversine(previous, fix) : 0;
     const speed = fix.speed;
+    const course = previous && distance > 12 ? bearing(previous, fix) : null;
+    const next = this.roadSegment + 1;
+    const nearCorner = (this.cumulative[next] ?? Infinity) - this.roadDistance < 35;
+    const onCorridor = !this.roadAligned || course == null ||
+      Math.abs(difference(course, bearing(this.road[this.roadSegment], this.road[next]))) <= 45 ||
+      (nearCorner && next < this.road.length - 1 && Math.abs(difference(course, bearing(this.road[next], this.road[next + 1]))) <= 45);
     const valid = previous && dt >= 0.4 && dt <= 4 && fix.accuracy > 0 && fix.accuracy <= 20 && previous.accuracy > 0 && previous.accuracy <= 20 &&
-      speed != null && Number.isFinite(speed) && speed >= 0 && speed <= 55 &&
+      speed != null && (fix.speedAccuracy == null || fix.speedAccuracy <= 3) && Number.isFinite(speed) && speed >= 0 && speed <= 55 &&
       Math.abs(distance / dt - speed) <= Math.max(3, (fix.accuracy + previous.accuracy) / dt / 2) &&
       speed <= this.state.speed + 4 && Math.abs(speed - this.state.speed) <= 6 &&
       (previous.speed == null || Math.abs(speed - previous.speed) / dt <= 5) &&
-      (distance <= 12 || Math.abs(difference(bearing(previous, fix), this.state.heading)) <= 45);
-    this.relativeSpeed = valid ? { speed, at: fix.at } : null;
-    this.state = { ...this.state, gps: valid ? 'relative' : previous ? 'rejected' : 'waiting', event: undefined };
+      (course == null || Math.abs(difference(course, this.state.heading)) <= 45) && onCorridor;
+    // A stationary fix supplies no independent evidence of a real stop.
+    // Applying it as a brake can lock the estimator at zero as a car starts moving.
+    this.relativeSpeed = valid && speed >= 0.8 ? { speed, at: fix.at } : null;
+    this.state = { ...this.state, gps: this.relativeSpeed ? 'relative' : valid || !previous ? 'waiting' : 'rejected', event: undefined };
   }
   private motion(sample: Motion) {
     if (![sample.at, sample.x, sample.y, sample.yawRate].every(Number.isFinite) ||
@@ -131,7 +142,7 @@ export class Estimator {
     this.headingDelta = Math.abs(yawRate) > 5 ? this.headingDelta + yaw : this.headingDelta * Math.max(0, 1 - elapsed);
     const turn = Math.abs(this.headingDelta) >= 24 && sample.at - this.lastTurnAt > 4000;
     if (turn) this.lastTurnAt = sample.at;
-    if (this.variant !== 'inertial' && this.roadAligned) {
+    if (this.variant !== 'inertial' && this.roadAligned && (distance > 0 || turn)) {
       const next = this.roadSegment + 1;
       const currentBearing = bearing(this.road[this.roadSegment], this.road[next]);
       const nextBearing = next < this.road.length - 1 ? bearing(this.road[next], this.road[next + 1]) : currentBearing;

@@ -11,6 +11,7 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.view.WindowManager;
+import android.os.Bundle;
 import androidx.core.content.FileProvider;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -162,8 +163,18 @@ public class TripSensors extends Plugin implements SensorEventListener, Location
         m.put("lon", fix.getLongitude());
         m.put("accuracy", fix.hasAccuracy() ? fix.getAccuracy() : -1);
         if (fix.hasSpeed()) m.put("speed", fix.getSpeed());
+        if (fix.hasBearing()) m.put("course", fix.getBearing());
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            if (fix.hasSpeedAccuracy()) m.put("speedAccuracy", fix.getSpeedAccuracyMetersPerSecond());
+            if (fix.hasVerticalAccuracy()) m.put("verticalAccuracy", fix.getVerticalAccuracyMeters());
+            if (fix.hasBearingAccuracy()) m.put("courseAccuracy", fix.getBearingAccuracyDegrees());
+        }
         notifyListeners("gps", m);
     }
+
+    @Override public void onProviderEnabled(String provider) {}
+    @Override public void onProviderDisabled(String provider) {}
+    @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
 
     @PluginMethod
     public void exportTrip(PluginCall call) {

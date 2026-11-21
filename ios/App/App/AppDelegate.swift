@@ -146,6 +146,10 @@ class TripSensors: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
                 "lon": fix.coordinate.longitude, "accuracy": fix.horizontalAccuracy
             ]
             if fix.speed >= 0 { data["speed"] = fix.speed }
+            if fix.speedAccuracy >= 0 { data["speedAccuracy"] = fix.speedAccuracy }
+            if fix.verticalAccuracy >= 0 { data["verticalAccuracy"] = fix.verticalAccuracy }
+            if fix.course >= 0 { data["course"] = fix.course }
+            if fix.courseAccuracy >= 0 { data["courseAccuracy"] = fix.courseAccuracy }
             notifyListeners("gps", data: data)
         }
     }
