@@ -553,7 +553,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             heading: headingTarget,
             car: c ? { x: c.x / r.width, y: c.y / r.height } : null,
             car3d: use3d() && !!map.getLayer('car-3d'),
-            carSizePx: car3d.renderedSizePx,
+            carWidthShare: car3d.renderedBounds && r.width > 0 ? car3d.renderedBounds.width / r.width : null,
+            carHeightShare: car3d.renderedBounds && r.height > 0 ? car3d.renderedBounds.height / r.height : null,
             display: (({ mode, lineId, shift, lat, lon, reason }) => ({ mode, lineId, shift, lat, lon, reason }))(displayStore.get()),
             look: settingsStore.get().mapLook,
             camera: {

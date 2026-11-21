@@ -36,8 +36,8 @@ export async function gameCameraVisual({ chromium, devices, url, out, fixture, c
   );
 
   const browser = await chromium.launch();
-  try {
-    const ctx = await browser.newContext({ ...devices['iPad Pro 11'], viewport: { width: 700, height: 950 }, deviceScaleFactor: 1, serviceWorkers: 'block' });
+  const open = async (profile) => {
+    const ctx = await browser.newContext({ ...profile, serviceWorkers: 'block' });
     await ctx.route('**/*', (r) => {
       const target = new URL(r.request().url());
       if (target.origin === new URL(url).origin) return r.continue();
@@ -68,6 +68,15 @@ export async function gameCameraVisual({ chromium, devices, url, out, fixture, c
     const page = await ctx.newPage();
     page.setDefaultTimeout(30_000);
     await page.goto(url, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => {
+      const s = window.__aceMap?.state();
+      return document.querySelector('.maneuver') && s?.pitch >= 61.5 &&
+        s.car?.y > 0.66 && s.car.y < 0.80 && s.carWidthShare > 0 && !window.__aceMap.map.isMoving();
+    }, null, { polling: 100 });
+    return { ctx, page };
+  };
+  try {
+    const { ctx, page } = await open({ ...devices['iPad Pro 11'], viewport: { width: 700, height: 950 }, deviceScaleFactor: 1 });
     const state = () => page.evaluate(() => window.__aceMap.state());
     const wait = (condition) => page.waitForFunction(condition, null, { polling: 100 });
     const send = async (d, speed = 10, heading = 323) => {
@@ -76,23 +85,24 @@ export async function gameCameraVisual({ chromium, devices, url, out, fixture, c
       await page.waitForFunction(({ latitude, longitude }) => {
         const { map, state } = window.__aceMap;
         const s = state();
-        return !map.isMoving() && s.raw.lat === latitude && s.raw.lon === longitude && s.carSizePx > 0;
+        return !map.isMoving() && s.raw.lat === latitude && s.raw.lon === longitude && s.carWidthShare > 0;
       }, fix, { polling: 100 });
     };
 
-    await wait(() => document.querySelector('.maneuver') && window.__aceMap?.state()?.carSizePx > 0);
+    await wait(() => document.querySelector('.maneuver') && window.__aceMap?.state()?.carWidthShare > 0);
     await wait(() => {
       const s = window.__aceMap.state();
       return s.pitch >= 63 && s.car.y > 0.68 && s.car.y < 0.80;
     });
     await send(1200);
     const normal = await state();
-    assert(normal.carSizePx >= 60 && normal.carSizePx <= 70, JSON.stringify(normal));
+    assert(normal.carWidthShare >= 0.235 && normal.carWidthShare <= 0.265, JSON.stringify(normal));
     await page.screenshot({ path: `${out}/01-chase-normal.png` });
 
     await send(1225, 34);
     const fast = await state();
-    assert(fast.zoom < normal.zoom - 1.5 && fast.carSizePx >= 40 && fast.carSizePx <= 45, JSON.stringify(fast));
+    assert(fast.zoom < normal.zoom - 1.5 && fast.carWidthShare >= 0.18 && fast.carWidthShare <= 0.20, JSON.stringify(fast));
+    await page.screenshot({ path: `${out}/02-chase-distant.png` });
     await send(1250);
 
     await page.setViewportSize({ width: 950, height: 570 });
@@ -118,25 +128,25 @@ export async function gameCameraVisual({ chromium, devices, url, out, fixture, c
     };
     await pinch(30, 142);
     const close = await state();
-    assert(close.zoom >= normal.zoom + 1.6 && close.carSizePx >= 90 && close.carSizePx <= 105, JSON.stringify(close));
-    await page.screenshot({ path: `${out}/02-chase-zoomed.png` });
+    assert(close.zoom >= normal.zoom + 1.6 && close.carWidthShare >= 0.30 && close.carWidthShare <= 0.33, JSON.stringify(close));
+    await page.screenshot({ path: `${out}/03-chase-zoomed.png` });
     await pinch(142, 30);
     const far = await state();
-    assert(far.carSizePx < close.carSizePx - 20, JSON.stringify(far));
+    assert(far.carWidthShare < close.carWidthShare - 0.05, JSON.stringify(far));
     const recenter = page.locator('.recenter-pill');
     if (await recenter.isVisible()) await recenter.evaluate((button) => button.click());
 
     for (const d of [1300, 1350, 1400, 1450, 1500, 1540, 1570, 1595, 1610, 1625]) await send(d);
     const turning = await state();
     assert(turning.camera.lift > 0.65 && turning.pitch < normal.pitch - 9 && turning.car.y >= 0.60, JSON.stringify(turning));
-    await page.screenshot({ path: `${out}/03-chase-before-turn.png` });
     const angle = (a, b) => Math.abs(((a - b + 540) % 360) - 180);
     await send(1635, 0);
     const stopped = await state();
     for (const d of [1636, 1634, 1635]) await send(d, 0, 55);
     await page.waitForTimeout(8000);
     const afterGap = await state();
-    assert(angle(afterGap.bearing, stopped.bearing) < 2, JSON.stringify(afterGap));
+    assert(angle(afterGap.bearing, stopped.bearing) < 2 &&
+      Math.abs(afterGap.carWidthShare - stopped.carWidthShare) < 0.008, JSON.stringify(afterGap));
     await send(1665, 10, 40);
     const reacquired = await state();
     assert(Math.abs(reacquired.pitch - afterGap.pitch) < 15 && typeof reacquired.heading === 'number');
@@ -155,12 +165,32 @@ export async function gameCameraVisual({ chromium, devices, url, out, fixture, c
       return stage && route?.includes('L') && new DOMMatrixReadOnly(getComputedStyle(stage).transform).a === -1;
     });
     console.log(JSON.stringify({
-      normal: { pitch: normal.pitch, zoom: normal.zoom, carPx: normal.carSizePx },
-      fast: { zoom: fast.zoom, carPx: fast.carSizePx },
-      pinch: { zoom: close.zoom, carPx: close.carSizePx },
-      beforeTurn: { pitch: turning.pitch, lift: turning.camera.lift, carPx: turning.carSizePx },
+      normal: { pitch: normal.pitch, zoom: normal.zoom, widthShare: normal.carWidthShare },
+      fast: { zoom: fast.zoom, widthShare: fast.carWidthShare },
+      pinch: { zoom: close.zoom, widthShare: close.carWidthShare },
+      beforeTurn: { pitch: turning.pitch, lift: turning.camera.lift, widthShare: turning.carWidthShare },
       landscape: true, stoppedGpsGap: true, recoveredPitch: recovered.pitch, mirroredHud: true,
     }));
+    await ctx.close();
+
+    for (const [name, profile, minimum] of [
+      ['iPhone 15 portrait', devices['iPhone 15'], 0.235],
+      ['iPhone 15 landscape', devices['iPhone 15 landscape'], 0.20],
+      ['Pixel 7', devices['Pixel 7'], 0.235],
+      ['iPad Pro 11', devices['iPad Pro 11'], 0.235],
+    ]) {
+      const { ctx: mobile, page: mobilePage } = await open(profile);
+      try {
+        const measured = await mobilePage.evaluate(() => {
+          const state = window.__aceMap.state();
+          return { widthShare: state.carWidthShare, heightShare: state.carHeightShare, dpr: devicePixelRatio };
+        });
+        assert(measured.widthShare >= minimum && measured.widthShare <= 0.27 && measured.heightShare <= 0.63, JSON.stringify({ name, ...measured }));
+        console.log(JSON.stringify({ name, ...measured }));
+      } finally {
+        await mobile.close();
+      }
+    }
   } finally {
     await browser.close();
   }

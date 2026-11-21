@@ -157,10 +157,14 @@ export function mul4(a: ArrayLike<number>, b: ArrayLike<number>): Float32Array {
 /** Метров на пиксель экрана (тайлы MapLibre 512 px). */
 export const metersPerPixel = (lat: number, zoom: number) => (40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** zoom);
 
-/** Целевой габарит модели в CSS-пикселях для игрового вида. */
-export function gameCarSizePx(zoom: number, shortEdge: number): number {
-  const t = Math.max(0, Math.min(1, (zoom - 15) / 4));
-  return Math.min(42 + 58 * t ** 1.5, Math.max(42, shortEdge * 0.28));
+/** Ширина кузова в CSS-пикселях. Широкий экран ограничен его высотой. */
+export function gameCarWidthPx(zoom: number, width: number, height: number): number {
+  const smooth = (value: number) => {
+    const t = Math.max(0, Math.min(1, value));
+    return t * t * (3 - 2 * t);
+  };
+  const share = 0.19 + 0.06 * smooth((zoom - 15.2) / 2) + 0.07 * smooth((zoom - 17.2) / 1.8);
+  return share * Math.min(width, height * 1.95);
 }
 
 /** Крайние вершины кузова и колёс в 26 направлениях. Углы прямоугольного
@@ -187,11 +191,11 @@ function meshOutline(positions: Float32Array): [number, number, number][] {
   return [...indices].map((i) => [positions[i], positions[i + 1], positions[i + 2]]);
 }
 
-function projectedSize(m: Float32Array, outline: [number, number, number][], width: number, height: number): number {
+function projectedSize(m: Float32Array, outline: [number, number, number][], width: number, height: number) {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   for (const [x, y, z] of outline) {
     const w = m[3] * x + m[7] * y + m[11] * z + m[15];
-    if (w <= 0) return 0;
+    if (w <= 0) return null;
     const px = (m[0] * x + m[4] * y + m[8] * z + m[12]) / w;
     const py = (m[1] * x + m[5] * y + m[9] * z + m[13]) / w;
     minX = Math.min(minX, px);
@@ -199,7 +203,7 @@ function projectedSize(m: Float32Array, outline: [number, number, number][], wid
     minY = Math.min(minY, py);
     maxY = Math.max(maxY, py);
   }
-  return Math.max((maxX - minX) * width / 2, (maxY - minY) * height / 2);
+  return { width: (maxX - minX) * width / 2, height: (maxY - minY) * height / 2 };
 }
 
 /**
@@ -236,7 +240,7 @@ export function hexToRgb(hex: string): [number, number, number] {
 export interface Car3dLayer extends CustomLayerInterface {
   /** Ошибка WebGL — вызывающий переключается на плоскую машинку. */
   failed: boolean;
-  renderedSizePx: number | null;
+  renderedBounds: { width: number; height: number } | null;
 }
 
 export function createCar3dLayer(
@@ -259,7 +263,7 @@ export function createCar3dLayer(
     type: 'custom',
     renderingMode: '3d',
     failed: false,
-    renderedSizePx: null,
+    renderedBounds: null,
     onAdd(m, gl) {
       map = m;
       try {
@@ -292,21 +296,25 @@ export function createCar3dLayer(
       const zoom = map.getZoom();
       const baseUnit = mc.meterInMercatorCoordinateUnits() * metersPerPixel(st.lat, zoom) / mesh.length;
       const main = (args.defaultProjectionData?.mainMatrix ?? args.modelViewProjectionMatrix) as unknown as ArrayLike<number>;
-      let unit = baseUnit * (opts.sizePx?.() ?? 60);
+      const game = opts.gameSize?.();
+      const { clientWidth: width, clientHeight: height } = map.getCanvas();
+      const targetWidth = game ? gameCarWidthPx(zoom, width, height) : 0;
+      let unit = baseUnit * (game ? targetWidth * 1.9 : (opts.sizePx?.() ?? 60));
       let mvp = mul4(main, modelMatrix(mc.x, mc.y, st.heading, unit));
-      layer.renderedSizePx = null;
-      if (opts.gameSize?.()) {
-        const { clientWidth: width, clientHeight: height } = map.getCanvas();
-        const size = gameCarSizePx(zoom, Math.min(width, height));
-        // Наклон и смещение меняют перспективный масштаб. Компенсируем их
-        // общим коэффициентом для всех осей, теней и огней.
-        for (let pass = 0; pass < 2; pass++) {
-          const actual = projectedSize(mvp, outline, width, height);
-          if (!(actual > 1)) break;
-          unit *= Math.max(0.5, Math.min(2, size / actual));
+      layer.renderedBounds = null;
+      if (game && targetWidth > 0) {
+        // Единый масштаб по всем осям. На широком экране ограничиваем также
+        // высоту силуэта, чтобы он оставлял перед капотом обзор дороги.
+        for (let pass = 0; pass < 4; pass++) {
+          const bounds = projectedSize(mvp, outline, width, height);
+          const ratio = bounds
+            ? Math.min(targetWidth / bounds.width, height * 0.62 / bounds.height)
+            : 0.5;
+          if (Math.abs(1 - ratio) < 0.002) break;
+          unit *= Math.max(0.35, Math.min(3, ratio));
           mvp = mul4(main, modelMatrix(mc.x, mc.y, st.heading, unit));
         }
-        layer.renderedSizePx = projectedSize(mvp, outline, width, height);
+        layer.renderedBounds = projectedSize(mvp, outline, width, height);
       }
 
       g.clear(g.DEPTH_BUFFER_BIT);
@@ -374,7 +382,7 @@ export function createCar3dLayer(
       if (prog) g.deleteProgram(prog);
       if (shadow) g.deleteProgram(shadow);
       if (glow) g.deleteProgram(glow);
-      layer.renderedSizePx = null;
+      layer.renderedBounds = null;
       map = null;
     },
   };
