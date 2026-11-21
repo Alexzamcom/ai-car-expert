@@ -100,7 +100,7 @@ function fitVisible(m: L.Map, b: L.LatLngBounds, ui: HTMLElement | null) {
   m.fitBounds(b, { paddingTopLeft: [40, padTop * k], paddingBottomRight: [padRight, padBottom * k], maxZoom: 16 });
 }
 
-export function Navigation() {
+export function Navigation({ onAutonomy }: { onAutonomy?: () => void }) {
   const uiEl = useRef<HTMLDivElement>(null);
   const mapEl = useRef<HTMLDivElement>(null);
   const themeOnly = useRef(false);
@@ -579,6 +579,7 @@ export function Navigation() {
       >
         {/* Верх: поиск или манёвр */}
         <div className="map-top">
+          {onAutonomy && !guiding && !nav.dest && <button className="btn autonomy-entry" onClick={onAutonomy}>GPS показывает неверное местоположение</button>}
           {minimal && !(step && nav.progress) ? (
             <div className="maneuver" role="status">
               <div className="maneuver-text">

@@ -1,0 +1,11 @@
+{
+  "appId": "com.aicarexpert.app",
+  "appName": "AI Car Expert",
+  "webDir": "dist-android",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "adjustMarginsForEdgeToEdge": "auto"
+  }
+}

@@ -1616,3 +1616,19 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .guide-grabber { height: 44px; width: 64px; }
 .guide-bar, .guide-sheet { padding-top: 44px; }
 .guide-wrap:has(.guide-bar[hidden]) .recenter-pill { margin-bottom: 54px; }
+
+.autonomy-entry { align-self: start; font-size: .88rem; }
+.autonomy-crosshair {
+  position: absolute; inset: 50% auto auto 50%; translate: -50% -50%;
+  z-index: 490; color: var(--accent); font: bold 2rem/1 system-ui;
+  text-shadow: 0 0 4px var(--panel), 0 0 4px var(--panel); pointer-events: none;
+}
+.autonomy-panel {
+  position: absolute; inset: 8px 8px auto; z-index: 500;
+  width: min(440px, calc(100% - 16px)); max-height: 46%; overflow: auto;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
+  padding: 10px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel); color: var(--text); font-size: .9rem;
+}
+.autonomy-panel > :is(strong, p, label, div) { flex: 0 0 100%; margin: 0; }
+.autonomy-panel input[type="number"] { width: 5rem; }
