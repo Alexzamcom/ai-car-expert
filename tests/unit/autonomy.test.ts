@@ -89,6 +89,10 @@ describe('Автономная поездка', () => {
     for (let n = 0; n < 100; n++) {
       const input = { type: 'motion', sample: { at: 1000 + n * 50, x: n < 40 ? 2 : 0, y: 0, yawRate: 0 } } as const;
       record(trip, input, e.update(input));
+      if (n % 20 === 0) {
+        const gps = { type: 'gps', sample: { ...advance(far, 0, n / 5), at: input.sample.at, accuracy: 4, speed: n < 40 ? 1 : 4 } } as const;
+        record(trip, gps, e.update(gps));
+      }
     }
     const serialized = JSON.parse(JSON.stringify(trip));
     const ref = [{ at: 1000, position: origin.position }];
@@ -98,6 +102,7 @@ describe('Автономная поездка', () => {
     expect(baseline.rmsM).toBeCloseTo(0);
     for (const scenario of ['frozen', 'jump', 'smooth'] as const) {
       expect(replay(serialized, 'road', scenario).endpoint).toEqual(e.state);
+      expect(haversine(replay(serialized, 'hybrid', scenario).endpoint, far)).toBeGreaterThan(4900);
     }
   });
 });
