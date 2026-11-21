@@ -96,6 +96,10 @@ try {
   await click(page.getByRole('button', { name: 'Маршрут сюда', exact: true }));
   await click(page.getByRole('button', { name: 'Поехали', exact: true }));
   await page.waitForFunction(() => document.querySelector('.maneuver') && window.__aceMap.state().routePoints > 2);
+  await page.waitForFunction(() => {
+    const map = window.__aceMap.state();
+    return map.look === 'game' && map.pitch > 40 && map.gameLayers.includes('game-buildings');
+  });
   const routePoints = await page.evaluate(() => window.__aceMap.state().routePoints);
   const guideText = await page.locator('.maneuver-instr').textContent();
   assert(guideText?.trim());
