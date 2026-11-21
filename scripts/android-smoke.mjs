@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { chromium } from 'playwright';
+import { _android as android } from 'playwright';
 
 const app = 'com.aicarexpert.app';
 const apk = process.argv[2];
@@ -44,17 +44,12 @@ await until(() => {
 }, 'Android did not grant precise foreground location via its permission dialog');
 console.log('✓ APK installed, launched and granted precise foreground location in Android');
 
-const pid = await until(() => adb('shell', 'pidof', app).split(' ')[0], 'Android app process not found');
-adb('forward', 'tcp:9222', `localabstract:webview_devtools_remote_${pid}`);
-const endpoint = 'http://127.0.0.1:9222';
-await until(async () => {
-  const response = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(2000) });
-  return response.ok;
-}, 'Debug Android WebView not reachable');
-const browser = await chromium.connectOverCDP(endpoint);
+const [device] = await android.devices();
+assert(device, 'Playwright did not find the Android emulator');
+let page;
 try {
-  const ctx = browser.contexts()[0];
-  const page = await until(() => ctx.pages().find((p) => p.url().startsWith('https://localhost')), 'Capacitor app page not available');
+  const webView = await device.webView({ pkg: app }, { timeout: 60_000 });
+  page = await webView.page();
   page.setDefaultTimeout(45_000);
   page.on('pageerror', (error) => console.error('[WebView]', error.message));
   await page.route('**/*', (request) => {
@@ -129,7 +124,17 @@ try {
   await page.waitForFunction(() => (document.querySelector('.hud-line')?.getAttribute('d') ?? '').includes('L'));
   assert(await page.locator('.hud-maneuver').isVisible());
   console.log('✓ HUD route is rendered in the Android WebView with mirror transform');
+} catch (error) {
+  if (page) {
+    const status = await page.evaluate(() => ({
+      url: location.href,
+      visibility: document.visibilityState,
+      map: window.__aceMap?.state?.(),
+      ui: document.querySelector('.map-ui, .navigation, .hud')?.innerText.slice(0, 1200),
+    })).catch(() => null);
+    console.error('Android smoke state:', JSON.stringify(status));
+  }
+  throw error;
 } finally {
-  await browser.close();
-  adb('forward', '--remove', 'tcp:9222');
+  await device.close();
 }
