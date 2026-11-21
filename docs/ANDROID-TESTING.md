@@ -1,23 +1,37 @@
-# AI Car Expert — Android debug APK
+# AI Car Expert для Android
 
-This is a first experimental Capacitor wrapper around the existing Vite app. The GitHub Pages release is unchanged.
+Тестовый APK собирается из той же версии приложения отдельной командой. В нём используется локальный защищённый адрес Capacitor `https://localhost`. Для APK сборка Vite пишет файлы в `dist-android` и не регистрирует service worker. Обычная веб-сборка по-прежнему пишет файлы в `dist` и обслуживает PWA через service worker.
 
-## Build
+## Скачать и установить
 
-Open GitHub Actions → **Android debug APK** → **Run workflow**, selecting branch `feature/android-capacitor-apk`. After success, download the `ai-car-expert-android-debug-apk` artifact. Unzip it and install `app-debug.apk` on Android (allow installation from the selected source when prompted).
+1. В GitHub Actions откройте успешный запуск **Android debug APK** для ветки `feature/android-capacitor-apk`.
+2. Скачайте артефакт **ai-car-expert-android-debug-apk**, распакуйте ZIP и откройте `app-debug.apk` на Android. GitHub может запросить вход в аккаунт. На телефоне разрешите установку из выбранного источника, если Android покажет запрос.
+3. При запуске выберите **При использовании приложения** и включите **Точное местоположение**. Убедитесь, что геолокация включена в системе.
 
-This is a debug APK for testing only, not a Play Store release. GPS requires location permission and enabled location services. Keep the app in the foreground with the screen on during navigation.
+APK подписан отладочным ключом CI. Если предыдущий тестовый APK подписан другим ключом, Android потребует удалить его перед установкой этого APK. Удаление стирает локальные данные приложения.
 
-## Test on a real Android device
+## Собрать локально
 
-1. Open the app and grant location access while using it.
-2. Check initial position and road matching, then test a route with several turns.
-3. Check map gestures, 3D camera, HUD and mirror mode.
-4. Lock and unlock the phone; verify that navigation refreshes from current GPS position.
-5. Compare with Google Maps on the same device. Report model, Android version, screenshots, route segment, and whether position drifts.
+Нужны Node.js 22, JDK 21 и Android SDK с платформой 35 и Build Tools 35.0.0. Проект использует Capacitor 7.6.10, Gradle Wrapper 8.11.1 и Android Gradle Plugin 8.7.2.
 
-## Limitations
+```sh
+npm ci
+npm run android:sync
+cd android
+./gradlew assembleDebug
+```
 
-The wrapper currently uses the WebView Geolocation API. Native GPS plugins, background navigation, OBD and store publication are intentionally out of scope. A successful CI build does not prove road navigation works on physical Android hardware.
+Результат находится в `android/app/build/outputs/apk/debug/app-debug.apk`.
 
-The workflow installs Capacitor v7 temporarily rather than committing its dependency lockfile; before merging this prototype, commit pinned Capacitor dependencies and native Android project in a follow-up PR.
+## Что проверяет CI
+
+- Модульные тесты, сборку Android-бандла, подпись APK, идентификатор приложения и разрешения. Манифест запрашивает точное и приблизительное местоположение только для работы на переднем плане.
+- Установку этого APK на эмулятор Android 15 и выдачу разрешения через системный диалог.
+- Приём синтетической координаты GPS в Android WebView, запуск ведения по тестовому ответу маршрутизатора, отображение MapLibre и 3D-машинки, HUD и зеркальное преобразование.
+- Цикл выключения и включения экрана с новой координатой GPS после разблокировки и сохранением активного маршрута.
+
+Системные события Activity и видимость страницы управляют наблюдателем GPS. При уходе приложения с переднего плана наблюдатель останавливается. При возвращении запускается новый, а состояние маршрута сохраняется.
+
+## Что проверить на телефоне
+
+Постройте реальный маршрут с поворотами. Проверьте точность GPS и положение машинки на дороге, загрузку карты и объёмных зданий через мобильную сеть, жесты, обе ориентации, HUD и отражение в стекле. Заблокируйте и разблокируйте экран и убедитесь, что новая позиция появляется, а ведение продолжается. Отдельно проверьте повторный запуск после отказа в разрешении и после его включения в настройках Android.
