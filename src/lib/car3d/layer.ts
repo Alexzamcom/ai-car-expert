@@ -245,7 +245,7 @@ export interface Car3dLayer extends CustomLayerInterface {
 
 export function createCar3dLayer(
   get: () => Car3dState | null,
-  opts: { model?: CarModelId; sizePx?: () => number; gameSize?: () => boolean; onError?: (e: unknown) => void; night?: () => boolean } = {},
+  opts: { model?: CarModelId; sizePx?: () => number; gameSize?: () => boolean; gameWidthScale?: number; onError?: (e: unknown) => void; night?: () => boolean } = {},
 ): Car3dLayer {
   const mesh: CarMesh = CAR_MODELS[opts.model ?? 'ev'].build();
   const count = mesh.positions.length / 3;
@@ -298,7 +298,7 @@ export function createCar3dLayer(
       const main = (args.defaultProjectionData?.mainMatrix ?? args.modelViewProjectionMatrix) as unknown as ArrayLike<number>;
       const game = opts.gameSize?.();
       const { clientWidth: width, clientHeight: height } = map.getCanvas();
-      const targetWidth = game ? gameCarWidthPx(zoom, width, height) : 0;
+      const targetWidth = game ? gameCarWidthPx(zoom, width, height) * (opts.gameWidthScale ?? 1) : 0;
       let unit = baseUnit * (game ? targetWidth * 1.9 : (opts.sizePx?.() ?? 60));
       let mvp = mul4(main, modelMatrix(mc.x, mc.y, st.heading, unit));
       layer.renderedBounds = null;

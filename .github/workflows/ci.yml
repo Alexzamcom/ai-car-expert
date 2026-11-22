@@ -30,7 +30,7 @@ jobs:
           npx vite preview --port 4173 --strictPort &
           npx --yes wait-on@8.0.1 -t 30000 http://localhost:4173/
       - name: Автономная навигация с тестовым мостом датчиков
-        if: contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud"]'), github.head_ref)
+        if: contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux"]'), github.head_ref)
         run: node scripts/autonomy-webview-check.mjs http://localhost:4173/
       - name: Интерфейс ведения, прибытие и прогресс HUD
         run: node scripts/driving-ux-check.mjs http://localhost:4173/ smoke-local/driving-ux

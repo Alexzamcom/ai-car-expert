@@ -28,6 +28,7 @@ import {
 } from '../lib/hud';
 import { Icon } from '../components/Icon';
 import '../styles/hud.css';
+import { androidDriving, maneuverNotice } from '../lib/androidDriving';
 import { Capacitor } from '@capacitor/core';
 import { autonomyMap } from '../lib/autonomy/map';
 import { tripSensors } from '../lib/autonomy/native';
@@ -134,7 +135,11 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
     showControls();
   };
 
-  const step = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
+  const reliable = autonomous ? (experiment.position?.uncertainty ?? Infinity) <= 45 :
+    reliableSpeed(geo) != null || !!(geo.updated && Date.now() - geo.updated < 3500 && !geo.held && (geo.accuracy ?? Infinity) <= 50);
+  const cue = androidDriving && nav.status === 'guiding' ? maneuverNotice(nav.route, nav.progress,
+    autonomous ? (experiment.position?.speed ?? 0) * 3.6 : geo.speedKmh, reliable && (nav.progress?.offRouteM ?? Infinity) <= 35) : null;
+  const step = androidDriving ? cue?.step : nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
   const remainingS = nav.route && nav.progress ? nav.route.duration * (nav.progress.remainingM / Math.max(1, nav.route.distance)) : null;
   const position = experiment.position;
   const speed = autonomous ? position && position.uncertainty <= 120 ? Math.round(position.speed * 3.6) : null : reliableSpeed(geo);
@@ -144,10 +149,10 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
   const status = nav.rerouting ? 'Перестраиваю маршрут…' : nav.status === 'routing' ? 'Восстанавливаю маршрут…' : arrived ? 'Вы прибыли' : !nav.route ? 'Нет маршрута' : autonomous && !nav.progress ? 'Положение уточняется' : null;
 
   const maneuver = step && nav.progress && !arrived && (
-    <div className="hud-maneuver">
+    <div className={`hud-maneuver ${cue?.urgent ? 'is-urgent' : ''}`}>
       <Icon name={stepIcon(step)} size="1em" stroke={2.6} />
       <div>
-        <div className="hud-dist">{fmtDistance(nav.progress.toStepM, lang)}</div>
+        <div className="hud-dist">{androidDriving && cue ? cue.distance == null ? 'Уточняем' : cue.distance < 10 ? 'Сейчас' : fmtDistance(cue.distance, lang) : fmtDistance(nav.progress.toStepM, lang)}</div>
         {s.mode !== 'minimal' && <div className="hud-instr">{stepText(step, lang)}</div>}
       </div>
     </div>

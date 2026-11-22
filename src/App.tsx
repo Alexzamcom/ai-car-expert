@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
+import { androidDriving } from './lib/androidDriving';
 import { Capacitor } from '@capacitor/core';
 import { StatusBar } from './components/StatusBar';
 import { Dock } from './components/Dock';
@@ -27,8 +28,9 @@ const AutonomousNavigation = lazy(() => import('./sections/AutonomousNavigation'
 
 export function App() {
   const [autonomous, setAutonomous] = useState(false);
+  const [androidMenu, setAndroidMenu] = useState(false);
   const openAutonomy = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('TripSensors')
-    ? () => setAutonomous(true) : undefined;
+    ? () => { setAndroidMenu(false); setAutonomous(true); } : undefined;
   const layout = useStore(layoutStore);
   const settings = useStore(settingsStore);
   const ui = useStore(driveUiStore);
@@ -90,19 +92,19 @@ export function App() {
   }, []);
 
   return (
-    <div className={`app ${ui.minimal ? 'is-minimal' : ''} ${hud ? 'is-hud' : ''} ${autonomous ? 'is-autonomous' : ''}`}>
-      {!autonomous && <StatusBar />}
+    <div className={`app ${ui.minimal ? 'is-minimal' : ''} ${hud ? 'is-hud' : ''} ${autonomous ? 'is-autonomous' : ''} ${androidDriving ? 'android-drive' : ''} ${androidMenu ? 'android-menu-open' : ''}`}>
+      {!autonomous && !androidDriving && <StatusBar />}
       <main className={`drive order-${layout.order} panel-${layout.panelMode}`}>
         {/* Карта не размонтируется: маршрут и ведение продолжают работать в любом разделе. */}
         <div className="drive-map">
           {autonomous
             ? <Suspense fallback={null}><AutonomousNavigation close={() => setAutonomous(false)} /></Suspense>
-            : <Navigation onAutonomy={openAutonomy} />}
+            : <Navigation onAutonomy={openAutonomy} androidMenu={androidMenu} onAndroidMenu={() => { if (androidMenu) closePage(); setAndroidMenu(!androidMenu); }} />}
         </div>
-        {!autonomous && <Panel />}
+        {!autonomous && (!androidDriving || androidMenu) && <Panel />}
         {!autonomous && layout.page && <PageSheet page={layout.page} />}
       </main>
-      {!autonomous && <Dock />}
+      {!autonomous && (!androidDriving || androidMenu) && <Dock />}
       <VoiceOverlay />
       <YouTubeMusicFallback />
       <PlaceEditor />

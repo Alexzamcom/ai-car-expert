@@ -1,11 +1,14 @@
 // Install the CI APK on Android and drive its real WebView with synthetic GPS from the emulator.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { _android as android } from 'playwright';
 
 const app = 'com.aicarexpert.app';
+const modern = process.env.EXPECT_ANDROID_UX === '1';
+const screenshotDir = 'android-navigation-screens';
+if (modern) mkdirSync(screenshotDir, { recursive: true });
 const apk = process.argv[2];
 assert(apk, 'Pass the path of the APK to install');
 const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8', timeout: 25_000 }).trim();
@@ -85,10 +88,18 @@ try {
   await position(37.6156, 55.757);
 
   const click = (locator) => locator.evaluate((node) => node.click());
+  if (modern) {
+    await page.waitForFunction(() => window.__aceMap.state().car && !window.__aceMap.map.isMoving());
+    assert(await page.getByPlaceholder('Куда едем?').isVisible());
+    assert(await page.getByRole('button', { name: 'Моё местоположение' }).isVisible());
+    assert.equal(await page.locator('.dock').count(), 0);
+    await page.screenshot({ path: `${screenshotDir}/01-home.png` });
+  }
   if (process.env.EXPECT_AUTONOMY === '1') {
     assert(await page.evaluate(() => window.Capacitor.isPluginAvailable('TripSensors')));
     const button = (name) => page.getByRole('button', { name, exact: true });
     const open = 'GPS показывает неверное местоположение';
+    if (modern) await click(page.locator('.android-menu-button'));
     await click(button(open));
     await page.waitForFunction(() => window.__aceMap?.state()?.styleReady && document.querySelector('.autonomy-crosshair'));
     const [lon, lat] = JSON.parse(route).routes[0].geometry.coordinates[0];
@@ -127,14 +138,25 @@ try {
   await click(page.locator('.map-panel .place-row').first());
   await click(page.getByRole('button', { name: 'Маршрут сюда', exact: true }));
   await click(page.getByRole('button', { name: 'Поехали', exact: true }));
-  await page.waitForFunction(() => document.querySelector('.maneuver') && window.__aceMap.state().routePoints > 2);
+  const guiding = page.locator(modern ? '.android-guiding' : '.maneuver');
+  await guiding.waitFor();
+  await page.waitForFunction(() => window.__aceMap.state().routePoints > 2);
   await page.waitForFunction(() => {
     const map = window.__aceMap.state();
     return map.look === 'game' && map.pitch > 40 && map.gameLayers.includes('game-buildings');
   });
   const routePoints = await page.evaluate(() => window.__aceMap.state().routePoints);
-  const guideText = await page.locator('.maneuver-instr').textContent();
-  assert(guideText?.trim());
+  if (modern) {
+    await page.waitForFunction(() => {
+      const map = window.__aceMap.state();
+      return map.camera.style === 'dynamic' && map.pitch >= 57 && map.car?.y > 0.64 && map.carWidthShare >= 0.13 && map.carWidthShare <= 0.21;
+    });
+    assert.equal(await page.locator('.android-cue.is-visible').count(), 0, 'A distant turn must leave the map clear');
+    await page.screenshot({ path: `${screenshotDir}/02-driving.png` });
+  } else {
+    const guideText = await page.locator('.maneuver-instr').textContent();
+    assert(guideText?.trim());
+  }
   console.log('✓ GPS positions reach WebView and a mocked router response starts turn-by-turn navigation');
 
   adb('shell', 'input', 'keyevent', '223');
@@ -146,12 +168,12 @@ try {
   await page.waitForFunction(() => document.visibilityState === 'visible');
   await position(37.61488, 55.7576);
   assert.equal(await page.evaluate(() => window.__aceMap.state().routePoints), routePoints);
-  assert(await page.locator('.maneuver').isVisible());
+  assert(await guiding.isVisible());
   console.log('✓ Screen sleep/wake delivers a fresh GPS fix and keeps the active route');
 
   const reveal = page.locator('.driving-reveal');
   if (await reveal.isVisible()) await click(reveal);
-  await click(page.locator('.guide-hud'));
+  await click(modern ? page.locator('.android-map-controls .hud-btn') : page.locator('.guide-hud'));
   const warning = page.getByRole('button', { name: /Понятно/ });
   if (await warning.count()) await click(warning);
   await page.waitForFunction(() => {
@@ -159,7 +181,10 @@ try {
     return stage && new DOMMatrixReadOnly(getComputedStyle(stage).transform).a === -1;
   });
   await page.waitForFunction(() => (document.querySelector('.hud-line')?.getAttribute('d') ?? '').includes('L'));
-  assert(await page.locator('.hud-maneuver').isVisible());
+  if (modern) {
+    assert.equal(await page.locator('.hud-maneuver').count(), 0, 'HUD shares the distant-turn visibility rule');
+    await page.screenshot({ path: `${screenshotDir}/03-hud.png` });
+  } else assert(await page.locator('.hud-maneuver').isVisible());
   if (process.env.EXPECT_AUTONOMY === '1') assert(await page.locator('.hud-speed').isVisible());
   console.log('✓ HUD route is rendered in the Android WebView with mirror transform');
 } catch (error) {

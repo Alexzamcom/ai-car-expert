@@ -51,6 +51,8 @@ try {
     await page.goto(url.href, { waitUntil: 'domcontentloaded' });
     const button = (name) => page.getByRole('button', { name, exact: true });
     const click = (name) => button(name).evaluate((el) => el.click());
+    const menu = page.locator('.android-menu-button');
+    if (await menu.count()) await menu.evaluate((el) => el.click());
     await click('GPS показывает неверное местоположение');
     await page.waitForFunction(() => window.__aceMap?.state().styleReady, null, { timeout: 45_000 });
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x, y], zoom: 17 }), [lon, lat]);
@@ -97,6 +99,8 @@ try {
     await click('Завершить поездку');
     await click('Оценка 4 из 5');
     await click('Сохранить и выйти');
+    const menu = page.locator('.android-menu-button');
+    if (await menu.count()) await menu.evaluate((el) => el.click());
     await click('GPS показывает неверное местоположение');
     await click('Записи поездок');
     await click('Сравнить');
