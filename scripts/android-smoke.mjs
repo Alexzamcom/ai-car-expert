@@ -100,10 +100,18 @@ try {
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x + 0.003, y], zoom: 17 }), [lon, lat]);
     await click(button('Построить маршрут сюда'));
     await click(button('Начать поездку без GPS'));
+    const hudButton = button('HUD');
     const end = button('Завершить поездку');
     const unavailable = page.getByText(/Датчики движения недоступны|Не удалось запустить датчики/);
-    await end.or(unavailable).first().waitFor();
-    if (await end.isVisible()) {
+    await hudButton.or(unavailable).first().waitFor();
+    if (await hudButton.isVisible()) {
+      await click(hudButton);
+      const warning = page.getByRole('button', { name: /Понятно/ });
+      if (await warning.count()) await click(warning);
+      await page.locator('.hud-stage').waitFor();
+      assert(await page.locator('.hud-speed').isVisible());
+      await click(button('Выйти из HUD'));
+      await click(button('Меню поездки'));
       await click(end);
       await click(button('Выйти без записи'));
       console.log('✓ Android native sensor bridge started the manually anchored experimental trip');

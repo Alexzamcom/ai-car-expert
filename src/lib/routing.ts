@@ -265,7 +265,7 @@ export function haversine(a: LatLon, b: LatLon): number {
 }
 
 /** Проекция точки на отрезок в локальной плоской системе (метры). */
-function projectOnSegment(p: LatLon, a: LatLon, b: LatLon) {
+export function projectOnSegment(p: LatLon, a: LatLon, b: LatLon) {
   const kx = Math.cos(rad(p.lat)) * R * (Math.PI / 180);
   const ky = R * (Math.PI / 180);
   const ax = (a.lon - p.lon) * kx;

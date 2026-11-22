@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import type { PluginListenerHandle } from '@capacitor/core';
 import { autonomyMap } from '../lib/autonomy/map';
-import { Estimator, type Estimate, type Measurement, type Origin, type Variant } from '../lib/autonomy/estimator';
+import { Estimator, type Estimate, type Fix, type Measurement, type Origin, type Variant } from '../lib/autonomy/estimator';
 import { createTrip, deleteTrip, recentTrips, record, replay, saveTrip, type GpsScenario, type Trip } from '../lib/autonomy/trip';
 import { tripSensors } from '../lib/autonomy/native';
 import { cumulative, fetchRoute, haversine, routeProgress, stepOffsets, stepText, type LatLon, type Route } from '../lib/routing';
+import { closeHud, openHud } from '../lib/hud';
+import { consistentPair, courseBetween, goodFix, roadAnchor } from '../lib/autonomy/gnss';
 import { MapLibreMap, type MapApi } from './MapLibreMap';
 
 type Stage = 'origin' | 'destination' | 'ready' | 'driving' | 'paused' | 'correct' | 'feedback' | 'archive';
 const ISSUES = ['Отставание', 'Забегание вперёд', 'Неправильный поворот', 'Съезд с дороги'];
 const VARIANTS: Variant[] = ['inertial', 'road', 'hybrid'];
-const MODES: Record<Variant, string> = { inertial: 'Инерциальный', road: 'С дорожной привязкой', hybrid: 'С относительным GPS' };
+const MODES: Record<Variant, string> = { inertial: 'Инерциальный', road: 'С дорожной привязкой', hybrid: 'С относительным GPS', adaptive: 'GPS с резервом' };
 const MAX_GUIDANCE_ERROR_M = 45;
 
 export function AutonomousNavigation({ close }: { close(): void }) {
@@ -21,7 +23,11 @@ export function AutonomousNavigation({ close }: { close(): void }) {
   const [route, setRoute] = useState<Route | null>(null);
   const [heading, setHeading] = useState('0');
   const [consent, setConsent] = useState(false);
-  const [gps, setGps] = useState(false);
+  const [variant, setVariant] = useState<Variant>('road');
+  const [showTools, setShowTools] = useState(false);
+  const [sensorStatus, setSensorStatus] = useState(false);
+  const bootstrap = useRef<() => void>(() => {});
+  const mode = useRef<Variant>('road');
   const [follow, setFollow] = useState(true);
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,6 +93,7 @@ export function AutonomousNavigation({ close }: { close(): void }) {
     foreground.current = false;
     accepting.current = false;
     stillSince.current = null;
+    closeHud();
     update({ type: 'pause', at: Date.now() });
     setStage('paused');
     setMessage(reason);
@@ -99,7 +106,12 @@ export function AutonomousNavigation({ close }: { close(): void }) {
       if (document.visibilityState !== 'visible') pause('Поездка приостановлена. После остановки уточните точку и направление.');
     };
     const health = window.setInterval(() => {
-      if (accepting.current && Date.now() - lastMotion.current > 2500) pause('Датчики перестали обновляться. После остановки уточните точку и направление.');
+      if (!accepting.current) return;
+      const now = Date.now();
+      const live = now - lastMotion.current <= 2500;
+      setSensorStatus(live);
+      if (mode.current === 'adaptive') update({ type: 'tick', at: now });
+      else if (!live) pause('Датчики перестали обновляться. После остановки уточните точку и направление.');
     }, 1000);
     const checkpoint = window.setInterval(() => void persist(), 30_000);
     document.addEventListener('visibilitychange', hide);
@@ -107,7 +119,9 @@ export function AutonomousNavigation({ close }: { close(): void }) {
       document.removeEventListener('visibilitychange', hide);
       clearInterval(health);
       clearInterval(checkpoint);
+      bootstrap.current();
       routeAbort.current?.abort();
+      closeHud();
       foreground.current = false;
       void stopNative();
       void persist();
@@ -136,6 +150,58 @@ export function AutonomousNavigation({ close }: { close(): void }) {
     }
   }
 
+  function locateOrigin() {
+    if (!navigator.geolocation || busy) return;
+    setBusy(true);
+    setMessage('Проверяем последовательность GNSS-точек…');
+    let previous: Fix | undefined;
+    let consecutive = 0;
+    let watch: number | undefined;
+    let done = false;
+    const stop = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timeout);
+      if (watch != null) navigator.geolocation.clearWatch(watch);
+    };
+    bootstrap.current = stop;
+    const fail = () => {
+      if (done) return;
+      stop();
+      setBusy(false);
+      setMessage('Надёжный старт GNSS не подтверждён. Укажите точку и курс вручную.');
+    };
+    const timeout = window.setTimeout(fail, 15_000);
+    watch = navigator.geolocation.watchPosition(({ coords, timestamp }) => {
+      const fix: Fix = { lat: coords.latitude, lon: coords.longitude, accuracy: coords.accuracy, speed: coords.speed, at: timestamp };
+      const plausible = goodFix(fix, Date.now());
+      if (previous && fix.at === previous.at) return;
+      const pair = plausible && previous && consistentPair(previous, fix);
+      consecutive = pair ? consecutive + 1 : plausible ? 1 : 0;
+      const course = coords.heading != null && Number.isFinite(coords.heading) && (coords.speed ?? 0) > 2
+        ? coords.heading : pair && previous && haversine(previous, fix) >= 6 ? courseBetween(previous, fix) : undefined;
+      previous = plausible ? fix : undefined;
+      if (done || consecutive < 3) return;
+      stop();
+      setBusy(false);
+      const roads = api.current?.roadsNear?.(fix) ?? [];
+      const snapped = roadAnchor(fix, roads, course);
+      if (!snapped) {
+        api.current?.centerOn(fix, 17);
+        setMessage('Подходящая дорога не подтверждена. Проверьте точку и курс вручную.');
+        return;
+      }
+      const anchor = { position: snapped.point, heading: course ?? snapped.course, at: Date.now() };
+      setOrigin(anchor);
+      setHeading(String(Math.round(anchor.heading) % 360));
+      setVariant('adaptive');
+      setMessage('');
+      autonomyMap.set({ position: new Estimator(anchor, [], 'adaptive').state, route: null, destination: null, progress: null });
+      api.current?.centerOn(anchor.position, 17);
+      setStage('destination');
+    }, fail, { enableHighAccuracy: true, maximumAge: 0, timeout: 12_000 });
+  }
+
   async function selectDestination() {
     const target = api.current?.center?.();
     if (!target || !origin || haversine(origin.position, target) < 20) {
@@ -162,7 +228,8 @@ export function AutonomousNavigation({ close }: { close(): void }) {
 
   async function start() {
     if (!origin || !route || busy) return;
-    const variant = gps ? 'hybrid' : 'road';
+    const gps = variant === 'adaptive' || variant === 'hybrid';
+    mode.current = variant;
     const first = !engine.current;
     if (first) {
       const anchor = { ...origin, at: Date.now() };
@@ -180,7 +247,7 @@ export function AutonomousNavigation({ close }: { close(): void }) {
         await stopNative();
         return;
       }
-      await tripSensors.start({ gps });
+      await tripSensors.start({ gps, allowGpsOnly: variant === 'adaptive' });
       if (!foreground.current || document.visibilityState !== 'visible') {
         await stopNative();
         return;
@@ -205,6 +272,7 @@ export function AutonomousNavigation({ close }: { close(): void }) {
 
   async function finish() {
     setBusy(true);
+    closeHud();
     foreground.current = false;
     await stopNative();
     if (trip.current) trip.current.ended = Date.now();
@@ -250,15 +318,15 @@ export function AutonomousNavigation({ close }: { close(): void }) {
     <div className="navigation">
       <MapLibreMap apiRef={api} uiEl={ui} autonomous follow={stage === 'driving' && follow} guiding={stage === 'driving'} onUserMove={() => setFollow(false)} />
       {selecting && <div className="autonomy-crosshair" aria-hidden="true">⌖</div>}
-      <div className="autonomy-panel" ref={ui}>
+      <div className={`autonomy-panel ${stage === 'driving' && !showTools ? 'autonomy-compact' : ''}`} ref={ui}>
         <strong>Навигация без GPS · эксперимент</strong>
         {message && <div role="status">{message}</div>}
         {(stage === 'origin' || stage === 'correct') && <>
           <p>Только после остановки. Переместите карту, чтобы поставить прицел на нужную полосу.</p>
           <label>Курс автомобиля · север 0°, восток 90° <input type="number" min="0" max="359" value={heading} onChange={(e) => setHeading(e.target.value)} /></label>
-          <button className="btn btn-primary" onClick={selectOrigin}>{stage === 'correct' ? 'Подтвердить коррекцию' : 'Установить автомобиль'}</button>
+          <button className="btn btn-primary" disabled={busy} onClick={selectOrigin}>{stage === 'correct' ? 'Подтвердить коррекцию' : 'Установить автомобиль'}</button>
         </>}
-        {stage === 'origin' && <><button className="btn" onClick={() => void openArchive()}>Записи поездок</button><button className="btn" onClick={close}>Назад</button></>}
+        {stage === 'origin' && <><button className="btn btn-primary" disabled={busy} onClick={locateOrigin}>Определить старт по GNSS</button><button className="btn" onClick={() => void openArchive()}>Записи поездок</button><button className="btn" onClick={close}>Назад</button></>}
         {stage === 'destination' && <>
           <p>Поставьте прицел на пункт назначения.</p>
           <button className="btn btn-primary" disabled={busy} onClick={() => void selectDestination()}>Построить маршрут сюда</button>
@@ -266,21 +334,30 @@ export function AutonomousNavigation({ close }: { close(): void }) {
         </>}
         {stage === 'ready' && <>
           <p>Начните с полной остановки. Закрепите телефон и первые секунды плавно разгоняйтесь по прямой для калибровки.</p>
-          <label><input type="checkbox" checked={gps} onChange={(e) => setGps(e.target.checked)} /> Разрешить относительные GPS-измерения</label>
+          <label>Источник <select value={variant} onChange={(e) => setVariant(e.target.value as Variant)}>
+            <option value="adaptive">Проверенный GNSS с резервом</option>
+            <option value="hybrid">Только относительная GPS-помощь</option>
+            <option value="road">Без GPS</option>
+          </select></label>
           <label><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> Записать поездку локально, включая координаты GPS при включённом GPS</label>
-          <button className="btn btn-primary" disabled={busy} onClick={() => void start()}>Начать поездку без GPS</button>
+          <button className="btn btn-primary" disabled={busy} onClick={() => void start()}>{variant === 'adaptive' ? 'Начать поездку' : 'Начать поездку без GPS'}</button>
           <button className="btn" disabled={busy} onClick={close}>Отмена</button>
         </>}
         {stage === 'driving' && estimate && <>
-          <div>Оценка скорости {Math.round(estimate.speed * 3.6)} км/ч · неопределённость около {Math.ceil(estimate.uncertainty)} м</div>
-          <div>GPS { { disabled: 'выключен', waiting: 'не используется', rejected: 'отклонён', relative: 'относительная помощь' }[estimate.gps] }</div>
+          <div>Оценка скорости {Math.round(estimate.speed * 3.6)} км/ч · ±{Math.ceil(estimate.uncertainty)} м</div>
+          {step ? <div>{stepText(step)} · около {Math.round(progress.toStepM)} м</div> : <div>Положение для указаний не подтверждено</div>}
+          <button className="btn btn-primary" onClick={openHud}>HUD</button>
+          <button className="btn" aria-expanded={showTools} onClick={() => setShowTools(!showTools)}>Меню поездки</button>
+          {showTools && <>
+          <div>GPS { { disabled: 'выключен', waiting: 'ожидание', rejected: 'отклонён', relative: 'относительная помощь', trusted: 'подтверждён' }[estimate.gps] } · датчики {sensorStatus ? 'активны' : 'нет свежих данных'}</div>
+          <div>Источник { { gnss: 'GNSS', hybrid: 'гибрид', inertial: 'инерция' }[estimate.source] }</div>
+          <div>Расстояние · GPS {Math.round(estimate.distance.gps)} м · датчики {Math.round(estimate.distance.sensors)} м · итог {Math.round(estimate.distance.fused)} м</div>
           {trip.current?.truncated && <div>Достигнут предел записи.</div>}
-          {step ? <div>Предполагаемый манёвр · {stepText(step)} · около {Math.round(progress.toStepM)} м</div>
-            : <div>Недостаточно уверенности для указаний о повороте.</div>}
           {!follow && <button className="btn" onClick={() => setFollow(true)}>К машине</button>}
           <button className="btn" disabled={!stationary} onClick={() => { pause('Подтвердите точку только на остановке.'); setStage('correct'); setHeading(String(Math.round(estimate.heading) % 360)); }}>Уточнить после остановки</button>
           <button className="btn" onClick={() => pause('Для коррекции и возобновления дождитесь полной остановки.')}>Пауза</button>
           <button className="btn" disabled={busy} onClick={() => void finish()}>Завершить поездку</button>
+          </>}
         </>}
         {stage === 'paused' && <>
           <button className="btn btn-primary" disabled={busy} onClick={() => void start()}>Продолжить с остановки</button>
@@ -304,7 +381,7 @@ export function AutonomousNavigation({ close }: { close(): void }) {
           {archive.map((entry) => <div key={entry.id}>
             <div>{new Date(entry.origin.at).toLocaleString()} · {entry.algorithm}</div>
             <button className="btn" onClick={() => compare(entry)}>Сравнить</button>
-            <button className="btn" onClick={() => void tripSensors.exportTrip({ data: JSON.stringify(entry) }).catch(() => setMessage('Экспорт не удался'))}>Экспорт</button>
+            <button className="btn" onClick={() => void tripSensors.exportTrip({ data: JSON.stringify(entry) }).catch(() => setMessage('Экспорт не удался'))}>Поделиться отчётом</button>
             <button className="btn" onClick={() => void deleteTrip(entry.id).then(openArchive).catch(() => setMessage('Удаление не удалось'))}>Удалить</button>
           </div>)}
           {result && <div style={{ whiteSpace: 'pre-line' }}>{result}</div>}

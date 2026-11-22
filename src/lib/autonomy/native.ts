@@ -2,7 +2,8 @@ import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { Fix, Motion } from './estimator';
 
 interface TripSensorsPlugin {
-  start(options: { gps: boolean }): Promise<void>;
+  start(options: { gps: boolean; allowGpsOnly?: boolean }): Promise<void>;
+  setHudAwake(options: { enabled: boolean }): Promise<void>;
   startGps(): Promise<void>;
   stop(): Promise<void>;
   exportTrip(options: { data: string }): Promise<void>;

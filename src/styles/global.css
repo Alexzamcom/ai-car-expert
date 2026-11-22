@@ -1632,3 +1632,8 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 }
 .autonomy-panel > :is(strong, p, label, div) { flex: 0 0 100%; margin: 0; }
 .autonomy-panel input[type="number"] { width: 5rem; }
+
+.app.is-autonomous { grid-template-rows: minmax(0, 1fr); }
+.is-autonomous .drive { grid-template: 'map' minmax(0, 1fr) / minmax(0, 1fr); padding: 0; }
+.is-autonomous .drive-map { border: 0; border-radius: 0; }
+.autonomy-panel.autonomy-compact { width: min(390px, calc(100% - 16px)); max-height: 35%; }

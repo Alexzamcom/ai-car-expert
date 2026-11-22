@@ -28,27 +28,35 @@ import {
 } from '../lib/hud';
 import { Icon } from '../components/Icon';
 import '../styles/hud.css';
+import { Capacitor } from '@capacitor/core';
+import { autonomyMap } from '../lib/autonomy/map';
+import { tripSensors } from '../lib/autonomy/native';
 import { displayStore } from '../lib/matching/display';
 
 const HudMap = lazy(() => import('./HudMap').then((m) => ({ default: m.HudMap })));
 
 const eta = (sec: number) => new Date(Date.now() + sec * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
-export function Hud() {
+export function Hud({ autonomous = false }: { autonomous?: boolean }) {
   const ui = useStore(hudUiStore);
   const s = useStore(hudSettingsStore);
   const nav = useStore(navStore);
 
   // Маршрут завершён или сброшен (и восстанавливать нечего) — HUD закрывается сам, карта возвращается.
   useEffect(() => {
-    if (ui.active && nav.status === 'idle' && !readNavSession()) closeHud();
-  }, [ui.active, nav.status]);
+    if (!autonomous && ui.active && nav.status === 'idle' && !readNavSession()) closeHud();
+  }, [autonomous, ui.active, nav.status]);
 
   // Экран не гаснет — по возможности (Wake Lock); гарантировать это веб-приложение не может.
   useEffect(() => {
     if (!ui.active) return;
     setKeepAwake(true);
-    return () => setKeepAwake(settingsStore.get().keepAwake);
+    const native = Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('TripSensors');
+    if (native) void tripSensors.setHudAwake({ enabled: true }).catch(() => {});
+    return () => {
+      if (native) void tripSensors.setHudAwake({ enabled: false }).catch(() => {});
+      setKeepAwake(settingsStore.get().keepAwake);
+    };
   }, [ui.active]);
 
   useEffect(() => {
@@ -57,7 +65,7 @@ export function Hud() {
 
   if (!ui.active) return null;
   if (!s.warned) return <HudWarning />;
-  return <HudScreen />;
+  return <HudScreen autonomous={autonomous} />;
 }
 
 /** Первое включение: безопасность и ограничения. */
@@ -97,9 +105,12 @@ function useTick(ms: number) {
   }, [ms]);
 }
 
-function HudScreen() {
+function HudScreen({ autonomous }: { autonomous: boolean }) {
   const s = useStore(hudSettingsStore);
-  const nav = useStore(navStore);
+  const ordinary = useStore(navStore);
+  const experiment = useStore(autonomyMap);
+  const nav = autonomous ? { ...ordinary, route: experiment.route, progress: experiment.progress,
+    status: 'guiding', rerouting: false } : ordinary;
   const geo = useStore(geoStore);
   const voiceOn = useStore(settingsStore).speakNavigation;
   const [controls, setControls] = useState(false);
@@ -125,10 +136,11 @@ function HudScreen() {
 
   const step = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
   const remainingS = nav.route && nav.progress ? nav.route.duration * (nav.progress.remainingM / Math.max(1, nav.route.distance)) : null;
-  const speed = reliableSpeed(geo);
-  const withSpeed = hudShowsSpeed(s.mode, s);
+  const position = experiment.position;
+  const speed = autonomous ? position && position.uncertainty <= 120 ? Math.round(position.speed * 3.6) : null : reliableSpeed(geo);
+  const withSpeed = autonomous || hudShowsSpeed(s.mode, s);
   const arrived = nav.status === 'arrived';
-  const status = nav.rerouting ? 'Перестраиваю маршрут…' : nav.status === 'routing' ? 'Восстанавливаю маршрут…' : arrived ? 'Вы прибыли' : !nav.route ? 'Нет маршрута' : null;
+  const status = nav.rerouting ? 'Перестраиваю маршрут…' : nav.status === 'routing' ? 'Восстанавливаю маршрут…' : arrived ? 'Вы прибыли' : !nav.route ? 'Нет маршрута' : autonomous && !nav.progress ? 'Положение уточняется' : null;
 
   const maneuver = step && nav.progress && !arrived && (
     <div className="hud-maneuver">
@@ -148,7 +160,7 @@ function HudScreen() {
     </div>
   );
   const speedEl = withSpeed && (
-    <div className={`hud-speed ${speed == null ? 'is-unknown' : ''}`} aria-label={speed == null ? 'Скорость: нет надёжных данных GPS' : `Скорость ${speed} км/ч`}>
+    <div className={`hud-speed ${speed == null ? 'is-unknown' : ''}`} aria-label={speed == null ? 'Скорость: данных недостаточно' : `Скорость ${speed} км/ч`}>
       <strong>{speed ?? '—'}</strong>
       <span>км/ч</span>
     </div>
@@ -168,16 +180,16 @@ function HudScreen() {
       data-mirror={s.mirror ? '1' : '0'}
       onClick={showControls}
     >
-      <div className={`hud-stage ${s.mirror ? 'is-mirrored' : ''}`} style={{ opacity: look.brightness }} data-testid="hud-stage">
-        {s.mode === 'map' ? (
+      <div className={`hud-stage ${s.mirror ? 'is-mirrored' : ''}`} style={{ opacity: look.palette === 'day' ? s.brightness : look.brightness }} data-testid="hud-stage">
+        {!autonomous && s.mode === 'map' ? (
           <Suspense fallback={null}>
             <HudMap color={color} />
           </Suspense>
-        ) : s.mode !== 'minimal' ? (
+        ) : !autonomous && s.mode !== 'minimal' ? (
           <HudRoute route={nav.route} color={color} />
         ) : null}
         <div className="hud-layer">
-          <div className="hud-top">{status ? <div className="hud-status">{status}</div> : maneuver}</div>
+          <div className="hud-top">{status ? <div className="hud-status">{status}</div> : maneuver}{autonomous && position && <div className="hud-status">±{Math.ceil(position.uncertainty)} м</div>}</div>
           {s.mode === 'minimal' && !status && step && <div className="hud-big-arrow" aria-hidden="true"><Icon name={stepIcon(step)} size="1em" stroke={2.4} /></div>}
           <div className="hud-bottom">
             {etaRow || <span />}
@@ -200,7 +212,7 @@ function HudScreen() {
       {controls && (
         <div className="hud-controls" onClick={(e) => (e.stopPropagation(), showControls())} role="toolbar" aria-label="Настройки HUD">
           <div className="hud-chips">
-            {HUD_MODES.map((m) => (
+            {!autonomous && HUD_MODES.map((m) => (
               <button key={m.id} className={`hud-chip ${s.mode === m.id ? 'is-active' : ''}`} onClick={() => set({ mode: m.id as HudMode })} aria-pressed={s.mode === m.id}>
                 {m.label}
               </button>
@@ -210,9 +222,9 @@ function HudScreen() {
             <button className={`hud-chip ${s.mirror ? 'is-active' : ''}`} onClick={() => set({ mirror: !s.mirror })} aria-pressed={s.mirror}>
               <Icon name="swap" /> Зеркально
             </button>
-            <button className="hud-chip" onClick={() => setNavigationVoice(!voiceOn)} aria-pressed={!voiceOn} aria-label={voiceOn ? 'Выключить голосовые подсказки' : 'Включить голосовые подсказки'}>
+            {!autonomous && <button className="hud-chip" onClick={() => setNavigationVoice(!voiceOn)} aria-pressed={!voiceOn} aria-label={voiceOn ? 'Выключить голосовые подсказки' : 'Включить голосовые подсказки'}>
               <Icon name={voiceOn ? 'speaker' : 'speakerOff'} /> {voiceOn ? 'Звук' : 'Без звука'}
-            </button>
+            </button>}
             {/* Яркость и цвет: в «Ручном» — ручной палитры, иначе — обычной (ночной), как раньше. Дневная палитра фиксирована. */}
             <button
               className="hud-chip"

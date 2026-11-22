@@ -36,6 +36,7 @@ public class TripSensors extends Plugin implements SensorEventListener, Location
     private LocationManager location;
     private boolean active;
     private boolean gps;
+    private boolean hudAwake;
     private boolean oriented;
     private boolean rotating;
     private long last;
@@ -46,23 +47,24 @@ public class TripSensors extends Plugin implements SensorEventListener, Location
             deactivate();
             sensors = (SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
             Sensor attitude = sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
+            if (attitude == null) attitude = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
             Sensor acceleration = sensors.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
+            if (acceleration == null) acceleration = sensors.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
             Sensor gyro = sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
-            if (attitude == null || acceleration == null || gyro == null) {
-                call.reject("Датчики движения недоступны");
-                return;
+            boolean registered = attitude != null && acceleration != null && gyro != null
+                && (sensors.registerListener(this, attitude, 50_000)
+                & sensors.registerListener(this, acceleration, 50_000)
+                & sensors.registerListener(this, gyro, 50_000));
+            if (!registered) {
+                sensors.unregisterListener(this);
+                if (!Boolean.TRUE.equals(call.getBoolean("allowGpsOnly", false))) {
+                    call.reject("Датчики движения недоступны");
+                    return;
+                }
             }
             active = true;
             gps = Boolean.TRUE.equals(call.getBoolean("gps", false));
-            boolean registered = sensors.registerListener(this, attitude, 50_000)
-                & sensors.registerListener(this, acceleration, 50_000)
-                & sensors.registerListener(this, gyro, 50_000);
-            if (!registered) {
-                deactivate();
-                call.reject("Не удалось запустить датчики");
-                return;
-            }
-            getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            keepScreen();
             call.resolve();
         });
     }
@@ -102,8 +104,8 @@ public class TripSensors extends Plugin implements SensorEventListener, Location
     }
 
     private void deactivate() {
-        if (active) getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         active = false;
+        keepScreen();
         oriented = false;
         rotating = false;
         last = 0;
@@ -113,13 +115,29 @@ public class TripSensors extends Plugin implements SensorEventListener, Location
 
     @Override
     protected void handleOnStop() {
+        hudAwake = false;
         deactivate();
+    }
+
+    private void keepScreen() {
+        if (active || hudAwake) getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
+    @PluginMethod
+    public void setHudAwake(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            hudAwake = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+            keepScreen();
+            call.resolve();
+        });
     }
 
     @Override
     public void onSensorChanged(SensorEvent event) {
         if (!active) return;
         switch (event.sensor.getType()) {
+            case Sensor.TYPE_ROTATION_VECTOR:
             case Sensor.TYPE_GAME_ROTATION_VECTOR:
                 SensorManager.getRotationMatrixFromVector(frame, event.values);
                 oriented = true;
@@ -128,11 +146,12 @@ public class TripSensors extends Plugin implements SensorEventListener, Location
                 System.arraycopy(event.values, 0, rotation, 0, 3);
                 rotating = true;
                 break;
+            case Sensor.TYPE_ACCELEROMETER:
             case Sensor.TYPE_LINEAR_ACCELERATION:
                 if (!oriented || !rotating || (last != 0 && event.timestamp - last < 45_000_000)) return;
                 last = event.timestamp;
                 JSObject m = new JSObject();
-                m.put("at", System.currentTimeMillis());
+                m.put("at", System.currentTimeMillis() - (android.os.SystemClock.elapsedRealtimeNanos() - event.timestamp) / 1_000_000L);
                 m.put("x", project(0, event.values));
                 m.put("y", project(1, event.values));
                 m.put("yawRate", -Math.toDegrees(project(2, rotation)));
