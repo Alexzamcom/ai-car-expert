@@ -143,8 +143,7 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
   const remainingS = nav.route && nav.progress ? nav.route.duration * (nav.progress.remainingM / Math.max(1, nav.route.distance)) : null;
   const position = experiment.position;
   const speed = autonomous ? position && position.uncertainty <= 120 ? Math.round(position.speed * 3.6) : null : reliableSpeed(geo);
-  const androidTrip = Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('TripSensors');
-  const withSpeed = autonomous || androidTrip || hudShowsSpeed(s.mode, s);
+  const withSpeed = autonomous || androidDriving || hudShowsSpeed(s.mode, s);
   const arrived = nav.status === 'arrived';
   const status = nav.rerouting ? 'Перестраиваю маршрут…' : nav.status === 'routing' ? 'Восстанавливаю маршрут…' : arrived ? 'Вы прибыли' : !nav.route ? 'Нет маршрута' : autonomous && !nav.progress ? 'Положение уточняется' : null;
 

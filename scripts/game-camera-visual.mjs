@@ -1,7 +1,7 @@
 // Browser screenshots against repeatable map geometry and a simulated GPS feed.
 import assert from 'node:assert/strict';
 
-export async function gameCameraVisual({ chromium, devices, url, out, fixture, coords, along }) {
+export function cameraFixtureStyle({ fixture, coords, along }) {
   const style = JSON.parse(fixture('maplibre-style.json'));
   const roads = { type: 'FeatureCollection', features: [{
     type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords.map(({ lon, lat }) => [lon, lat]) },
@@ -35,6 +35,11 @@ export async function gameCameraVisual({ chromium, devices, url, out, fixture, c
     { id: 'visual-blocks', type: 'fill-extrusion', source: 'visualBuildings', paint: { 'fill-extrusion-height': ['get', 'height'], 'fill-extrusion-color': '#bda995', 'fill-extrusion-opacity': 0.94 } },
   );
 
+  return style;
+}
+
+export async function gameCameraVisual({ chromium, devices, url, out, fixture, coords, along }) {
+  const style = cameraFixtureStyle({ fixture, coords, along });
   const browser = await chromium.launch();
   const open = async (profile) => {
     const ctx = await browser.newContext({ ...profile, serviceWorkers: 'block' });

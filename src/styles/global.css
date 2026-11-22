@@ -1650,8 +1650,8 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .android-drive .map-ui { padding: 12px 12px 26px; grid-template-columns: minmax(0, 1fr) auto; }
 .android-drive .map-top { grid-column: 1; }
 .android-drive .android-map-controls { display: flex; align-self: end; margin-bottom: 20px; }
-.android-drive .android-map-controls > .map-ctl { display: grid; width: 46px; height: 46px; }
-.android-drive .android-map-controls .zoom-ctl { display: none; }
+.android-drive .map-ui .android-map-controls > .map-ctl { display: grid; width: 46px; height: 46px; }
+.android-drive .map-ui .android-map-controls .zoom-ctl { display: none; }
 .android-drive .android-menu-button { position: absolute; top: 12px; right: 12px; }
 .android-drive .controls-hidden .android-map-controls { display: flex; }
 .android-drive .controls-hidden .android-map-controls > :not(.voice-ctl) { display: none; }
@@ -1685,3 +1685,4 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 @media (prefers-reduced-motion: reduce) {
   .android-drive .android-cue { transition: none; }
 }
+.android-drive.android-menu-open .map-ui .android-map-controls .zoom-ctl { display: grid; }
