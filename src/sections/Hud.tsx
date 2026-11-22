@@ -185,7 +185,7 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
       data-mirror={s.mirror ? '1' : '0'}
       onClick={showControls}
     >
-      <div className={`hud-stage ${s.mirror ? 'is-mirrored' : ''}`} style={{ opacity: look.palette === 'day' ? s.brightness : look.brightness }} data-testid="hud-stage">
+      <div className={`hud-stage ${s.mirror ? 'is-mirrored' : ''}`} style={{ opacity: androidDriving && look.palette === 'day' ? s.brightness : look.brightness }} data-testid="hud-stage">
         {!autonomous && s.mode === 'map' ? (
           <Suspense fallback={null}>
             <HudMap color={color} />
