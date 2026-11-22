@@ -9,7 +9,10 @@ const osrm = fixture('osrm-route.json');
 const [lon, lat] = osrm.routes[0].geometry.coordinates[0];
 const browser = await chromium.launch();
 try {
-  for (const [profile, platform] of [['Pixel 7', 'android'], ['iPhone 15', 'ios']]) {
+  for (const [profile, platform, source] of [
+    ['Pixel 7', 'android', 'road'], ['Pixel 7', 'android', 'hybrid'], ['Pixel 7', 'android', 'adaptive'],
+    ['iPhone 15', 'ios', 'road'],
+  ]) {
     const { defaultBrowserType, ...device } = devices[profile];
     const ctx = await browser.newContext({ ...device, deviceScaleFactor: 1, serviceWorkers: 'block' });
     await ctx.route('**/*', (r) => {
@@ -55,9 +58,10 @@ try {
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x + 0.003, y], zoom: 17 }), [lon, lat]);
     await click('Построить маршрут сюда');
     await page.getByLabel('Записать поездку локально', { exact: false }).check();
-    await click('Начать поездку без GPS');
-    await button('Завершить поездку').waitFor();
-    assert.equal(await page.evaluate(() => window.__startedWith), false);
+    await page.getByLabel('Источник').selectOption(source);
+    await click(source === 'adaptive' ? 'Начать поездку' : 'Начать поездку без GPS');
+    await button('HUD').waitFor();
+    assert.equal(await page.evaluate(() => window.__startedWith), source !== 'road');
     await page.evaluate(() => {
       const start = Date.now();
       let n = 0;
@@ -72,6 +76,19 @@ try {
       return state().car3d && state().car && state().experimentalEstimate.lat > 40 && map.getCenter().lat > 40 &&
         document.querySelector('.autonomy-panel')?.textContent.match(/Оценка скорости [1-9]/);
     }, null, { polling: 200 });
+    await click('HUD');
+    const warning = page.getByRole('button', { name: /Понятно/ });
+    if (await warning.count()) await warning.evaluate((el) => el.click());
+    const stage = page.locator('.hud-stage');
+    await stage.waitFor();
+    assert(await page.locator('.hud-speed').isVisible());
+    await stage.evaluate((el) => el.click());
+    const mirror = page.getByRole('button', { name: 'Зеркально' });
+    const wasMirrored = await stage.evaluate((el) => el.classList.contains('is-mirrored'));
+    await mirror.evaluate((el) => el.click());
+    assert.equal(await stage.evaluate((el) => el.classList.contains('is-mirrored')), !wasMirrored);
+    await click('Выйти из HUD');
+    await click('Меню поездки');
     await click('Пауза');
     await click('Уточнить точку на остановке');
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x, y + 0.0003], zoom: 17 }), [lon, lat]);
@@ -85,7 +102,7 @@ try {
     await click('Сравнить');
     await page.getByText(/Инерциальный:.*С дорожной привязкой:/s).last().waitFor();
     assert.equal(await page.getByText('Записей пока нет.').count(), 0);
-    console.log(`✓ ${profile}: ручной старт, датчики, изоляция GPS, коррекция, согласие, локальная запись и воспроизведение`);
+    console.log(`✓ ${profile} (${source}): HUD, ручной старт, датчики, изоляция GPS, коррекция, согласие, локальная запись и воспроизведение`);
     await ctx.close();
   }
 } finally { await browser.close(); }

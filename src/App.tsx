@@ -90,8 +90,8 @@ export function App() {
   }, []);
 
   return (
-    <div className={`app ${ui.minimal ? 'is-minimal' : ''} ${hud ? 'is-hud' : ''}`}>
-      <StatusBar />
+    <div className={`app ${ui.minimal ? 'is-minimal' : ''} ${hud ? 'is-hud' : ''} ${autonomous ? 'is-autonomous' : ''}`}>
+      {!autonomous && <StatusBar />}
       <main className={`drive order-${layout.order} panel-${layout.panelMode}`}>
         {/* Карта не размонтируется: маршрут и ведение продолжают работать в любом разделе. */}
         <div className="drive-map">
@@ -99,15 +99,15 @@ export function App() {
             ? <Suspense fallback={null}><AutonomousNavigation close={() => setAutonomous(false)} /></Suspense>
             : <Navigation onAutonomy={openAutonomy} />}
         </div>
-        <Panel />
-        {layout.page && <PageSheet page={layout.page} />}
+        {!autonomous && <Panel />}
+        {!autonomous && layout.page && <PageSheet page={layout.page} />}
       </main>
-      <Dock />
+      {!autonomous && <Dock />}
       <VoiceOverlay />
       <YouTubeMusicFallback />
       <PlaceEditor />
       <Toasts />
-      {!autonomous && <Hud />}
+      <Hud autonomous={autonomous} />
     </div>
   );
 }

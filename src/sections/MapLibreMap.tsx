@@ -28,6 +28,7 @@ export interface MapApi {
   contains(p: LatLon, pad?: number): boolean;
   resize(): void;
   center?(): LatLon;
+  roadsNear?(p: LatLon): LatLon[][];
 }
 
 const PITCH = 50;
@@ -548,6 +549,11 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           const c = map.getContainer().getBoundingClientRect();
           const pt = map.project([q.lon, q.lat]);
           return pt.x > c.width * padFrac && pt.x < c.width * (1 - padFrac) && pt.y > c.height * padFrac && pt.y < c.height * (1 - padFrac);
+        },
+        roadsNear(p) {
+          return loadRoads().filter(({ box }) => p.lat >= box[1] - 0.00045 && p.lat <= box[3] + 0.00045 &&
+            p.lon >= box[0] - 0.001 && p.lon <= box[2] + 0.001).flatMap((line) =>
+              line.oneway === 1 ? [line.coords] : line.oneway === -1 ? [line.coords.slice().reverse()] : [line.coords, line.coords.slice().reverse()]);
         },
         center() {
           const center = map.getCenter().wrap();
