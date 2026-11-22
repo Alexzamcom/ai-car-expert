@@ -15,6 +15,8 @@ import { hudUiStore } from '../lib/hud';
 import { engineFallback } from '../lib/mapEngine';
 import { mapDiag, diagModeStore, mapPositionStore } from '../lib/diag';
 import { displayStore, setRoadProvider } from '../lib/matching/display';
+import { androidDriving, ANDROID_OVERVIEW } from '../lib/androidDriving';
+import { courseBetween, headingDelta } from '../lib/autonomy/gnss';
 import { autonomyMap } from '../lib/autonomy/map';
 import type { RoadLine } from '../lib/matching/matcher';
 import { LongPressDetector } from '../lib/geo/longpress';
@@ -94,7 +96,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       }
       if (disposed || !el.current) return;
       ml.setWorkerUrl(workerUrl);
-      const start = readLastPos() ?? DEFAULT_CENTER;
+      const last = readLastPos();
+      const start = last ?? (androidDriving ? ANDROID_OVERVIEW : DEFAULT_CENTER);
       const styleUrl = DEFAULT_STYLE_URL;
       // Палитра: «Игровая 3D» — всегда светлая пастельная; обычная карта — день/ночь по теме.
       // «Игровая 3D» — тоже день/ночь по той же теме (авто по солнцу или вручную): светлая миниатюра или ночной город.
@@ -104,17 +107,17 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         return dark ? 'night' : 'day';
       };
       // Слабое устройство (мало ядер) — ночью без пятен света фонарей; окна, свечение дорог и фары остаются.
-      const lite = (navigator.hardwareConcurrency ?? 8) <= 4;
+      const lite = androidDriving || (navigator.hardwareConcurrency ?? 8) <= 4;
       const styleOf = (p: MapPalette) => ({ diff: false, transformStyle: paletteTransform(p, { lite }) });
       const LABEL: Record<MapPalette, string> = { day: 'день', night: 'ночная палитра', hud: 'HUD', game: 'игровая 3D', 'game-night': 'игровая 3D, ночь' };
-      const isGame = () => !!p.autonomous || settingsStore.get().mapLook === 'game';
+      const isGame = () => androidDriving || !!p.autonomous || settingsStore.get().mapLook === 'game';
       let map: MlMap;
       try {
         map = new ml.Map({
           container: el.current,
           style: styleUrl,
           center: [start.lon, start.lat],
-          zoom: readLastPos() ? 15 : 13,
+          zoom: last ? 15 : androidDriving ? 2 : 13,
           // Авторы данных (OpenMapTiles, участники OpenStreetMap) указаны в самом стиле OpenFreeMap.
           attributionControl: { compact: true },
           maxPitch: 70,
@@ -296,9 +299,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       /* ---------- Машинка: 3D-слой или плоская; плавно между точками GPS ---------- */
       let carNow: { lon: number; lat: number; heading: number } | null = null;
       const car3d = createCar3dLayer(
-        () => (carNow ? { ...carNow, color: hexToRgb(CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
+        () => (carNow ? { ...carNow, color: hexToRgb(androidDriving ? '#f7f8fa' : CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
         {
           gameSize: isGame,
+          gameWidthScale: androidDriving ? 0.63 : 1,
           sizePx: () => Math.min(76, Math.max(50, Math.min(innerWidth, innerHeight) * 0.095)),
           // Фары и задние огни — только в ночной «Игровой 3D».
           night: () => appliedPalette === 'game-night',
@@ -307,8 +311,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const carEl = document.createElement('div');
       carEl.className = 'ml-car';
       const flatMarker = new ml.Marker({ element: carEl, rotationAlignment: 'map', pitchAlignment: 'map' });
-      const use3d = () => (p.autonomous || settingsStore.get().carStyle !== 'flat') && !car3d.failed;
-      const paintFlat = () => (carEl.innerHTML = carSvg(settingsStore.get().carColor, 32));
+      const use3d = () => (androidDriving || p.autonomous || settingsStore.get().carStyle !== 'flat') && !car3d.failed;
+      const paintFlat = () => (carEl.innerHTML = carSvg(androidDriving ? 'white' : settingsStore.get().carColor, 32));
       paintFlat();
       const syncCar = () => {
         try {
@@ -343,11 +347,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             const target = unwrapAngle(headingShown, headingTarget);
             headingShown += Math.max(-6, Math.min(6, (target - headingShown) * 0.15));
           }
-          carNow = { lon: pos.lon, lat: pos.lat, heading: ((headingShown % 360) + 360) % 360 };
+          const next = { lon: pos.lon, lat: pos.lat, heading: ((headingShown % 360) + 360) % 360 };
+          const changed = !carNow || next.lon !== carNow.lon || next.lat !== carNow.lat || Math.abs(next.heading - carNow.heading) > 0.01;
+          if (changed || !androidDriving) carNow = next;
           const flatOn = !!(flatMarker as unknown as { _map?: unknown })._map;
           if (use3d()) {
             if (flatOn) flatMarker.remove();
-            map.triggerRepaint();
+            if (changed || !androidDriving) map.triggerRepaint();
           } else {
             flatMarker.setLngLat([pos.lon, pos.lat]).setRotation(headingShown);
             if (!flatOn) flatMarker.addTo(map);
@@ -372,6 +378,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       // Динамическая камера: подъём перед поворотом сглаживается во времени (без рывков при смене манёвра, перестроении, потере GPS).
       const lift = new LiftFilter();
       let liftAt = 0;
+      let chaseHeading: number | null = null;
       let camStyle: 'normal' | 'game' | 'dynamic' = 'normal';
       camera.current = (immediate = false) => {
         if (!to || !follow.current || touching > 0 || hudUiStore.get().active) return;
@@ -383,12 +390,26 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           map.easeTo({ center: [to.lon, to.lat], zoom: Math.max(map.getZoom(), isGame() ? 16 : 15), bearing: isGame() ? map.getBearing() : 0, pitch: isGame() ? GAME_IDLE_PITCH : 0, duration: immediate ? 500 : moveMs, easing: (x) => x });
           return;
         }
-        const course = p.autonomous || settingsStore.get().cameraMode === 'course';
+        const course = androidDriving || p.autonomous || settingsStore.get().cameraMode === 'course';
         const n = experimental ?? navStore.get();
-        const heading = headingTarget ?? map.getBearing();
+        const measured = headingTarget ?? map.getBearing();
+        if (androidDriving) {
+          const i = n.progress?.segIndex;
+          const coords = n.route?.coords;
+          const good = experimental ? (experimental.position?.uncertainty ?? Infinity) <= 45 :
+            !geoStore.get().held && Date.now() - (geoStore.get().updated ?? 0) < 4000;
+          chaseHeading ??= map.getBearing();
+          if (good && (speedKmh ?? 0) > 3) {
+            const candidate = i != null && coords && coords[i] && coords[i + 1] && (n.progress?.offRouteM ?? Infinity) < 25
+              ? courseBetween(coords[i], coords[i + 1]) : measured;
+            const delta = headingDelta(candidate, chaseHeading);
+            chaseHeading = (chaseHeading + Math.max(-33, Math.min(33, delta * 0.57)) + 360) % 360;
+          }
+        }
+        const heading = androidDriving ? chaseHeading ?? measured : measured;
         // Камера по движению: обычная (прежняя), игровая (вид сзади) или динамическая (подъём перед поворотом —
         // по расстоянию до манёвра из прогресса вдоль маршрута, не по ближайшей точке GPS).
-        camStyle = p.autonomous ? 'dynamic' : effectiveNavCamera(settingsStore.get().navCamera, isGame());
+        camStyle = androidDriving || p.autonomous ? 'dynamic' : effectiveNavCamera(settingsStore.get().navCamera, isGame());
         const step = n.route && n.progress ? n.route.steps[n.progress.stepIndex] : null;
         const now = performance.now();
         const l = lift.update(course && camStyle === 'dynamic' ? maneuverLift(step, n.progress?.toStepM, speedKmh) : 0, liftAt ? (now - liftAt) / 1000 : 0);
@@ -405,7 +426,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         });
         const zoom = userZoom ? map.getZoom() : pose.zoom;
         const offset: [number, number] = course ? [0, size.height * pose.offset] : (lookAheadOffset(heading, size.width, size.height).map((v) => -v) as [number, number]);
-        map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? pose.pitch : isGame() ? GAME_IDLE_PITCH : 0, zoom, offset, duration: immediate ? 600 : moveMs, easing: (x) => x, essential: true });
+        map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? pose.pitch : isGame() ? GAME_IDLE_PITCH : 0, zoom, offset, duration: immediate ? 600 : androidDriving ? Math.max(450, moveMs) : moveMs, easing: (x) => x, essential: true });
       };
       cleanups.push(
         settingsStore.subscribe(() => { applyFov(); camera.current(true); }),
@@ -422,6 +443,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             return;
           }
           if (g.lat == null || g.lon == null) return;
+          if (!to && androidDriving && !p.autonomous) {
+            if ((geoStore.get().accuracy ?? Infinity) > 50) return;
+            if (follow.current) map.jumpTo({ center: [g.lon, g.lat], zoom: 16 });
+          }
           if (to && to.lat === g.lat && to.lon === g.lon && headingTarget === g.heading) return;
           const now = performance.now();
           from = carPos(now) ?? { lat: g.lat, lon: g.lon };
@@ -641,7 +666,9 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         drawPick();
       }
       const d = displayStore.get();
-      const g = p.autonomous ? autonomyMap.get().position : d.lat != null ? d : geoStore.get();
+      const geo = geoStore.get();
+      const g = p.autonomous ? autonomyMap.get().position : androidDriving && (geo.accuracy ?? Infinity) > 50 ? null :
+        d.lat != null ? d : geo;
       if (g && g.lat != null && g.lon != null) {
         to = { lat: g.lat, lon: g.lon };
         headingTarget = g.heading;

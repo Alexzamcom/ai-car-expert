@@ -5,6 +5,7 @@ import { Estimator, type Estimate, type Fix, type Measurement, type Origin, type
 import { createTrip, deleteTrip, recentTrips, record, replay, saveTrip, type GpsScenario, type Trip } from '../lib/autonomy/trip';
 import { tripSensors } from '../lib/autonomy/native';
 import { cumulative, fetchRoute, haversine, routeProgress, stepOffsets, stepText, type LatLon, type Route } from '../lib/routing';
+import { androidDriving, maneuverNotice } from '../lib/androidDriving';
 import { closeHud, openHud } from '../lib/hud';
 import { consistentPair, courseBetween, goodFix, roadAnchor } from '../lib/autonomy/gnss';
 import { MapLibreMap, type MapApi } from './MapLibreMap';
@@ -313,7 +314,8 @@ export function AutonomousNavigation({ close }: { close(): void }) {
   const selecting = stage === 'origin' || stage === 'destination' || stage === 'correct' || stage === 'feedback';
   const progress = stage === 'driving' && estimate && estimate.uncertainty <= MAX_GUIDANCE_ERROR_M
     ? autonomyMap.get().progress : null;
-  const step = progress && route?.steps[progress.stepIndex];
+  const cue = androidDriving ? maneuverNotice(route, progress, (estimate?.speed ?? 0) * 3.6, !!progress) : null;
+  const step = androidDriving ? cue?.step : progress && route?.steps[progress.stepIndex];
   return (
     <div className="navigation">
       <MapLibreMap apiRef={api} uiEl={ui} autonomous follow={stage === 'driving' && follow} guiding={stage === 'driving'} onUserMove={() => setFollow(false)} />
@@ -345,7 +347,8 @@ export function AutonomousNavigation({ close }: { close(): void }) {
         </>}
         {stage === 'driving' && estimate && <>
           <div>Оценка скорости {Math.round(estimate.speed * 3.6)} км/ч · ±{Math.ceil(estimate.uncertainty)} м</div>
-          {step ? <div>{stepText(step)} · около {Math.round(progress.toStepM)} м</div> : <div>Положение для указаний не подтверждено</div>}
+          {step && progress ? <div>{stepText(step)} · около {Math.round(cue?.distance ?? progress.toStepM)} м</div>
+            : !progress ? <div>Положение для указаний не подтверждено</div> : null}
           <button className="btn btn-primary" onClick={openHud}>HUD</button>
           <button className="btn" aria-expanded={showTools} onClick={() => setShowTools(!showTools)}>Меню поездки</button>
           {showTools && <>
