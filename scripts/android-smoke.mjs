@@ -160,6 +160,7 @@ try {
   });
   await page.waitForFunction(() => (document.querySelector('.hud-line')?.getAttribute('d') ?? '').includes('L'));
   assert(await page.locator('.hud-maneuver').isVisible());
+  if (process.env.EXPECT_AUTONOMY === '1') assert(await page.locator('.hud-speed').isVisible());
   console.log('✓ HUD route is rendered in the Android WebView with mirror transform');
 } catch (error) {
   if (page) {
