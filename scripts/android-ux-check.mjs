@@ -109,6 +109,10 @@ try {
   await stage.evaluate((el) => el.click());
   await click('Зеркально');
   assert.equal(await stage.evaluate((el) => el.classList.contains('is-mirrored')), false);
+  await page.locator('.hud-controls').waitFor({ state: 'hidden' });
+  await fix(1580);
+  await wait(() => document.querySelector('.hud-speed strong')?.textContent !== '—' &&
+    document.querySelector('.hud-dist')?.textContent !== 'Уточняем');
   await page.screenshot({ path: `${out}/04-hud.png` });
   await click('Выйти из HUD');
   await page.waitForTimeout(4300);
