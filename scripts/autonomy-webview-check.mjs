@@ -53,7 +53,7 @@ try {
     const click = (name) => button(name).evaluate((el) => el.click());
     const openExperiment = async () => {
       const menu = page.locator('.android-menu-button');
-      if (await menu.count()) await menu.evaluate((el) => el.click());
+      if (platform === 'android') await menu.evaluate((el) => el.click());
       await click('GPS показывает неверное местоположение');
     };
     await openExperiment();
