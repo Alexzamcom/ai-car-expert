@@ -1,3 +1,5 @@
+import { androidLocationDiagnostics, locationDiagnosticsJson } from '../lib/geo/locationDiagnostics';
+import { locateOnAndroid } from '../lib/nav';
 import { diagModeStore } from '../lib/diag';
 import { mapRuntimeStore } from '../lib/mapEngine';
 import { hudSettingsStore, HUD_MODES, HUD_COLORS, HUD_LOOKS, HUD_SWATCHES, DEFAULT_HUD_MANUAL, hudAppearance, openHud, type HudSettings, type HudColor, type HudManual } from '../lib/hud';
@@ -17,7 +19,7 @@ import { MyPlacesSection } from '../components/MyPlaces';
 import { OfflineMapsSettings } from './OfflineMapsSettings';
 import { androidDriving } from '../lib/androidDriving';
 import { NAV_CAMERAS, effectiveNavCamera } from '../lib/camera';
-import { usesAndroidNativePosition } from '../lib/geo/nativePosition';
+import { nativePosition, usesAndroidNativePosition } from '../lib/geo/nativePosition';
 import { FIX_SOURCE_LABEL } from '../lib/geo/locator';
 
 const FUELS: Record<VehicleProfile['fuel'], string> = {
@@ -992,6 +994,9 @@ function GpsDiagnostics() {
   const ls = locatorState();
   const use = g.accuracy != null ? guidanceUse(g.accuracy) : null;
   const native = usesAndroidNativePosition();
+  const diagnostic = useStore(androidLocationDiagnostics);
+  const system = diagnostic.status;
+  const last = diagnostic.samples.at(-1);
   const trust = g.nativeTrust && { confirmed: 'подтверждён', network: 'сетевая оценка', recovering: 'плавное уточнение',
     estimated: 'инерциальная оценка', held: 'удержание последней оценки' }[g.nativeTrust];
   const speedInput = g.speedSource && { gnss: 'проверенные GNSS-измерения', motion: 'датчики и последняя подтверждённая скорость',
@@ -1009,7 +1014,11 @@ function GpsDiagnostics() {
     ...(native ? [
       ['Достоверность позиции', trust ?? 'ожидание'],
       ['Источник скорости', speedInput ?? '—'],
-      ['Решение фильтра', g.nativeReason ?? '—'],
+      ['Решение фильтра', last?.reason ?? g.nativeReason ?? '—'],
+      ['Последнее измерение', last ? `${FIX_SOURCE_LABEL[last.source]} · ${ago(last.at)} · ${last.accuracy > 0 ? '±' + Math.round(last.accuracy) + ' м' : 'точность неизвестна'}${last.cached ? ' · кеш' : ''}` : '—'],
+      ['Разрешения Android', system ? `FINE ${system.fine ? 'да' : 'нет'} · COARSE ${system.coarse ? 'да' : 'нет'}` : '—'],
+      ['Google Play Services', system ? system.playServices === 0 ? 'доступны' : `недоступны (код ${system.playServices})` : '—'],
+      ['Поставщики Android', system ? `Fused: ${system.fusedStatus} · GPS ${system.gpsEnabled ? 'вкл.' : 'выкл.'} · Network ${system.networkEnabled ? 'вкл.' : 'выкл.'}` : '—'],
     ] as [string, string][] : []),
     ['Курс', g.heading != null ? `${Math.round(g.heading)}°` : '— (стоим или мало данных)'],
     ['Отброшена последняя', g.held ? HELD[g.held] : 'нет'],
@@ -1038,9 +1047,10 @@ function GpsDiagnostics() {
         <button type="button" className={`btn ${diag ? 'btn-primary' : ''}`} aria-pressed={diag} onClick={() => diagModeStore.set({ on: !diag })}>
           <Icon name="gps" /> {diag ? 'Выключить диагностику на карте' : 'Диагностический режим на карте'}
         </button>
-        <button type="button" className="btn" onClick={() => { restartGeo(); toast('Запрашиваю свежую позицию', 'info'); }}>
+        <button type="button" className="btn" onClick={() => { if (native) void locateOnAndroid().then((message) => toast(message)); else restartGeo(); toast('Запрашиваю свежую позицию', 'info'); }}>
           <Icon name="locate" /> Обновить позицию
         </button>
+        {native && <button type="button" className="btn" onClick={() => { void nativePosition.exportDiagnostics({ json: locationDiagnosticsJson() }).catch(() => toast('Не удалось сохранить журнал', 'warn')); }}>Экспорт журнала без координат</button>}
       </div>
     </div>
   );

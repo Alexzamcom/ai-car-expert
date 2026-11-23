@@ -19,16 +19,19 @@ try {
   await ctx.addInitScript(() => {
     window.CapacitorCustomPlatform = { name: 'android' };
     let id = 0;
+    const status = { fine: true, coarse: true, playServices: 0, fusedStatus: 'watching', gpsEnabled: true, networkEnabled: true };
     const handlers = new Map();
     window.Capacitor = {
       PluginHeaders: [
-        { name: 'NativePosition', methods: [{ name: 'start', rtype: 'promise' }, { name: 'stop', rtype: 'promise' },
+        { name: 'NativePosition', methods: [{ name: 'start', rtype: 'promise' }, { name: 'stop', rtype: 'promise' }, { name: 'refresh', rtype: 'promise' },
           { name: 'addListener' }, { name: 'removeListener' }] },
         { name: 'TripSensors', methods: [] },
       ],
       nativePromise: async (plugin, method) => {
         if (plugin !== 'NativePosition') throw new Error('Unexpected plugin ' + plugin);
         if (method === 'start') window.nativeStarted = true;
+        if (method === 'refresh') window.refreshRequested = true;
+        return status;
       },
       nativeCallback: async (_, method, payload, callback) => {
         if (method === 'removeListener') { handlers.delete(payload.callbackId); return; }
@@ -55,10 +58,13 @@ try {
 
   const good = { lat: 48.46, lon: 35.04, accuracy: 4, speed: 0 };
   const send = (data) => page.evaluate((f) => window.sendPosition(f), data);
-  await send({ ...good, source: 'network', accuracy: 80 });
+  await page.getByRole('button', { name: 'Найти меня' }).click();
+  await wait(() => window.refreshRequested);
+  await send({ ...good, source: 'network', accuracy: 1800 });
   assert.equal(await page.evaluate(() => window.__aceMap.state().raw.lat), null);
-  await send({ ...good, lat: good.lat + 0.006, source: 'network', accuracy: 36 });
+  await send({ ...good, lat: good.lat + 0.006, source: 'network', accuracy: 380 });
   await wait(() => window.__aceMap.state().nativePosition.trust === 'network' && document.body.innerText.includes('Приблизительная сетевая позиция'));
+  await wait(() => document.body.innerText.includes('Приблизительная позиция, ±380 м'));
   await page.waitForTimeout(850);
   await send({ ...good, source: 'gps' });
   assert.equal(await page.evaluate(() => window.__aceMap.state().nativePosition.trust), 'network');

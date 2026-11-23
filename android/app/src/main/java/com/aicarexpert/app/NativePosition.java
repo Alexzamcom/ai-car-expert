@@ -1,6 +1,8 @@
 package com.aicarexpert.app;
 
 import android.Manifest;
+import android.app.Activity;
+import android.content.Intent;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.hardware.Sensor;
@@ -14,6 +16,8 @@ import android.os.Bundle;
 import android.os.Looper;
 import android.os.SystemClock;
 import androidx.core.content.ContextCompat;
+import androidx.activity.result.ActivityResult;
+import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -29,6 +33,11 @@ import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
+import com.google.android.gms.location.CurrentLocationRequest;
+import com.google.android.gms.tasks.CancellationTokenSource;
+import java.io.OutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 @CapacitorPlugin(name = "NativePosition", permissions = @Permission(
     alias = "position", strings = { Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION }
@@ -37,6 +46,8 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     private LocationManager manager;
     private FusedLocationProviderClient fused;
     private SensorManager sensors;
+    private CancellationTokenSource currentRequest;
+    private String fusedStatus = "idle";
     private boolean active;
     private boolean oriented;
     private boolean earthFrame;
@@ -55,6 +66,8 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
 
     @PluginMethod
     public void start(PluginCall call) {
+        manager = (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
+        report();
         final boolean ask = Boolean.TRUE.equals(call.getBoolean("ask", true));
         if (!permitted(Manifest.permission.ACCESS_COARSE_LOCATION) && !permitted(Manifest.permission.ACCESS_FINE_LOCATION)) {
             if (ask) requestPermissionForAlias("position", call, "positionPermission");
@@ -72,11 +85,13 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     private void positionPermission(PluginCall call) {
         getActivity().runOnUiThread(() -> {
             if (!permitted(Manifest.permission.ACCESS_COARSE_LOCATION) && !permitted(Manifest.permission.ACCESS_FINE_LOCATION)) {
+                report();
                 call.reject("Разрешите местоположение", "DENIED");
                 return;
             }
             if (active) {
-                call.resolve();
+                probe();
+                call.resolve(status());
                 return;
             }
             active = true;
@@ -84,17 +99,21 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
             manager = (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
             subscribe(LocationManager.NETWORK_PROVIDER);
             if (precise) subscribe(LocationManager.GPS_PROVIDER);
-            if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(getContext()) == ConnectionResult.SUCCESS) {
+            if (playServices() == ConnectionResult.SUCCESS) {
                 try {
                     fused = LocationServices.getFusedLocationProviderClient(getActivity());
                     LocationRequest request = new LocationRequest.Builder(
                         precise ? Priority.PRIORITY_HIGH_ACCURACY : Priority.PRIORITY_BALANCED_POWER_ACCURACY, 1000)
                         .setMinUpdateIntervalMillis(650).setMaxUpdateAgeMillis(4000).build();
-                    fused.requestLocationUpdates(request, fusedCallback, Looper.getMainLooper());
+                    fusedStatus = "starting";
+                    fused.requestLocationUpdates(request, fusedCallback, Looper.getMainLooper())
+                        .addOnSuccessListener(ignored -> { if (active) { fusedStatus = "watching"; report(); } })
+                        .addOnFailureListener(error -> { if (active) { fusedStatus = "updates-failed"; report(); } });
                 } catch (RuntimeException ignored) {
-                    // System providers remain active if Play Services is unavailable.
+                    fusedStatus = "updates-failed";
                 }
             }
+            probe();
             sensors = (SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
             Sensor attitude = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
             if (attitude == null) attitude = sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
@@ -102,18 +121,102 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
             register(attitude);
             register(sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE));
             register(sensors.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION));
-            call.resolve();
+            call.resolve(status());
         });
     }
 
     private void subscribe(String provider) {
         try {
-            if (!manager.getAllProviders().contains(provider)) return;
+            if (manager == null || !manager.getAllProviders().contains(provider)) return;
             manager.requestLocationUpdates(provider, 1000, 0, this, Looper.getMainLooper());
-            Location cached = manager.getLastKnownLocation(provider);
-            if (cached != null) emit(cached, provider);
+
         } catch (RuntimeException ignored) {
             // Provider may be disabled or unavailable on this device.
+        }
+    }
+
+    private int playServices() {
+        return GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(getContext());
+    }
+
+    private boolean enabled(String provider) {
+        return manager != null && manager.isProviderEnabled(provider);
+    }
+
+    private JSObject status() {
+        JSObject state = new JSObject();
+        state.put("fine", permitted(Manifest.permission.ACCESS_FINE_LOCATION));
+        state.put("coarse", permitted(Manifest.permission.ACCESS_COARSE_LOCATION));
+        state.put("playServices", playServices());
+        state.put("fusedStatus", fusedStatus);
+        state.put("gpsEnabled", enabled(LocationManager.GPS_PROVIDER));
+        state.put("networkEnabled", enabled(LocationManager.NETWORK_PROVIDER));
+        return state;
+    }
+
+    private void report() { notifyListeners("locationStatus", status()); }
+
+    @PluginMethod
+    public void refresh(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            if (active) probe();
+            call.resolve(status());
+        });
+    }
+
+    @PluginMethod
+    public void exportDiagnostics(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, "android-location-diagnostics.json");
+        startActivityForResult(call, intent, "saveDiagnostics");
+    }
+
+    @ActivityCallback
+    private void saveDiagnostics(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        Intent data = result.getData();
+        if (result.getResultCode() != Activity.RESULT_OK || data == null || data.getData() == null) {
+            call.resolve();
+            return;
+        }
+        try (OutputStream stream = getContext().getContentResolver().openOutputStream(data.getData())) {
+            if (stream == null) throw new IOException("Document output stream unavailable");
+            stream.write(call.getString("json", "").getBytes(StandardCharsets.UTF_8));
+            call.resolve();
+        } catch (IOException | SecurityException error) {
+            call.reject("Не удалось сохранить журнал");
+        }
+    }
+
+    private void cached(String provider) {
+        if (!enabled(provider)) return;
+        try {
+            Location location = manager.getLastKnownLocation(provider);
+            if (location != null) emit(location, provider, true);
+        } catch (SecurityException ignored) {}
+    }
+
+    private void probe() {
+        cached(LocationManager.NETWORK_PROVIDER);
+        if (permitted(Manifest.permission.ACCESS_FINE_LOCATION)) cached(LocationManager.GPS_PROVIDER);
+        if (fused == null) return;
+        if (currentRequest != null) currentRequest.cancel();
+        CancellationTokenSource request = new CancellationTokenSource();
+        currentRequest = request;
+        try {
+            fused.getLastLocation().addOnSuccessListener(location -> {
+                if (request == currentRequest && location != null) emit(location, "fused", true);
+            });
+            CurrentLocationRequest options = new CurrentLocationRequest.Builder()
+                .setPriority(permitted(Manifest.permission.ACCESS_FINE_LOCATION) ? Priority.PRIORITY_HIGH_ACCURACY : Priority.PRIORITY_BALANCED_POWER_ACCURACY)
+                .setMaxUpdateAgeMillis(0).setDurationMillis(10000).build();
+            fused.getCurrentLocation(options, request.getToken()).addOnSuccessListener(location -> {
+                if (request == currentRequest && location != null) emit(location, "fused");
+            }).addOnFailureListener(error -> { if (request == currentRequest) report(); });
+        } catch (RuntimeException ignored) {
+            // System LocationManager subscriptions still provide network and GNSS updates.
         }
     }
 
@@ -133,8 +236,12 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
 
     private void deactivate() {
         active = false;
+        if (currentRequest != null) currentRequest.cancel();
+        currentRequest = null;
         if (manager != null) manager.removeUpdates(this);
         if (fused != null) fused.removeLocationUpdates(fusedCallback);
+        fused = null;
+        fusedStatus = "idle";
         if (sensors != null) sensors.unregisterListener(this);
         oriented = false;
         lastMotion = accelerationAt = 0;
@@ -142,18 +249,23 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     }
 
     @Override public void onLocationChanged(Location location) { emit(location, location.getProvider()); }
-    @Override public void onProviderEnabled(String provider) {}
-    @Override public void onProviderDisabled(String provider) {}
+    @Override public void onProviderEnabled(String provider) { if (active) report(); }
+    @Override public void onProviderDisabled(String provider) { if (active) report(); }
     @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
 
     private void emit(Location fix, String provider) {
-        if (!active || !fix.hasAccuracy()) return;
+        emit(fix, provider, false);
+    }
+
+    private void emit(Location fix, String provider, boolean cached) {
+        if (!active) return;
         JSObject data = new JSObject();
         data.put("at", System.currentTimeMillis() - (SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos()) / 1_000_000L);
         data.put("source", provider);
         data.put("lat", fix.getLatitude());
         data.put("lon", fix.getLongitude());
-        data.put("accuracy", fix.getAccuracy());
+        data.put("accuracy", fix.hasAccuracy() ? fix.getAccuracy() : -1);
+        data.put("cached", cached);
         data.put("mock", android.os.Build.VERSION.SDK_INT >= 31 ? fix.isMock() : fix.isFromMockProvider());
         if (fix.hasSpeed()) data.put("speed", fix.getSpeed());
         if (fix.hasBearing()) data.put("heading", fix.getBearing());

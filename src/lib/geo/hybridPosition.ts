@@ -4,7 +4,7 @@ import { haversine, type LatLon } from '../routing';
 
 export type NativeProvider = 'fused' | 'gps' | 'network';
 export type PositionObservation = LatLon & {
-  at: number; source: NativeProvider; accuracy: number; mock?: boolean;
+  at: number; source: NativeProvider; accuracy: number; mock?: boolean; cached?: boolean;
   speed?: number; speedAccuracy?: number; heading?: number;
 };
 export type MotionObservation = { at: number; yawRate: number; east?: number; north?: number };
@@ -89,6 +89,7 @@ export class HybridPosition {
 
   tick(now: number, road?: { heading: number; distance: number }): PositionEstimate | null {
     const s = this.state;
+    if (!this.confirmedAnchor && s?.trust === 'network' && this.accepted && now - this.accepted.at <= 60_000) return null;
     if (!s || !this.accepted || (s.trust === 'confirmed' || s.trust === 'network') && now - this.accepted.at < 2800 ||
       now - this.integrationAt < 220) return null;
     if (this.confirmedAnchor && !this.recovering) {
@@ -117,16 +118,30 @@ export class HybridPosition {
   }
 
   private position(f: PositionObservation, now: number): PositionEstimate | null {
+    const network = f.source === 'network' || f.accuracy > 30 || !!f.cached;
+    const provisional = !this.confirmedAnchor && network;
+    const maxAge = provisional ? (f.cached ? 60_000 : 30_000) : 5_000;
+    const maxAccuracy = provisional ? 1500 : 50;
     if (f.mock || !['fused', 'gps', 'network'].includes(f.source) ||
       ![f.lat, f.lon, f.at, f.accuracy].every(Number.isFinite) || Math.abs(f.lat) > 85 || Math.abs(f.lon) > 180 ||
-      f.accuracy <= 0 || f.accuracy > 50 || now - f.at > 5000 || f.at - now > 500) {
-      this.reason = f.mock ? 'Отброшен тестовый источник Android' : 'Отброшена старая или неточная точка';
+      f.accuracy <= 0 || f.accuracy > maxAccuracy || now - f.at > maxAge || f.at - now > 500 ||
+      this.confirmedAnchor && (f.cached || f.source === 'network' || f.accuracy > 30)) {
+      this.reason = f.mock ? 'Отброшен тестовый источник Android'
+        : !Number.isFinite(f.accuracy) || f.accuracy <= 0 ? 'Источник не сообщил точность'
+        : now - f.at > maxAge || f.at - now > 500 ? 'Устаревшее время измерения'
+        : f.accuracy > maxAccuracy ? 'Недостаточная заявленная точность'
+        : this.confirmedAnchor && network ? 'Приблизительная точка не заменяет подтверждённую'
+        : 'Некорректное измерение Android';
       return null;
     }
-    const network = f.source === 'network' || f.accuracy > 30;
     // A provisional network marker must not block a later precise cold start.
     if (!this.confirmedAnchor && network) {
-      if (this.accepted && f.at <= this.accepted.at + 250) return null;
+      if (this.accepted && (f.at <= this.accepted.at + 250 ||
+        now - this.accepted.at < 15_000 && (f.accuracy > this.accepted.accuracy * 1.8 + 20 ||
+          haversine(this.accepted, f) > Math.max(150, this.accepted.accuracy + f.accuracy)))) {
+        this.reason = 'Приблизительная точка конфликтует с последней оценкой или дублирует её';
+        return null;
+      }
       this.accepted = f;
       this.integrationAt = now;
       this.reason = 'Приблизительная сетевая позиция';
@@ -135,7 +150,10 @@ export class HybridPosition {
       return this.state;
     }
     const previous = this.confirmedAnchor ? this.accepted : null;
-    if (previous && f.at <= previous.at + 250) return null; // correlated Fused/GPS deliveries
+    if (previous && f.at <= previous.at + 250) {
+      this.reason = 'Дублирующее измерение Fused/GPS';
+      return null;
+    }
     if (previous && now - previous.at < 8000 && (network && previous.source !== 'network' && previous.accuracy <= 30 ||
       f.accuracy > previous.accuracy * 1.8 + 8)) return null;
     const dt = previous ? (f.at - previous.at) / 1000 : 0;
