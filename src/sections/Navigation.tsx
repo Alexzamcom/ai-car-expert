@@ -1,3 +1,5 @@
+import { locateOnAndroid } from '../lib/nav';
+import { usesAndroidNativePosition } from '../lib/geo/nativePosition';
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { offlineStatus } from '../lib/offlineMaps';
 import { androidDriving, ANDROID_OVERVIEW, maneuverNotice } from '../lib/androidDriving';
@@ -502,13 +504,22 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const recenter = () => {
     setOverview(false);
     setFollow(true);
-    startGeo();
+    const native = usesAndroidNativePosition();
+    if (!native) startGeo();
+    else void locateOnAndroid().then((message) => {
+      const fix = geoStore.get();
+      if (fix.nativeTrust === 'network' && fix.lat != null && fix.lon != null) {
+        mlApi.current?.centerOn({ lat: fix.lat, lon: fix.lon }, 15);
+      }
+      toast(message);
+    });
     zoomBand.current = null; // масштаб по скорости — заново
     const target = disp.lat != null && disp.lon != null ? disp : geo;
     if (target.lat != null && target.lon != null) {
       if (engine === 'maplibre') mlApi.current?.centerOn({ lat: target.lat, lon: target.lon }, guiding ? undefined : 16);
       else map.current?.setView([target.lat, target.lon], guiding ? 17 : 16);
     }
+    else if (native) toast('Запрашиваю место у Android…');
     else if (geo.status === 'denied') toast(`Геопозиция запрещена. ${geoHelp()}`, 'warn');
     else toast('Ищу геопозицию…');
   };
@@ -570,7 +581,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const isFav = nav.dest ? favorites.some((f) => f.lat === nav.dest!.lat && f.lon === nav.dest!.lon) : false;
   const step = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
   const next = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex + 1] : null;
-  const located = geo.lat != null && geo.lon != null && (geo.accuracy ?? Infinity) <= 50;
+  const located = geo.lat != null && geo.lon != null && ((geo.accuracy ?? Infinity) <= 50 || geo.nativeTrust === 'network');
   const trustedGeo = located && !geo.held && cueClock - (geo.updated ?? 0) <= 3500;
   const navReliable = trustedGeo && (nav.progress?.offRouteM ?? Infinity) <= 35;
   const cue = androidDriving && guiding ? maneuverNotice(nav.route, nav.progress, geo.speedKmh, navReliable) : null;

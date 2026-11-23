@@ -550,7 +550,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           }
           if (g.lat == null || g.lon == null) return;
           if (!to && androidDriving && !p.autonomous) {
-            if ((geoStore.get().accuracy ?? Infinity) > 50) return;
+            if ((geoStore.get().accuracy ?? Infinity) > 50 && geoStore.get().nativeTrust !== 'network') return;
             if (follow.current) map.jumpTo({ center: [g.lon, g.lat], zoom: 16 });
           }
           const now = performance.now();
@@ -568,7 +568,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             }
             const speed = p.autonomous ? (autonomyMap.get().position?.speed ?? 0) : gps.speedKmh == null ? null : gps.speedKmh / 3.6;
             const estimated = gps.nativeTrust != null && gps.nativeTrust !== 'confirmed';
-            const reliable = p.autonomous || (estimated && (gps.accuracy ?? Infinity) <= 150) || (!gps.held && (gps.accuracy ?? Infinity) <= 50 && Date.now() - (gps.updated ?? 0) <= 5000);
+            const reliable = p.autonomous || (!guiding.current && gps.nativeTrust === 'network') || (estimated && (gps.accuracy ?? Infinity) <= 150) || (!gps.held && (gps.accuracy ?? Infinity) <= 50 && Date.now() - (gps.updated ?? 0) <= 5000);
             animation.receive({ lat: g.lat, lon: g.lon, heading: g.heading, speedMps: speed, reliable,
               predict: !p.autonomous && !(gps.nativeTrust != null && guiding.current) && displayStore.get().mode !== 'predicted',
               roadHeading: (p.autonomous || gps.nativeTrust == null) && guiding.current && (speed ?? 0) > 1.5 && segment.length === 2 && haversine(segment[0], segment[1]) > 2

@@ -1,3 +1,4 @@
+import { androidLocationDiagnostics, recordLocationSample, recordLocationStatus } from './geo/locationDiagnostics';
 import { ConfirmedRoute } from './confirmedRoute';
 import { nativePosition, usesAndroidNativePosition } from './geo/nativePosition';
 import { HybridPosition, type DrivingMeasurement, type PositionEstimate } from './geo/hybridPosition';
@@ -471,6 +472,7 @@ function acceptNative(input: DrivingMeasurement) {
   nativeFusion.requireMotionEvidence = !!confirmedRoute && navStore.get().status === 'guiding';
   const rawAt = input.kind === 'position' ? input.data.at : undefined;
   const estimate = nativeFusion.update(input, now, input.kind === 'motion' && nativeFusion.state?.trust !== 'confirmed' ? estimatedRoad() : undefined);
+  if (input.kind === 'position') recordLocationSample(input.data, now, nativeFusion.reason);
   publishNative(estimate, now, estimate?.trust === 'held' ? undefined : rawAt);
   if (!estimate && input.kind === 'position' && geoStore.get().nativeReason !== nativeFusion.reason) {
     geoStore.set((s) => ({ ...s, nativeReason: nativeFusion.reason }));
@@ -507,7 +509,11 @@ async function startNativePosition(ask: boolean) {
       if (generation === nativeGeneration && geoActive && !experiment) acceptNative({ kind: 'motion', data });
     }));
     if (generation !== nativeGeneration) return;
-    await nativePosition.start({ ask: nativePermissionRequested });
+    await add(nativePosition.addListener('locationStatus', (status) => {
+      if (generation === nativeGeneration) recordLocationStatus(status);
+    }));
+    if (generation !== nativeGeneration) return;
+    recordLocationStatus(await nativePosition.start({ ask: nativePermissionRequested }));
     if (generation !== nativeGeneration) return;
     nativePermissionRequested = false;
     geoStore.set((s) => ({ ...s, status: 'watching', permission: 'granted' }));
@@ -585,6 +591,44 @@ export function startGeo() {
 export function restartGeo() {
   if (locator) locator.stop();
   startGeo();
+}
+
+let pendingLocate: Promise<string> | null = null;
+
+export function locateOnAndroid(): Promise<string> {
+  if (pendingLocate) return pendingLocate;
+  pendingLocate = new Promise<string>((resolve) => {
+    const started = Date.now();
+    const priorFix = geoStore.get().fixAt;
+    const finish = (message: string) => {
+      clearTimeout(timer);
+      unsubscribe();
+      resolve(message);
+    };
+    const check = () => {
+      const state = geoStore.get();
+      if (state.status === 'denied' && state.lastError && state.lastError.at >= started) finish('Нет разрешения на геолокацию. ' + geoHelp());
+      else if (state.fixAt != null && state.fixAt !== priorFix && state.updated != null && state.updated >= started) {
+        if (state.nativeTrust === 'confirmed') finish('Местоположение определено');
+        else if (state.nativeTrust === 'network') finish(`Приблизительная позиция, ±${Math.round(state.accuracy ?? 0)} м`);
+      }
+    };
+    const unsubscribe = geoStore.subscribe(check);
+    const timer = setTimeout(() => {
+      const { status, samples } = androidLocationDiagnostics.get();
+      const state = geoStore.get();
+      const sample = samples.at(-1);
+      if (state.status === 'denied' || status && !status.coarse && !status.fine) finish('Нет разрешения на геолокацию. ' + geoHelp());
+      else if (status && !status.gpsEnabled && !status.networkEnabled) finish('Геолокация Android выключена или поставщики недоступны.');
+      else if (state.nativeTrust === 'network' && state.accuracy != null) finish(`Последняя приблизительная позиция, ±${Math.round(state.accuracy)} м. Новой точки пока нет.`);
+      else if (sample && sample.receivedAt >= started) finish('Позиция не уточнена: ' + sample.reason);
+      else if (status?.playServices) finish('Google Play Services недоступны. Системные источники не дали координаты.');
+      else finish('За 12 секунд Android не передал позицию. Проверьте геолокацию или укажите старт вручную.');
+    }, 12_000);
+    if (nativeRunning) void nativePosition.refresh().then(recordLocationStatus).catch(() => {});
+    else void startNativePosition(true);
+  }).finally(() => { pendingLocate = null; });
+  return pendingLocate;
 }
 
 /** Состояние запросов — для диагностики. */

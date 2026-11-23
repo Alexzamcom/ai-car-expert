@@ -18,7 +18,7 @@ function moving() {
 describe('Нативное позиционирование Android', () => {
   it('отдаёт предпочтение свежему GNSS при одновременно доступном Wi-Fi', () => {
     const h = new HybridPosition();
-    expect(fix(h, observation(0, 0, { source: 'network', accuracy: 90 }))).toBeNull();
+    expect(fix(h, observation(0, 0, { source: 'network', accuracy: 1800 }))).toBeNull();
     expect(fix(h, observation(0, 0, { source: 'fused' }))).toBeNull();
     expect(fix(h, observation(0, 100, { source: 'gps' }))).toBeNull();
     expect(fix(h, observation(10, 1000))?.trust).toBe('confirmed');
@@ -32,6 +32,17 @@ describe('Нативное позиционирование Android', () => {
     expect(fix(h, observation(0, 0), epoch + 8000)).toBeNull();
     expect(fix(h, observation(0, 1000, { source: 'network', accuracy: 37 }))).toMatchObject({ trust: 'network', source: 'network', speed: null });
     expect(moving().state?.source).toBe('gps');
+  });
+  it('показывает сетевую точку по Wi-Fi без GNSS и не превращает кеш в точное ведение', () => {
+    const h = new HybridPosition();
+    const cached = observation(700, 1000, { source: 'fused', cached: true, accuracy: 380 });
+    expect(fix(h, cached, epoch + 20_000)).toMatchObject({ trust: 'network', speed: null, accuracy: 380 });
+    expect(h.tick(epoch + 24_000)).toBeNull();
+    expect(h.state?.trust).toBe('network');
+    expect(fix(h, observation(0, 25_000))).toBeNull();
+    expect(fix(h, observation(2, 26_000))?.trust).toBe('confirmed');
+    expect(fix(h, observation(700, 27_000, { source: 'network', accuracy: 380 }))).toBeNull();
+    expect(h.state?.trust).toBe('confirmed');
   });
   it('уточняет ошибочную сетевую точку холодного старта только после двух точных отсчётов', () => {
     const h = new HybridPosition();
