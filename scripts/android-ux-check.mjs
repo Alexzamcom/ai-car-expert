@@ -90,15 +90,24 @@ try {
   await fix(1240);
   await wait(() => {
     const s = window.__aceMap.state();
-    return s.camera.style === 'dynamic' && s.pitch >= 58 && s.car?.y > 0.65 && s.carWidthShare > 0.14 && s.carWidthShare < 0.20;
+    return s.camera.style === 'dynamic' && s.pitch >= 65 && s.zoom > 18.7 && s.car?.y > 0.67 && s.carLengthM === 4.8 && s.carWidthShare > 0.015 && s.carWidthShare < 0.13;
   });
   assert.equal(await page.locator('.android-cue.is-visible').count(), 0);
   assert(await page.locator('.android-map-controls .hud-btn').isVisible());
   assert(await page.locator('.android-map-controls button.voice-ctl').first().isVisible());
   await page.screenshot({ path: `${out}/02-driving.png` });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    window.dispatchEvent(new Event('offline'));
+  });
   for (const d of [1280, 1320, 1360, 1400, 1430, 1460, 1490, 1520, 1550, 1580]) await fix(d);
   await wait(() => document.querySelector('.android-cue.is-visible') && window.__aceMap.state().pitch < 60);
+  assert(await page.evaluate(() => !navigator.onLine && window.__aceMap.state().camera.lift > 0.4));
   await page.screenshot({ path: `${out}/03-approaching-turn.png` });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true });
+    window.dispatchEvent(new Event('online'));
+  });
   await page.locator('.android-map-controls .hud-btn').evaluate((el) => el.click());
   const warning = page.getByRole('button', { name: /Понятно/ });
   if (await warning.count()) await warning.evaluate((el) => el.click());

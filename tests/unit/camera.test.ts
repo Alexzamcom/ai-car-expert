@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { followZoom, lookAheadOffset, courseUpPadding, nextCameraMode, speedBand } from '../../src/lib/camera';
+import { androidChasePose, LiftFilter, maneuverLift, followZoom, lookAheadOffset, courseUpPadding, nextCameraMode, speedBand } from '../../src/lib/camera';
 
 describe('Камера навигации', () => {
   it('упреждение: центр карты впереди по курсу — машинка ниже/позади центра', () => {
@@ -52,4 +52,34 @@ describe('Автомасштаб при ведении', () => {
     // Непрерывность: нет скачка на границе 300 м.
     expect(Math.abs(autoZoom(40, 299) - autoZoom(40, 301))).toBeLessThan(0.05);
   });
+});
+
+it('raises and returns the Android chase camera smoothly for two nearby maneuvers', () => {
+  const turn = { type: 'turn', modifier: 'right' };
+  const roundabout = { type: 'roundabout' };
+  expect(maneuverLift(turn, 170, 30)).toBe(0);
+  expect(maneuverLift(turn, 170, 110)).toBeGreaterThan(0);
+  const lift = new LiftFilter();
+  const level = androidChasePose(36, 0, false, 70);
+  expect(level.zoom).toBeGreaterThan(18.8);
+  const run = (target: number, frames: number) => {
+    let previous = androidChasePose(36, lift.value, false, 70);
+    for (let i = 0; i < frames; i++) {
+      const next = androidChasePose(36, lift.update(target, 1 / 60), false, 70);
+      expect(Math.abs(next.pitch - previous.pitch)).toBeLessThan(0.35);
+      expect(Math.abs(next.zoom - previous.zoom)).toBeLessThan(0.018);
+      previous = next;
+    }
+    return previous;
+  };
+  const first = run(maneuverLift(turn, 35, 36), 150);
+  expect(first.pitch).toBeLessThan(level.pitch - 12);
+  expect(first.zoom).toBeLessThan(level.zoom - 0.6);
+  const between = run(maneuverLift(roundabout, 170, 36), 100);
+  expect(between.pitch).toBeGreaterThan(first.pitch + 2);
+  const second = run(maneuverLift(roundabout, 38, 36), 150);
+  expect(second.pitch).toBeLessThan(first.pitch);
+  const after = run(0, 600);
+  expect(after.pitch).toBeCloseTo(level.pitch, 0);
+  expect(androidChasePose(36, 0, true, 70).offset).toBeLessThan(level.offset);
 });

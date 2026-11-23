@@ -8,6 +8,7 @@ import { _android as android } from 'playwright';
 const app = 'com.aicarexpert.app';
 const modern = process.env.EXPECT_ANDROID_UX === '1';
 const confirmedRoute = process.env.EXPECT_CONFIRMED_ROUTE === '1';
+const scaleCheck = process.env.EXPECT_NAVIGATION_SCALE === '1';
 const hybrid = process.env.EXPECT_NATIVE_POSITION === '1';
 const screenshotDir = 'android-navigation-screens';
 if (modern) mkdirSync(screenshotDir, { recursive: true });
@@ -35,7 +36,8 @@ async function until(fn, message, timeout = 60_000) {
 
 adb('install', '-r', apk);
 adb('shell', 'settings', 'put', 'system', 'screen_off_timeout', '600000');
-adb('shell', 'cmd', 'location', 'set-location-enabled', 'true');
+if (Number(adb('shell', 'getprop', 'ro.build.version.sdk')) <= 29) adb('shell', 'settings', 'put', 'secure', 'location_mode', '3');
+else adb('shell', 'cmd', 'location', 'set-location-enabled', 'true');
 if (hybrid) adb('emu', 'geo', 'fix', '37.6156', '55.757');
 adb('shell', 'am', 'start', '-W', '-n', `${app}/.MainActivity`);
 await until(() => {
@@ -166,10 +168,40 @@ try {
   if (modern) {
     await page.waitForFunction(() => {
       const map = window.__aceMap.state();
-      return map.camera.style === 'dynamic' && map.pitch >= 57 && map.car?.y > 0.64 && map.carWidthShare >= 0.13 && map.carWidthShare <= 0.21;
+      return map.camera.style === 'dynamic' && map.pitch >= 65 && map.zoom > 18.7 && map.car?.y > 0.67 && map.carLengthM === 4.8 && map.carWidthShare >= 0.015 && map.carWidthShare <= 0.13;
     });
     assert.equal(await page.locator('.android-cue.is-visible').count(), 0, 'A distant turn must leave the map clear');
     await page.screenshot({ path: `${screenshotDir}/02-driving.png` });
+    if (scaleCheck) {
+      // Sample the actual WebView rendering loop while successive GNSS fixes move the chase camera.
+      const sample = page.evaluate(() => new Promise((resolve) => {
+        let renders = 0;
+        const intervals = [];
+        const map = window.__aceMap.map;
+        const onRender = () => renders++;
+        map.on('render', onRender);
+        const start = performance.now();
+        let previous = start;
+        const frame = (now) => {
+          intervals.push(now - previous);
+          previous = now;
+          if (now - start >= 2500) {
+            map.off('render', onRender);
+            intervals.sort((a, b) => a - b);
+            resolve({ renders, frames: intervals.length, p95Ms: Math.round(intervals[Math.floor(intervals.length * 0.95)]) });
+          } else requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
+      }));
+      for (let i = 1; i <= 4; i++) {
+        fix(37.6156 - i * 0.000014, 55.757 + i * 0.000012);
+        await sleep(550);
+      }
+      const performance = await sample;
+      console.log('Android WebView render sample:', JSON.stringify(performance));
+      assert(performance.frames >= 8 && performance.renders >= 4 && performance.p95Ms < 1000, 'Android WebView rendering stalled');
+    }
+
   } else {
     const guideText = await page.locator('.maneuver-instr').textContent();
     assert(guideText?.trim());

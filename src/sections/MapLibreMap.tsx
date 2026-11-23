@@ -9,8 +9,8 @@ import { settingsStore, toast } from '../lib/state';
 import { themeStore, THEMES } from '../lib/theme';
 import { DEFAULT_STYLE_URL, paletteTransform, gameImage, type MapPalette } from '../lib/mapStyle';
 import { carSvg, unwrapAngle, CAR_COLORS } from '../lib/carMarker';
-import { createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
-import { autoZoom, lookAheadOffset, effectiveNavCamera, maneuverLift, navCameraPose, gameFollowZoom, LiftFilter } from '../lib/camera';
+import { ANDROID_CAR_LENGTH_M, createCar3dLayer, hexToRgb } from '../lib/car3d/layer';
+import { androidChasePose, autoZoom, lookAheadOffset, effectiveNavCamera, maneuverLift, navCameraPose, gameFollowZoom, LiftFilter } from '../lib/camera';
 import { hudUiStore } from '../lib/hud';
 import { engineFallback } from '../lib/mapEngine';
 import { mapDiag, diagModeStore, mapPositionStore } from '../lib/diag';
@@ -372,7 +372,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         () => (carNow ? { ...carNow, color: hexToRgb(androidDriving ? '#f7f8fa' : CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
         {
           gameSize: isGame,
-          gameWidthScale: androidDriving ? 0.63 : 1,
+          lengthM: androidDriving ? ANDROID_CAR_LENGTH_M : undefined,
           sizePx: () => Math.min(76, Math.max(50, Math.min(innerWidth, innerHeight) * 0.095)),
           // Фары и задние огни — только в ночной «Игровой 3D».
           night: () => appliedPalette === 'game-night',
@@ -410,7 +410,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       };
       const animation = new VehicleAnimation();
       let raf = 0;
-      let followPose: { pitch: number; zoom: number; offset: number } | null = null;
+      let followTarget: { speed: number | null; lift: number; height: number; landscape: boolean } | null = null;
       let cameraTime = 0;
       let motionDiag = { modelM: 0, centerM: 0, cameraDeg: 0, modelDeg: 0 };
       let motionPeaks = { ...motionDiag };
@@ -437,14 +437,16 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
               modelDeg: previous ? Math.abs(headingDelta(next.heading, previous.heading)) : 0,
               centerM: 0, cameraDeg: 0,
             };
-            if (followPose && follow.current && guiding.current && touching === 0 && !map.isZooming()) {
+            if (followTarget && follow.current && guiding.current && touching === 0 && !map.isZooming()) {
+              const height = lift.update(followTarget.lift, dt / 1000);
+              const followPose = androidChasePose(followTarget.speed, height, followTarget.landscape, map.getMaxPitch());
               const blend = 1 - Math.exp(-dt / 290);
               const pitch = map.getPitch() + (followPose.pitch - map.getPitch()) * blend;
               const zoom = userZoom ? map.getZoom() : map.getZoom() + (followPose.zoom - map.getZoom()) * blend;
               const yawStep = headingDelta(next.heading, yaw);
               const bearing = yaw + yawStep * blend;
               const top = map.getPadding().top ?? 0;
-              const padding = top + (followPose.offset - top) * blend;
+              const padding = top + (2 * followTarget.height * followPose.offset - top) * blend;
               motionDiag.centerM = haversine({ lat: center.lat, lon: center.lng }, next);
               motionDiag.cameraDeg = Math.abs(yawStep * blend);
               if (motionDiag.centerM > 0.015 || motionDiag.cameraDeg > 0.015 || Math.abs(pitch - map.getPitch()) > 0.015 ||
@@ -493,7 +495,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         const experimental = p.autonomous ? autonomyMap.get() : null;
         const speedKmh = experimental ? (experimental.position?.speed ?? 0) * 3.6 : geoStore.get().speedKmh;
         if (!guiding.current) {
-          followPose = null;
+          followTarget = null;
+          if (androidDriving) lift.reset();
           // «Игровая 3D»: и без маршрута — наклон, чтобы был виден объём города.
           map.easeTo({ center: [to.lon, to.lat], zoom: Math.max(map.getZoom(), isGame() ? 16 : 15), bearing: isGame() ? map.getBearing() : 0, pitch: isGame() ? GAME_IDLE_PITCH : 0, ...(androidDriving ? { padding: { top: 0, bottom: 0, left: 0, right: 0 } } : {}), duration: immediate ? 500 : moveMs, easing: (x) => x });
           return;
@@ -505,8 +508,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         // по расстоянию до манёвра из прогресса вдоль маршрута, не по ближайшей точке GPS).
         camStyle = androidDriving || p.autonomous ? 'dynamic' : effectiveNavCamera(settingsStore.get().navCamera, isGame());
         const step = n.route && n.progress ? n.route.steps[n.progress.stepIndex] : null;
+        const target = course && camStyle === 'dynamic' ? maneuverLift(step, n.progress?.toStepM, speedKmh) : 0;
+        if (androidDriving) {
+          followTarget = { speed: speedKmh, lift: target, height: size.height, landscape: size.width > size.height };
+          return;
+        }
         const now = performance.now();
-        const l = lift.update(course && camStyle === 'dynamic' ? maneuverLift(step, n.progress?.toStepM, speedKmh) : 0, liftAt ? (now - liftAt) / 1000 : 0);
+        const l = lift.update(target, liftAt ? (now - liftAt) / 1000 : 0);
         liftAt = now;
         const pose = navCameraPose(camStyle, {
           baseZoom: camStyle === 'normal'
@@ -519,10 +527,6 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           gameLook: isGame(),
         });
         const zoom = userZoom ? map.getZoom() : pose.zoom;
-        if (androidDriving) {
-          followPose = { pitch: pose.pitch, zoom, offset: 2 * size.height * pose.offset };
-          return;
-        }
         const offset: [number, number] = course ? [0, size.height * pose.offset] : (lookAheadOffset(heading, size.width, size.height).map((v) => -v) as [number, number]);
         map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? pose.pitch : isGame() ? GAME_IDLE_PITCH : 0, zoom, offset, duration: immediate ? 600 : androidDriving ? Math.max(450, moveMs) : moveMs, easing: (x) => x, essential: true });
       };
@@ -532,6 +536,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         hudUiStore.subscribe(() => !hudUiStore.get().active && (map.resize(), camera.current(true))),
         // Круг точности — вокруг сырой точки GPS; машинка и камера — по отображаемой позиции (привязка к дороге).
         geoStore.subscribe(drawAcc),
+        ...(androidDriving ? [(p.autonomous ? autonomyMap : navStore).subscribe(() => camera.current())] : []),
         (p.autonomous ? autonomyMap : displayStore).subscribe(() => {
           const g = p.autonomous ? autonomyMap.get().position : displayStore.get();
           if (!g) {
@@ -733,6 +738,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             car: c ? { x: c.x / r.width, y: c.y / r.height } : null,
             car3d: use3d() && !!map.getLayer('car-3d'),
             experimentalEstimate: p.autonomous ? autonomyMap.get().position : undefined,
+            carLengthM: androidDriving ? ANDROID_CAR_LENGTH_M : null,
             carWidthShare: car3d.renderedBounds && r.width > 0 ? car3d.renderedBounds.width / r.width : null,
             carHeightShare: car3d.renderedBounds && r.height > 0 ? car3d.renderedBounds.height / r.height : null,
             display: (({ mode, lineId, shift, lat, lon, reason }) => ({ mode, lineId, shift, lat, lon, reason }))(displayStore.get()),

@@ -157,6 +157,10 @@ export function mul4(a: ArrayLike<number>, b: ArrayLike<number>): Float32Array {
 /** Метров на пиксель экрана (тайлы MapLibre 512 px). */
 export const metersPerPixel = (lat: number, zoom: number) => (40075016.686 * Math.cos((lat * Math.PI) / 180)) / (512 * 2 ** zoom);
 
+export const ANDROID_CAR_LENGTH_M = 4.8;
+export const carWorldUnit = (metersToMercator: number, lengthM: number, meshLength: number) =>
+  metersToMercator * lengthM / meshLength;
+
 /** Ширина кузова в CSS-пикселях. Широкий экран ограничен его высотой. */
 export function gameCarWidthPx(zoom: number, width: number, height: number): number {
   const smooth = (value: number) => {
@@ -245,7 +249,7 @@ export interface Car3dLayer extends CustomLayerInterface {
 
 export function createCar3dLayer(
   get: () => Car3dState | null,
-  opts: { model?: CarModelId; sizePx?: () => number; gameSize?: () => boolean; gameWidthScale?: number; onError?: (e: unknown) => void; night?: () => boolean } = {},
+  opts: { model?: CarModelId; sizePx?: () => number; gameSize?: () => boolean; lengthM?: number; onError?: (e: unknown) => void; night?: () => boolean } = {},
 ): Car3dLayer {
   const mesh: CarMesh = CAR_MODELS[opts.model ?? 'ev'].build();
   const count = mesh.positions.length / 3;
@@ -296,10 +300,12 @@ export function createCar3dLayer(
       const zoom = map.getZoom();
       const baseUnit = mc.meterInMercatorCoordinateUnits() * metersPerPixel(st.lat, zoom) / mesh.length;
       const main = (args.defaultProjectionData?.mainMatrix ?? args.modelViewProjectionMatrix) as unknown as ArrayLike<number>;
-      const game = opts.gameSize?.();
+      const game = opts.lengthM == null && opts.gameSize?.();
       const { clientWidth: width, clientHeight: height } = map.getCanvas();
-      const targetWidth = game ? gameCarWidthPx(zoom, width, height) * (opts.gameWidthScale ?? 1) : 0;
-      let unit = baseUnit * (game ? targetWidth * 1.9 : (opts.sizePx?.() ?? 60));
+      const targetWidth = game ? gameCarWidthPx(zoom, width, height) : 0;
+      let unit = opts.lengthM == null
+        ? baseUnit * (game ? targetWidth * 1.9 : (opts.sizePx?.() ?? 60))
+        : carWorldUnit(mc.meterInMercatorCoordinateUnits(), opts.lengthM, mesh.length);
       let mvp = mul4(main, modelMatrix(mc.x, mc.y, st.heading, unit));
       layer.renderedBounds = null;
       if (game && targetWidth > 0) {
@@ -314,8 +320,8 @@ export function createCar3dLayer(
           unit *= Math.max(0.35, Math.min(3, ratio));
           mvp = mul4(main, modelMatrix(mc.x, mc.y, st.heading, unit));
         }
-        layer.renderedBounds = projectedSize(mvp, outline, width, height);
       }
+      if (game || opts.lengthM != null) layer.renderedBounds = projectedSize(mvp, outline, width, height);
 
       g.clear(g.DEPTH_BUFFER_BIT);
       g.disable(g.CULL_FACE);
