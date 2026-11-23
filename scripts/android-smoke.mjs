@@ -7,6 +7,7 @@ import { _android as android } from 'playwright';
 
 const app = 'com.aicarexpert.app';
 const modern = process.env.EXPECT_ANDROID_UX === '1';
+const hybrid = process.env.EXPECT_NATIVE_POSITION === '1';
 const screenshotDir = 'android-navigation-screens';
 if (modern) mkdirSync(screenshotDir, { recursive: true });
 const apk = process.argv[2];
@@ -34,6 +35,7 @@ async function until(fn, message, timeout = 60_000) {
 adb('install', '-r', apk);
 adb('shell', 'settings', 'put', 'system', 'screen_off_timeout', '600000');
 adb('shell', 'cmd', 'location', 'set-location-enabled', 'true');
+if (hybrid) adb('emu', 'geo', 'fix', '37.6156', '55.757');
 adb('shell', 'am', 'start', '-W', '-n', `${app}/.MainActivity`);
 await until(() => {
   const permissions = adb('shell', 'dumpsys', 'package', app);
@@ -86,6 +88,14 @@ try {
     }, 'WebView did not receive the emulator GPS fix');
   };
   await position(37.6156, 55.757);
+  if (hybrid) {
+    assert(await page.evaluate(() => window.Capacitor.isPluginAvailable('NativePosition')));
+    await page.waitForFunction(() => {
+      const native = window.__aceMap.state().nativePosition;
+      return native.trust === 'confirmed' && ['fused', 'gps'].includes(native.source);
+    });
+    console.log('✓ Native Android location confirms the emulator fix');
+  }
 
   const click = (locator) => locator.evaluate((node) => node.click());
   if (modern) {
@@ -105,7 +115,12 @@ try {
     const [lon, lat] = JSON.parse(route).routes[0].geometry.coordinates[0];
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x, y], zoom: 17 }), [lon, lat]);
     await click(button('Установить автомобиль'));
-    await position(37.6201, 55.7601);
+    if (hybrid) {
+      // The ordinary native stream is suspended during this experiment.
+      fix(37.6201, 55.7601);
+      await sleep(1000);
+      fix(37.6156, 55.757);
+    } else await position(37.6201, 55.7601);
     const manual = await page.evaluate(() => window.__aceMap.state().experimentalEstimate);
     assert(Math.abs(manual.lat - lat) < 0.00001 && Math.abs(manual.lon - lon) < 0.00001);
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x + 0.003, y], zoom: 17 }), [lon, lat]);

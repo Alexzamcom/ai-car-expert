@@ -12,7 +12,7 @@ import { Navigation } from './sections/Navigation';
 import { useStore } from './lib/store';
 import { layoutStore, settingsStore, closePage, driveUiStore } from './lib/state';
 import { setKeepAwake, retryWakeLockOnGesture } from './lib/wakeLock';
-import { startGeo, restartGeo, geoStore } from './lib/nav';
+import { startGeo, restartGeo, geoStore, setAndroidGeoExperiment } from './lib/nav';
 import { restorePlayer } from './lib/player';
 import { chatgptReturnMessage } from './lib/chatgpt';
 import { takeReturn } from './lib/handoff';
@@ -31,6 +31,7 @@ export function App() {
   const [androidMenu, setAndroidMenu] = useState(false);
   const openAutonomy = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('TripSensors')
     ? () => { setAndroidMenu(false); setAutonomous(true); } : undefined;
+  useEffect(() => { setAndroidGeoExperiment(autonomous); }, [autonomous]);
   const layout = useStore(layoutStore);
   const settings = useStore(settingsStore);
   const ui = useStore(driveUiStore);

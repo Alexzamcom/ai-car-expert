@@ -142,7 +142,10 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
   const step = androidDriving ? cue?.step : nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
   const remainingS = nav.route && nav.progress ? nav.route.duration * (nav.progress.remainingM / Math.max(1, nav.route.distance)) : null;
   const position = experiment.position;
-  const speed = autonomous ? position && position.uncertainty <= 120 ? Math.round(position.speed * 3.6) : null : reliableSpeed(geo);
+  const approximateSpeed = !autonomous && androidDriving && geo.nativeTrust != null && geo.nativeTrust !== 'confirmed' &&
+    (geo.accuracy ?? Infinity) <= 100 && geo.speedKmh != null && Date.now() - (geo.updated ?? 0) < 1500;
+  const speed = autonomous ? position && position.uncertainty <= 120 ? Math.round(position.speed * 3.6) : null :
+    approximateSpeed ? Math.round(geo.speedKmh!) : reliableSpeed(geo);
   const withSpeed = autonomous || androidDriving || hudShowsSpeed(s.mode, s);
   const arrived = nav.status === 'arrived';
   const status = nav.rerouting ? 'Перестраиваю маршрут…' : nav.status === 'routing' ? 'Восстанавливаю маршрут…' : arrived ? 'Вы прибыли' : !nav.route ? 'Нет маршрута' : autonomous && !nav.progress ? 'Положение уточняется' : null;
@@ -166,7 +169,7 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
   );
   const speedEl = withSpeed && (
     <div className={`hud-speed ${speed == null ? 'is-unknown' : ''}`} aria-label={speed == null ? 'Скорость: данных недостаточно' : `Скорость ${speed} км/ч`}>
-      <strong>{speed ?? '—'}</strong>
+      <strong>{approximateSpeed ? '≈' : ''}{speed ?? '—'}</strong>
       <span>км/ч</span>
     </div>
   );

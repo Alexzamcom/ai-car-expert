@@ -560,7 +560,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
               if (projectOnSegment(pos, a, b).dist > projectOnSegment(pos, b, c).dist + 2) segment = [b, c];
             }
             const speed = p.autonomous ? (autonomyMap.get().position?.speed ?? 0) : gps.speedKmh == null ? null : gps.speedKmh / 3.6;
-            const reliable = p.autonomous || (!gps.held && (gps.accuracy ?? Infinity) <= 50 && Date.now() - (gps.updated ?? 0) <= 5000);
+            const estimated = gps.nativeTrust != null && gps.nativeTrust !== 'confirmed';
+            const reliable = p.autonomous || (estimated && (gps.accuracy ?? Infinity) <= 150) || (!gps.held && (gps.accuracy ?? Infinity) <= 50 && Date.now() - (gps.updated ?? 0) <= 5000);
             animation.receive({ lat: g.lat, lon: g.lon, heading: g.heading, speedMps: speed, reliable,
               predict: !p.autonomous && displayStore.get().mode !== 'predicted',
               roadHeading: guiding.current && (speed ?? 0) > 1.5 && segment.length === 2 && haversine(segment[0], segment[1]) > 2
@@ -753,6 +754,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             windows: !!map.getLayer('game-buildings') && !!map.getPaintProperty('game-buildings', 'fill-extrusion-pattern'),
             styleReady: !!(map as unknown as { style?: { _loaded?: boolean } }).style?._loaded,
             raw: { lat: geoStore.get().lat, lon: geoStore.get().lon },
+            nativePosition: { source: geoStore.get().source, trust: geoStore.get().nativeTrust, speedSource: geoStore.get().speedSource },
             accuracyCircle: accShown,
             routePoints: navStore.get().route?.coords.length ?? 0,
             routeTrim: (() => {

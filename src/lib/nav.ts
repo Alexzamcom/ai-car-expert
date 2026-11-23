@@ -1,3 +1,7 @@
+import { nativePosition, usesAndroidNativePosition } from './geo/nativePosition';
+import { HybridPosition, type DrivingMeasurement, type PositionEstimate } from './geo/hybridPosition';
+import { courseBetween } from './autonomy/gnss';
+import type { PluginListenerHandle } from '@capacitor/core';
 import { androidDriving } from './androidDriving';
 import { createStore } from './store';
 import { placesStore, savePlace, removePlace, placeOfType, findSaved } from './places';
@@ -21,7 +25,7 @@ import { speak, stopSpeaking } from './speech';
 import { recordFix } from './trip';
 import { L } from './i18n';
 import { Locator, STALE_FIX_MS, type FixSource, type GeoErrorInfo } from './geo/locator';
-import { updateDisplay, resetDisplay } from './matching/display';
+import { updateDisplay, resetDisplay, displayStore } from './matching/display';
 import { remainingCoords, RouteTrimmer } from './routeTrim';
 import { recordArrival, recordPositionSample } from './diag';
 import { searchPlaces as geoSearch, reverseGeocode, coordsPlace, type Place } from './geo/geocode';
@@ -46,6 +50,9 @@ export interface GeoState {
   fixAt: number | null;
   /** Каким запросом получена показанная точка (способ определения — спутники, Wi-Fi, сеть — браузер не сообщает). */
   source: FixSource | null;
+  nativeTrust?: PositionEstimate['trust'];
+  speedSource?: PositionEstimate['speedSource'];
+  nativeReason?: string;
   /** Последняя ошибка Geolocation API (null — ошибок не было с последнего запуска). */
   lastError: GeoErrorInfo | null;
   /** Разрешение браузера на геопозицию (Permissions API; на части браузеров неизвестно). */
@@ -326,8 +333,8 @@ export function guidanceUse(accuracy: number): 'full' | 'progress' | 'display' {
 }
 
 /** Обработка точки GPS: фильтр, курс, состояние для карты и ведения. Экспортирована для тестов. */
-export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'high') {
-  let verdict = acceptFix(acceptedFix, fix, now);
+export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'high', native?: PositionEstimate) {
+  let verdict = native ? 'accept' as const : acceptFix(acceptedFix, fix, now);
   // Две «невозможные» точки подряд согласны между собой — ошибочной была принятая раньше: переходим на новые.
   if (verdict === 'jump' && lastJump && haversine(lastJump, fix) <= 70 * Math.max(1, (fix.timestamp - lastJump.timestamp) / 1000) + lastJump.accuracy + fix.accuracy + 30) verdict = 'accept';
   lastJump = verdict === 'jump' ? fix : null;
@@ -349,14 +356,15 @@ export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'hi
     if (distance >= Math.max(6, previous.accuracy + fix.accuracy, 2 * elapsed) && distance <= 70 * elapsed) measuredCourse = bearing(previous, fix);
   }
   headingState = updateHeading(headingState, fix);
-  const heading = headingState.heading;
+  const heading = native ? native.heading : headingState.heading;
   acceptedFix = { ...fix, at: now };
   const speedKmh = fix.speed != null && fix.speed >= 0 ? fix.speed * 3.6 : null;
   const quality = classifyAccuracy(fix.accuracy);
-  geoStore.set((s) => ({ ...s, status: 'watching', lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speedKmh, heading, updated: now, quality, held: null, fixAt: fix.timestamp, source }));
+  geoStore.set((s) => ({ ...s, status: 'watching', lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speedKmh, heading, updated: now, quality, held: null, fixAt: fix.timestamp, source,
+    nativeTrust: native?.trust, speedSource: native?.speedSource, nativeReason: native ? nativeFusion.reason : undefined }));
   // Отображаемая позиция (привязка к дороге) — отдельно; решения ведения ниже — только по сырой точке.
   const nav = navStore.get();
-  updateDisplay({ lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speed: validDeg(fix.speed) ? fix.speed : null, heading, measuredCourse, timestamp: fix.timestamp }, nav.status === 'guiding' ? (nav.route?.coords ?? null) : null, now);
+  updateDisplay({ lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speed: validDeg(fix.speed) ? fix.speed : null, heading, measuredCourse, timestamp: fix.timestamp }, nav.status === 'guiding' ? (nav.route?.coords ?? null) : null, now, !native);
   if (quality === 'precise') saveLastPos(fix);
   recordFix({ lat: fix.lat, lon: fix.lon }, fix.accuracy, speedKmh, now);
   onPosition(fix, now);
@@ -370,6 +378,7 @@ export function __resetGeo() {
   locator?.stop();
   locator = null;
   resetDisplay();
+  nativeFusion.reset();
   geoStore.set({ status: 'idle', lat: null, lon: null, accuracy: null, speedKmh: null, heading: null, updated: null, quality: null, held: null, fixAt: null, source: null, lastError: null, permission: 'unknown' });
 }
 
@@ -408,12 +417,114 @@ function watchPermission() {
     .catch(() => {});
 }
 
+const nativeFusion = new HybridPosition();
+let nativeGeneration = 0;
+let nativeRunning = false;
+let nativeHandles: PluginListenerHandle[] = [];
+let nativeTimer: ReturnType<typeof setInterval> | undefined;
+let experiment = false;
+
+function estimatedRoad() {
+  const s = navStore.get();
+  const point = nativeFusion.state;
+  if (!point || s.status !== 'guiding' || !s.route || !routeCache) return undefined;
+  const p = routeProgress(s.route, point, routeCache, s.progress?.segIndex ?? 0);
+  const a = s.route.coords[p.segIndex], b = s.route.coords[p.segIndex + 1];
+  if (!a || !b || haversine(a, b) < 2 || p.offRouteM > 14) return undefined;
+  return { heading: courseBetween(a, b), distance: p.offRouteM };
+}
+
+function publishNative(estimate: PositionEstimate | null, now: number, rawAt?: number) {
+  if (!estimate) return;
+  const { lat, lon, source, accuracy, heading, trust, speed, speedSource } = estimate;
+  if (trust === 'confirmed') {
+    handleFix({ lat, lon, accuracy, heading, speed, timestamp: rawAt ?? now }, now, source, estimate);
+    return;
+  }
+  const s = geoStore.get();
+  geoStore.set({ ...s, status: 'watching', lat, lon, heading, accuracy, speedKmh: speed == null ? null : speed * 3.6,
+    updated: now, fixAt: rawAt ?? s.fixAt, quality: 'approx', held: 'stale', source, nativeTrust: trust, speedSource, nativeReason: nativeFusion.reason });
+  const prev = displayStore.get();
+  displayStore.set({ ...prev, lat, lon, heading, accuracy, mode: 'predicted', confidence: 0, at: now, reason: nativeFusion.reason });
+  // Estimations can update a route overview, but never trigger arrival or rerouting.
+  const nav = navStore.get();
+  if (nav.route && routeCache && nav.status === 'guiding' && accuracy <= 100 && trust !== 'network') {
+    const progress = routeProgress(nav.route, { lat, lon }, routeCache, nav.progress?.segIndex ?? 0);
+    if (progress.offRouteM <= 30) navStore.set({ ...nav, progress });
+  }
+}
+
+function acceptNative(input: DrivingMeasurement) {
+  const now = Date.now();
+  const rawAt = input.kind === 'position' ? input.data.at : undefined;
+  const estimate = nativeFusion.update(input, now, input.kind === 'motion' && nativeFusion.state?.trust !== 'confirmed' ? estimatedRoad() : undefined);
+  publishNative(estimate, now, estimate?.trust === 'held' ? undefined : rawAt);
+  if (!estimate && input.kind === 'position' && geoStore.get().nativeReason !== nativeFusion.reason) {
+    geoStore.set((s) => ({ ...s, nativeReason: nativeFusion.reason }));
+  }
+}
+
+async function stopNativePosition() {
+  nativeGeneration++;
+  nativeRunning = false;
+  clearInterval(nativeTimer);
+  nativeTimer = undefined;
+  const handles = nativeHandles;
+  nativeHandles = [];
+  await Promise.allSettled([nativePosition.stop(), ...handles.map((handle) => handle.remove())]);
+}
+
+async function startNativePosition(ask: boolean) {
+  if (nativeRunning || experiment || !geoActive) return;
+  nativeRunning = true;
+  const generation = ++nativeGeneration;
+  const add = async (handle: Promise<PluginListenerHandle>) => {
+    const listener = await handle;
+    if (generation === nativeGeneration) nativeHandles.push(listener);
+    else await listener.remove();
+  };
+  try {
+    await add(nativePosition.addListener('position', (data) => {
+      if (generation === nativeGeneration && geoActive && !experiment) acceptNative({ kind: 'position', data });
+    }));
+    await add(nativePosition.addListener('motion', (data) => {
+      if (generation === nativeGeneration && geoActive && !experiment) acceptNative({ kind: 'motion', data });
+    }));
+    if (generation !== nativeGeneration) return;
+    await nativePosition.start({ ask });
+    if (generation !== nativeGeneration) return;
+    geoStore.set((s) => ({ ...s, status: 'watching', permission: 'granted' }));
+    nativeTimer = setInterval(() => {
+      const now = Date.now();
+      publishNative(nativeFusion.tick(now, estimatedRoad()), now);
+    }, 500);
+  } catch (error) {
+    if (generation !== nativeGeneration) return;
+    const denied = (error as { code?: string }).code === 'DENIED';
+    handleGeoError({ code: denied ? 1 : 2, kind: denied ? 'denied' : 'unavailable', at: Date.now(), source: 'fused',
+      message: error instanceof Error ? error.message : 'Нативные источники Android недоступны' });
+    await stopNativePosition();
+  }
+}
+
+export function setAndroidGeoExperiment(active: boolean) {
+  if (experiment === active || !usesAndroidNativePosition()) return;
+  experiment = active;
+  if (active) void stopNativePosition();
+  else if (geoActive && geoStore.get().status !== 'denied') void startNativePosition(false);
+}
+
 let geoActive = true;
 
 /** Capacitor останавливает наблюдатель при уходе Activity с переднего плана. */
 export function setAndroidGeoActive(active: boolean) {
   if (geoActive === active) return;
   geoActive = active;
+  if (usesAndroidNativePosition()) {
+    if (!active) void stopNativePosition();
+    else if (geoStore.get().status !== 'denied') void startNativePosition(false);
+    return;
+  }
   if (!active) {
     locator?.stop();
     locator = null;
@@ -424,6 +535,10 @@ export function setAndroidGeoActive(active: boolean) {
 
 /** Начать определение позиции: быстрая доступная точка, затем непрерывное уточнение (см. geo/locator.ts). */
 export function startGeo() {
+  if (usesAndroidNativePosition()) {
+    void startNativePosition(true);
+    return;
+  }
   if (!geoActive || locator?.state.running) return;
   if (!('geolocation' in navigator)) {
     geoStore.set((s) => ({ ...s, status: 'unavailable' }));
@@ -454,7 +569,7 @@ export function restartGeo() {
 }
 
 /** Состояние запросов — для диагностики. */
-export const locatorState = () => locator?.state ?? { running: false, high: false, low: false, retries: 0 };
+export const locatorState = () => usesAndroidNativePosition() ? { running: nativeRunning, high: nativeRunning, low: nativeRunning, retries: 0 } : locator?.state ?? { running: false, high: false, low: false, retries: 0 };
 
 export function currentPos(): LatLon | null {
   const g = geoStore.get();
@@ -467,6 +582,7 @@ export function geoHelp(): string {
   if (/iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) {
     return 'Настройки → Конфиденциальность и безопасность → Службы геолокации → включите их и для «Сайты Safari» выберите «При использовании».';
   }
+  if (usesAndroidNativePosition()) return 'Настройки Android → Приложения → AI Car Expert → Разрешения → Местоположение → При использовании.';
   if (/Android/.test(ua)) return 'Нажмите на значок слева от адреса → Разрешения → Местоположение → Разрешить.';
   return 'Разрешите доступ к местоположению в настройках браузера для этого сайта.';
 }

@@ -17,6 +17,7 @@ import { MyPlacesSection } from '../components/MyPlaces';
 import { OfflineMapsSettings } from './OfflineMapsSettings';
 import { androidDriving } from '../lib/androidDriving';
 import { NAV_CAMERAS, effectiveNavCamera } from '../lib/camera';
+import { usesAndroidNativePosition } from '../lib/geo/nativePosition';
 import { FIX_SOURCE_LABEL } from '../lib/geo/locator';
 
 const FUELS: Record<VehicleProfile['fuel'], string> = {
@@ -990,6 +991,11 @@ function GpsDiagnostics() {
   const ERR = { denied: 'запрещено', unavailable: 'устройство не сообщает позицию', timeout: 'не успело за отведённое время', other: 'ошибка' } as const;
   const ls = locatorState();
   const use = g.accuracy != null ? guidanceUse(g.accuracy) : null;
+  const native = usesAndroidNativePosition();
+  const trust = g.nativeTrust && { confirmed: 'подтверждён', network: 'сетевая оценка', recovering: 'плавное уточнение',
+    estimated: 'инерциальная оценка', held: 'удержание последней оценки' }[g.nativeTrust];
+  const speedInput = g.speedSource && { gnss: 'проверенные GNSS-измерения', motion: 'датчики и последняя подтверждённая скорость',
+    obd: 'OBD', wheel: 'датчик колёс', unknown: 'нет достоверной скорости' }[g.speedSource];
   const rows: [string, string][] = [
     ['Разрешение', { granted: 'разрешено', denied: 'запрещено', prompt: 'спросит', unknown: 'браузер не сообщает' }[g.permission]],
     ['Состояние', { idle: 'не запущено', watching: 'определение и уточнение', denied: 'запрещено', unavailable: 'Geolocation API недоступен' }[g.status]],
@@ -997,9 +1003,14 @@ function GpsDiagnostics() {
     ['Точка получена через', g.source ? FIX_SOURCE_LABEL[g.source] : '—'],
     ['Широта, долгота', g.lat != null && g.lon != null ? `${g.lat.toFixed(5)}, ${g.lon.toFixed(5)}` : '—'],
     ['Точность', g.accuracy != null ? `±${Math.round(g.accuracy)} м — ${g.quality ? QUALITY[g.quality] : ''}` : '—'],
-    ['Для ведения', use === 'full' ? 'полностью' : use === 'progress' ? 'только прогресс и заблаговременные подсказки' : use === 'display' ? 'только показ на карте' : '—'],
+    ['Для ведения', native && g.nativeTrust !== 'confirmed' ? 'оценка, без точных указаний и перестроения' : use === 'full' ? 'полностью' : use === 'progress' ? 'только прогресс и заблаговременные подсказки' : use === 'display' ? 'только показ на карте' : '—'],
     ['Возраст координат', ago(g.fixAt)],
     ['Скорость', g.speedKmh != null ? `${Math.round(g.speedKmh)} км/ч` : '—'],
+    ...(native ? [
+      ['Достоверность позиции', trust ?? 'ожидание'],
+      ['Источник скорости', speedInput ?? '—'],
+      ['Решение фильтра', g.nativeReason ?? '—'],
+    ] as [string, string][] : []),
     ['Курс', g.heading != null ? `${Math.round(g.heading)}°` : '— (стоим или мало данных)'],
     ['Отброшена последняя', g.held ? HELD[g.held] : 'нет'],
     ['Последняя ошибка', g.lastError ? `${ERR[g.lastError.kind]} (код ${g.lastError.code}${g.lastError.message ? `: ${g.lastError.message}` : ''}), ${ago(g.lastError.at)}` : 'нет'],
@@ -1017,12 +1028,12 @@ function GpsDiagnostics() {
           </div>
         ))}
       </dl>
-      <p className="muted small">
+      {native ? <p className="muted small">Источники Android сравниваются по точности, возрасту и согласованности движения. Сетевое положение показывается как приблизительное. Диагностика хранится на устройстве.</p> : <p className="muted small">
         Координаты даёт браузер (Geolocation API), без определения по IP. Каким способом их определило устройство — спутники, Wi-Fi или сотовая
         сеть, — браузер не сообщает и переключать не позволяет; видны только точность и возраст точки. Диагностика показывает координаты на устройстве и не отправляет их. Сначала показывается позиция, которую
         устройство может дать сразу, затем она уточняется. Точность в километрах обычно значит, что выключена «Точная геопозиция» (iPhone/iPad:
         Настройки → Конфиденциальность → Службы геолокации).
-      </p>
+      </p>}
       <div className="toolbar">
         <button type="button" className={`btn ${diag ? 'btn-primary' : ''}`} aria-pressed={diag} onClick={() => diagModeStore.set({ on: !diag })}>
           <Icon name="gps" /> {diag ? 'Выключить диагностику на карте' : 'Диагностический режим на карте'}

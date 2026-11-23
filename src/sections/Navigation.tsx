@@ -743,8 +743,9 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
         {androidDriving && offline.local && (
           <div className="android-offline-tag" role="status">{offline.region ? `Офлайн · ${offline.region}` : 'Нет загруженной карты'}</div>
         )}
-        {androidDriving && guiding && !trustedGeo && <div className="android-position-tag" role="status">
-          Положение не подтверждено
+        {androidDriving && (guiding && !trustedGeo || !guiding && located && !panelOpen && !androidMenu &&
+          geo.nativeTrust != null && geo.nativeTrust !== 'confirmed') && <div className="android-position-tag" role="status">
+          {geo.nativeTrust === 'network' ? 'Приблизительная сетевая позиция' : geo.nativeTrust === 'estimated' ? 'Положение оценено по датчикам' : 'Положение не подтверждено'}
           {onAutonomy && !panelHidden && <button className="btn" onClick={() => {
             const active = navStore.get();
             if (active.route && active.dest && active.route.coords.length <= 20_000) {
@@ -817,7 +818,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
         {/* Низ: скорость + карточка маршрута / объектов */}
         <div className="map-bottom">
           <div className="map-speed" aria-label="Скорость по GPS">
-            <span className="map-speed-value">{geo.speedKmh != null ? Math.round(geo.speedKmh) : '—'}</span>
+            <span className="map-speed-value">{geo.speedKmh != null ? `${geo.nativeTrust && geo.nativeTrust !== 'confirmed' ? '≈' : ''}${Math.round(geo.speedKmh)}` : '—'}</span>
             <span className="map-speed-unit">км/ч</span>
           </div>
 

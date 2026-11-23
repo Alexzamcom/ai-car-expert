@@ -30,10 +30,10 @@ jobs:
           npx vite preview --port 4173 --strictPort &
           npx --yes wait-on@8.0.1 -t 30000 http://localhost:4173/
       - name: Автономная навигация с тестовым мостом датчиков
-        if: contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth"]'), github.head_ref)
+        if: contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position"]'), github.head_ref)
         run: node scripts/autonomy-webview-check.mjs http://localhost:4173/
       - name: Android — главный экран, динамическое ведение и HUD
-        if: (github.head_ref == 'codex/android-navigation-ux' || github.head_ref == 'codex/android-offline-smooth')
+        if: (github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-offline-smooth' || github.head_ref == 'codex/android-hybrid-position'))
         run: node scripts/android-ux-check.mjs http://localhost:4173/ android-ux-visuals
       - uses: actions/upload-artifact@v4
         if: always() && github.head_ref == 'codex/android-navigation-ux'
@@ -42,8 +42,11 @@ jobs:
           path: android-ux-visuals/*.png
           if-no-files-found: ignore
       - name: Android — загрузка области и проверка без сети и GPS
-        if: github.head_ref == 'codex/android-offline-smooth'
+        if: (github.head_ref == 'codex/android-offline-smooth' || github.head_ref == 'codex/android-hybrid-position')
         run: node scripts/android-offline-check.mjs http://localhost:4173/
+      - name: Android — гибридное определение положения
+        if: github.head_ref == 'codex/android-hybrid-position'
+        run: node scripts/android-hybrid-check.mjs http://localhost:4173/
       - name: Интерфейс ведения, прибытие и прогресс HUD
         run: node scripts/driving-ux-check.mjs http://localhost:4173/ smoke-local/driving-ux
       - name: Привязка машинки к векторным тайлам
