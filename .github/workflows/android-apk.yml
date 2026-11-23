@@ -151,9 +151,4 @@ jobs:
           arch: x86_64
           profile: pixel_2
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
-          script: >-
-            if [ "$ANDROID_DRIVE_CHECK" = 1 ]; then
-              node scripts/android-smoke.mjs apk/app-debug.apk;
-            else
-              adb install apk/app-debug.apk && adb shell am start -W -n com.aicarexpert.app/.MainActivity && adb shell pidof com.aicarexpert.app;
-            fi
+          script: if [ "$ANDROID_DRIVE_CHECK" = 1 ]; then node scripts/android-smoke.mjs apk/app-debug.apk; else adb install apk/app-debug.apk && adb shell am start -W -n com.aicarexpert.app/.MainActivity && adb shell pidof com.aicarexpert.app; fi
