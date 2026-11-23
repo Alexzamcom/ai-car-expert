@@ -193,9 +193,9 @@ try {
         };
         requestAnimationFrame(frame);
       }));
-      for (let i = 1; i <= 4; i++) {
-        fix(37.6156 - i * 0.000014, 55.757 + i * 0.000012);
-        await sleep(550);
+      for (let i = 1; i <= 3; i++) {
+        fix(37.6156 - i * 0.000063, 55.757 + i * 0.000052);
+        await sleep(850);
       }
       const performance = await sample;
       console.log('Android WebView render sample:', JSON.stringify(performance));

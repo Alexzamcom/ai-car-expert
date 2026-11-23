@@ -103,11 +103,17 @@ try {
   for (const d of [1280, 1320, 1360, 1400, 1430, 1460, 1490, 1520, 1550, 1580]) await fix(d);
   await wait(() => document.querySelector('.android-cue.is-visible') && window.__aceMap.state().pitch < 60);
   assert(await page.evaluate(() => !navigator.onLine && window.__aceMap.state().camera.lift > 0.4));
-  await page.screenshot({ path: `${out}/03-approaching-turn.png` });
+  await page.screenshot({ path: `${out}/03-offline-turn.png` });
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true });
     window.dispatchEvent(new Event('online'));
   });
+  await fix(1590);
+  await wait(() => {
+    const s = window.__aceMap.state();
+    return s.styleReady && s.gameLayers.includes('game-buildings') && s.camera.lift >= 0.55 && s.pitch < 59;
+  });
+  await page.screenshot({ path: `${out}/03-approaching-turn.png` });
   await page.locator('.android-map-controls .hud-btn').evaluate((el) => el.click());
   const warning = page.getByRole('button', { name: /Понятно/ });
   if (await warning.count()) await warning.evaluate((el) => el.click());
@@ -119,7 +125,7 @@ try {
   await click('Зеркально');
   assert.equal(await stage.evaluate((el) => el.classList.contains('is-mirrored')), false);
   await page.locator('.hud-controls').waitFor({ state: 'hidden' });
-  await fix(1580);
+  await fix(1590);
   await wait(() => document.querySelector('.hud-speed strong')?.textContent !== '—' &&
     document.querySelector('.hud-dist')?.textContent !== 'Уточняем');
   await page.screenshot({ path: `${out}/04-hud.png` });
