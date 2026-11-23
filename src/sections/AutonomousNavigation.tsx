@@ -203,6 +203,31 @@ export function AutonomousNavigation({ close }: { close(): void }) {
     }, fail, { enableHighAccuracy: true, maximumAge: 0, timeout: 12_000 });
   }
 
+  function prepareRoute(selected: Route, destination: LatLon) {
+    setRoute(selected);
+    const cum = cumulative(selected.coords);
+    cached.current = { cum, offsets: stepOffsets(selected, cum) };
+    currentRoute.current = selected;
+    autonomyMap.set({ ...autonomyMap.get(), route: selected, destination });
+    api.current?.fitPoints(selected.coords, ui.current);
+    setStage('ready');
+  }
+
+  function useSavedRoute() {
+    try {
+      const stored = JSON.parse(localStorage.getItem('ace:offline-autonomy-route') ?? 'null') as { route: Route; destination: LatLon; at: number } | null;
+      if (!stored || !origin || Date.now() - stored.at > 6 * 3600_000 ||
+        routeProgress(stored.route, origin.position).offRouteM > 35) {
+        setMessage('Ранее построенный маршрут недоступен или старт слишком далеко от него.');
+        return;
+      }
+      setMessage('');
+      prepareRoute(stored.route, stored.destination);
+    } catch {
+      setMessage('Ранее построенный маршрут недоступен.');
+    }
+  }
+
   async function selectDestination() {
     const target = api.current?.center?.();
     if (!target || !origin || haversine(origin.position, target) < 20) {
@@ -215,13 +240,10 @@ export function AutonomousNavigation({ close }: { close(): void }) {
     setMessage('');
     try {
       const selected = await fetchRoute(origin.position, target, request.signal);
-      setRoute(selected);
-      const cum = cumulative(selected.coords);
-      cached.current = { cum, offsets: stepOffsets(selected, cum) };
-      currentRoute.current = selected;
-      autonomyMap.set({ ...autonomyMap.get(), route: selected, destination: target });
-      api.current?.fitPoints(selected.coords, ui.current);
-      setStage('ready');
+      prepareRoute(selected, target);
+      if (androidDriving && selected.coords.length <= 20_000) {
+        try { localStorage.setItem('ace:offline-autonomy-route', JSON.stringify({ route: selected, destination: target, at: Date.now() })); } catch { /* Storage can be disabled. */ }
+      }
     } catch {
       if (!request.signal.aborted) setMessage('Маршрут недоступен. Для его построения нужны сеть и работающий маршрутизатор.');
     } finally { if (!request.signal.aborted) setBusy(false); }
@@ -330,6 +352,7 @@ export function AutonomousNavigation({ close }: { close(): void }) {
         </>}
         {stage === 'origin' && <><button className="btn btn-primary" disabled={busy} onClick={locateOrigin}>Определить старт по GNSS</button><button className="btn" onClick={() => void openArchive()}>Записи поездок</button><button className="btn" onClick={close}>Назад</button></>}
         {stage === 'destination' && <>
+          {androidDriving && <button className="btn" disabled={busy} onClick={useSavedRoute}>Использовать сохранённый маршрут</button>}
           <p>Поставьте прицел на пункт назначения.</p>
           <button className="btn btn-primary" disabled={busy} onClick={() => void selectDestination()}>Построить маршрут сюда</button>
           <button className="btn" disabled={busy} onClick={() => setStage('origin')}>Изменить старт</button>

@@ -14,6 +14,7 @@ import { MUSIC_SOURCES } from '../lib/music/sources';
 import { CAR_COLORS, carSvg, type CarColor } from '../lib/carMarker';
 import { geoStore, navStore, setNavigationVoice, restartGeo, locatorState, guidanceUse, setDestination } from '../lib/nav';
 import { MyPlacesSection } from '../components/MyPlaces';
+import { OfflineMapsSettings } from './OfflineMapsSettings';
 import { androidDriving } from '../lib/androidDriving';
 import { NAV_CAMERAS, effectiveNavCamera } from '../lib/camera';
 import { FIX_SOURCE_LABEL } from '../lib/geo/locator';
@@ -114,6 +115,7 @@ export function Settings() {
         </button>
       </form>
 
+      {androidDriving && <OfflineMapsSettings />}
       <CarOnMapSettings />
       <MyPlacesCard />
       <HudSettingsCard />

@@ -297,6 +297,8 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
     const onGeo = () => {
       const g = displayStore.get(); // отображаемая позиция (привязка к дороге)
       if (g.lat == null || g.lon == null) return;
+      const fix = geoStore.get();
+      if (androidDriving && !to && (fix.held || (fix.accuracy ?? Infinity) > 50 || Date.now() - (fix.updated ?? 0) > 5000)) return;
       if (to && to.lat === g.lat && to.lon === g.lon && heading === g.heading) return;
       const now = performance.now();
       from = pos(now) ?? { lat: g.lat, lon: g.lon };
@@ -344,6 +346,7 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
       last = key;
       line.current?.setAttribute('d', d);
       carG.current?.setAttribute('transform', `translate(${cx.toFixed(1)} ${cy.toFixed(1)})`);
+      carG.current?.removeAttribute('visibility');
       road.current?.setAttribute('d', d);
       if (turn.current) {
         turn.current.style.display = tp && Math.hypot(tp[0], tp[1]) < range * 1.6 && step?.type !== 'depart' ? '' : 'none';
@@ -366,7 +369,7 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
       <path ref={road} className="hud-road" fill="none" stroke={color} />
       <path ref={line} className="hud-line" fill="none" stroke={color} />
       <circle ref={turn} className="hud-turn" r="9" fill="#000" stroke={color} />
-      <g ref={carG} className="hud-car">
+      <g ref={carG} className="hud-car" visibility={androidDriving ? "hidden" : undefined}>
         <path d="M0 -22 L15 16 L0 8 L-15 16 Z" fill={color} />
       </g>
     </svg>

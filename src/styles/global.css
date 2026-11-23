@@ -1686,3 +1686,8 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
   .android-drive .android-cue { transition: none; }
 }
 .android-drive.android-menu-open .map-ui .android-map-controls .zoom-ctl { display: grid; }
+.android-drive .android-offline-tag, .android-drive .android-position-tag {
+  position: absolute; top: 68px; left: 12px; max-width: calc(100% - 74px);
+  border-radius: 12px; padding: 5px 10px; background: var(--panel); color: var(--text); font-size: .76rem;
+}
+.android-drive .android-position-tag { top: auto; bottom: 112px; }
