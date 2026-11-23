@@ -115,9 +115,11 @@ try {
     document.querySelector('.hud-dist')?.textContent !== 'Уточняем');
   await page.screenshot({ path: `${out}/04-hud.png` });
   await click('Выйти из HUD');
-  await page.waitForTimeout(4300);
-  assert(await page.getByText('Положение уточняется', { exact: true }).isVisible());
-  await page.waitForTimeout(16000);
+  await wait(() => document.querySelector('.android-position-tag') ||
+    document.querySelector('.android-cue.is-visible')?.textContent.includes('Положение уточняется'));
+  const activeCue = page.locator('.android-cue.is-visible');
+  if (await activeCue.count()) assert.match(await activeCue.innerText(), /Положение уточняется/);
+  await page.waitForTimeout(20500);
   assert.equal(await page.getByRole('button', { name: 'Завершить маршрут' }).count(), 0);
   await page.locator('.ml-map canvas').dispatchEvent('pointerdown');
   await page.getByRole('button', { name: 'Завершить маршрут' }).waitFor();

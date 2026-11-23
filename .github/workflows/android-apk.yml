@@ -80,6 +80,13 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Prepare Android API 35 system image
+        run: |
+          for attempt in 1 2 3; do
+            if "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'system-images;android-35;google_apis;x86_64'; then exit 0; fi
+            sleep 5
+          done
+          exit 1
       - uses: reactivecircus/android-emulator-runner@v2
         env:
           EXPECT_ANDROID_UX: ${{ (github.head_ref == 'codex/android-navigation-ux' || github.head_ref == 'codex/android-offline-smooth') && '1' || '0' }}
@@ -114,6 +121,13 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Prepare Android API 29 system image
+        run: |
+          for attempt in 1 2 3; do
+            if "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'system-images;android-29;google_apis;x86_64'; then exit 0; fi
+            sleep 5
+          done
+          exit 1
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
