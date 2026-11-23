@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   android:
-    if: github.event_name != 'pull_request' || (contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position"]'), github.head_ref) && github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name != 'pull_request' || (contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position","codex/android-confirmed-route"]'), github.head_ref) && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -89,9 +89,10 @@ jobs:
           exit 1
       - uses: reactivecircus/android-emulator-runner@v2
         env:
-          EXPECT_ANDROID_UX: ${{ (github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-offline-smooth' || github.head_ref == 'codex/android-hybrid-position')) && '1' || '0' }}
-          EXPECT_NATIVE_POSITION: ${{ github.head_ref == 'codex/android-hybrid-position' && '1' || '0' }}
-          EXPECT_AUTONOMY: ${{ contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position"]'), github.head_ref) && '1' || '0' }}
+          EXPECT_ANDROID_UX: ${{ (github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-offline-smooth' || (github.head_ref == 'codex/android-hybrid-position' || github.head_ref == 'codex/android-confirmed-route'))) && '1' || '0' }}
+          EXPECT_CONFIRMED_ROUTE: ${{ github.head_ref == 'codex/android-confirmed-route' && '1' || '0' }}
+          EXPECT_NATIVE_POSITION: ${{ (github.head_ref == 'codex/android-hybrid-position' || github.head_ref == 'codex/android-confirmed-route') && '1' || '0' }}
+          EXPECT_AUTONOMY: ${{ contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position","codex/android-confirmed-route"]'), github.head_ref) && '1' || '0' }}
         with:
           api-level: 35
           target: google_apis
@@ -101,14 +102,14 @@ jobs:
           disable-animations: true
           script: node scripts/android-smoke.mjs apk/app-debug.apk
       - uses: actions/upload-artifact@v4
-        if: github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-offline-smooth' || github.head_ref == 'codex/android-hybrid-position')
+        if: github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-offline-smooth' || (github.head_ref == 'codex/android-hybrid-position' || github.head_ref == 'codex/android-confirmed-route'))
         with:
           name: android-navigation-screens
           path: android-navigation-screens/*.png
           if-no-files-found: error
 
   android-10-install:
-    if: contains(fromJSON('["codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position"]'), github.head_ref)
+    if: contains(fromJSON('["codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position","codex/android-confirmed-route"]'), github.head_ref)
     needs: android
     runs-on: ubuntu-latest
     timeout-minutes: 20

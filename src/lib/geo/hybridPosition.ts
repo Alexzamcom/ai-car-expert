@@ -15,6 +15,7 @@ export type DrivingMeasurement = { kind: 'position'; data: PositionObservation }
 export type PositionEstimate = LatLon & {
   at: number; accuracy: number; heading: number | null; speed: number | null;
   source: NativeProvider | 'inertial'; speedSource: 'gnss' | 'motion' | 'obd' | 'wheel' | 'unknown';
+  distanceM?: number;
   trust: 'confirmed' | 'network' | 'recovering' | 'estimated' | 'held';
 };
 const radians = Math.PI / 180;
@@ -25,6 +26,8 @@ const isSpeed = (n: number | undefined): n is number => n != null && Number.isFi
 export class HybridPosition {
   state: PositionEstimate | null = null;
   reason = 'Ожидание свежей позиции';
+  requireMotionEvidence = false;
+  private opposingFix: PositionObservation | null = null;
   private accepted: PositionObservation | null = null;
   private candidate: PositionObservation | null = null;
   private streak = 0;
@@ -35,14 +38,17 @@ export class HybridPosition {
   private speed: number | null = null;
   private recovering = false;
   private confirmedAnchor = false;
+  private motionEvidenceAt = -Infinity;
 
   reset() {
     this.state = this.accepted = this.candidate = this.lastMotion = this.odometry = null;
     this.streak = 0;
+    this.opposingFix = null;
     this.integrationAt = 0;
     this.heading = this.speed = null;
     this.recovering = false;
     this.confirmedAnchor = false;
+    this.motionEvidenceAt = -Infinity;
     this.reason = 'Ожидание свежей позиции';
   }
 
@@ -55,7 +61,7 @@ export class HybridPosition {
       if (isSpeed(data.speedMps)) this.speed = data.speedMps;
       if (this.state && this.state.trust !== 'confirmed' && this.heading != null && data.distanceM != null && data.distanceM >= 0 && data.distanceM <= 25) {
         const next = advance(this.state, this.heading, data.distanceM);
-        this.state = { ...this.state, ...next, at: now, source: 'inertial', trust: 'estimated', speed: this.speed, speedSource: data.source,
+        this.state = { ...this.state, ...next, at: now, source: 'inertial', trust: 'estimated', distanceM: data.distanceM, speed: this.speed, speedSource: data.source,
           accuracy: this.state.accuracy + data.distanceM * 0.08 };
         this.integrationAt = now;
         return this.state;
@@ -73,7 +79,10 @@ export class HybridPosition {
     const independent = this.odometry && now - this.odometry.at <= 1500 ? this.odometry : null;
     if (this.speed != null && this.heading != null && Number.isFinite(m.east) && Number.isFinite(m.north) && !independent) {
       const a = m.east! * Math.sin(this.heading * radians) + m.north! * Math.cos(this.heading * radians);
-      if (Math.abs(a) > 0.22) this.speed = clamp(this.speed + clamp(a, -6, 4) * dt, 0, 62);
+      if (Math.abs(a) > 0.35 && Math.abs(a) < 6) {
+        this.speed = clamp(this.speed + a * dt, 0, 62);
+        this.motionEvidenceAt = now;
+      }
     }
     return this.tick(now, road);
   }
@@ -97,11 +106,12 @@ export class HybridPosition {
     const moving = speed != null && speed > 0.45 && this.heading != null;
     const heading = this.heading != null && road && road.distance <= 14 && Math.abs(headingDelta(road.heading, this.heading)) <= 24
       ? wrap(this.heading + headingDelta(road.heading, this.heading) * 0.26) : this.heading;
-    const distance = moving && independent?.distanceM == null ? speed * dt : 0;
+    const measured = !!independent || now - this.motionEvidenceAt <= 700;
+    const distance = moving && independent?.distanceM == null && (!this.requireMotionEvidence || measured) ? speed * dt : 0;
     const pos = distance && heading != null ? advance(s, heading, distance) : s;
     this.reason = speed == null ? 'Надёжные GNSS и скорость недоступны' : 'Положение оценено по последней точке и датчикам';
     this.state = { ...s, lat: pos.lat, lon: pos.lon, at: now, accuracy: Math.min(2000, s.accuracy + dt * (moving ? 1.8 : 2.5) + distance * 0.12),
-      heading, speed, speedSource: independent ? independent.source : speed == null ? 'unknown' : 'motion',
+      heading, speed, distanceM: measured ? distance : 0, speedSource: independent ? independent.source : speed == null ? 'unknown' : 'motion',
       source: 'inertial', trust: moving ? 'estimated' : 'held' };
     return this.state;
   }
@@ -138,7 +148,12 @@ export class HybridPosition {
     const recentMotion = this.lastMotion && now - this.lastMotion.at < 1200;
     const headingConflict = recentMotion && this.heading != null && course != null && oldSpeed > 4 &&
       dt < 4 && Math.abs(headingDelta(course, this.heading)) > 85 && d > 12;
-    if (previous && (innovation > allowance || headingConflict)) {
+    const opposing = this.opposingFix;
+    const consistentReverse = headingConflict && opposing && f.at - opposing.at >= 450 && f.at - opposing.at <= 4000 &&
+      haversine(opposing, f) >= 5 && Math.abs(headingDelta(courseBetween(opposing, f), course!)) <= 35;
+    if (headingConflict && !consistentReverse && innovation <= allowance && (!opposing || f.at - opposing.at >= 450)) this.opposingFix = f;
+    if (!headingConflict || consistentReverse || innovation > allowance) this.opposingFix = null;
+    if (previous && (innovation > allowance || headingConflict && !consistentReverse)) {
       this.candidate = null;
       this.streak = 0;
       this.recovering = true;

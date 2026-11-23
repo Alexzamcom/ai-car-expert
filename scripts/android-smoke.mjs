@@ -7,6 +7,7 @@ import { _android as android } from 'playwright';
 
 const app = 'com.aicarexpert.app';
 const modern = process.env.EXPECT_ANDROID_UX === '1';
+const confirmedRoute = process.env.EXPECT_CONFIRMED_ROUTE === '1';
 const hybrid = process.env.EXPECT_NATIVE_POSITION === '1';
 const screenshotDir = 'android-navigation-screens';
 if (modern) mkdirSync(screenshotDir, { recursive: true });
@@ -209,6 +210,25 @@ try {
   } else assert(await page.locator('.hud-maneuver').isVisible());
   if (process.env.EXPECT_AUTONOMY === '1') assert(await page.locator('.hud-speed').isVisible());
   console.log('✓ HUD route is rendered in the Android WebView with mirror transform');
+  if (confirmedRoute) {
+    await click(page.getByRole('button', { name: 'Выйти из HUD', exact: true }));
+    await page.waitForFunction(() => window.__aceMap?.state()?.routePoints > 2);
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:nav-session')));
+    assert(saved.guiding && saved.routeId && saved.builtAt > 0);
+    assert.equal(saved.route.coords.length, saved.geometry.cum.length);
+    assert.equal(saved.route.steps.length, saved.geometry.offsets.length);
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'onLine', { get: () => false });
+      localStorage.removeItem('ace:hud');
+    });
+    let requests = 0;
+    await page.route('**/route/v1/**', (request) => { requests++; return request.abort(); });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => !navigator.onLine && window.__aceMap?.state()?.routePoints > 2);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('ace:nav-session')).routeId), saved.routeId);
+    assert.equal(requests, 0, 'Restoring a confirmed route offline must never call the router');
+    console.log('✓ Android WebView resumes the saved confirmed route offline without a router request');
+  }
 } catch (error) {
   if (hybrid) {
     const providers = adb('shell', 'dumpsys', 'location').split('\n')
