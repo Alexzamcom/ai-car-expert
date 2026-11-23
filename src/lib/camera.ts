@@ -154,3 +154,14 @@ export function navCameraPose(style: NavCamera, opts: { baseZoom: number; normal
     offset: chase.offset - 0.1 * Math.min(1, l),
   };
 }
+
+/** Android fits a real-size car and the next junction in the same map projection. */
+export function androidChasePose(speedKmh: number | null, lift: number, landscape: boolean, maxPitch: number) {
+  const speed = speedKmh ?? 0;
+  const zoom = 19.1 - 1.45 * Math.max(0, Math.min(1, (speed - 28) / 80));
+  return {
+    pitch: Math.min(maxPitch, landscape ? 65 : 68) - 17 * lift,
+    zoom: zoom - 0.85 * lift,
+    offset: (landscape ? 0.24 : 0.29) - 0.075 * Math.min(1, lift),
+  };
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { gameCarWidthPx } from '../../src/lib/car3d/layer';
+import { ANDROID_CAR_LENGTH_M, carWorldUnit, gameCarWidthPx } from '../../src/lib/car3d/layer';
 import { Builder, buildSuv, MAT, CAR_MODELS } from '../../src/lib/car3d/mesh';
 
 /** Доля треугольников, нормаль которых смотрит от центра тела (наружу). */
@@ -142,4 +142,15 @@ describe('Доля ширины карты в игровом виде', () => {
   it('ограничивает рост на широком низком экране', () => {
     expect(gameCarWidthPx(17.2, 844, 390) / 844).toBeCloseTo(0.225);
   });
+});
+
+it('keeps the Android body narrower than one standard lane at different latitudes', () => {
+  const mesh = CAR_MODELS.ev.build();
+  for (const metersToMercator of [2.5e-8, 4.4e-8, 7.3e-8]) {
+    const scale = carWorldUnit(metersToMercator, ANDROID_CAR_LENGTH_M, mesh.length);
+    expect(mesh.length * scale / metersToMercator).toBeCloseTo(4.8);
+    const shareOfLane = mesh.width * scale / (3.5 * metersToMercator);
+    expect(shareOfLane).toBeGreaterThan(0.48);
+    expect(shareOfLane).toBeLessThan(0.65);
+  }
 });

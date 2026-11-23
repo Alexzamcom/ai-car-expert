@@ -8,6 +8,7 @@ import { _android as android } from 'playwright';
 const app = 'com.aicarexpert.app';
 const modern = process.env.EXPECT_ANDROID_UX === '1';
 const confirmedRoute = process.env.EXPECT_CONFIRMED_ROUTE === '1';
+const scaleCheck = process.env.EXPECT_NAVIGATION_SCALE === '1';
 const hybrid = process.env.EXPECT_NATIVE_POSITION === '1';
 const screenshotDir = 'android-navigation-screens';
 if (modern) mkdirSync(screenshotDir, { recursive: true });
@@ -33,9 +34,15 @@ async function until(fn, message, timeout = 60_000) {
   throw new Error(message, { cause: lastError });
 }
 
-adb('install', '-r', apk);
+const apiLevel = Number(adb('shell', 'getprop', 'ro.build.version.sdk'));
+if (apiLevel <= 29) {
+  // The old image can spend a full minute initializing PackageManager after boot.
+  console.log(execFileSync('adb', ['install', '--no-streaming', '-r', '-g', apk], { encoding: 'utf8', timeout: 120_000 }).trim());
+  console.log(adb('shell', 'dumpsys', 'webviewupdate').split('\n').find((line) => line.includes('Current WebView package')));
+} else adb('install', '-r', ...(scaleCheck ? ['-g'] : []), apk);
 adb('shell', 'settings', 'put', 'system', 'screen_off_timeout', '600000');
-adb('shell', 'cmd', 'location', 'set-location-enabled', 'true');
+if (apiLevel <= 29) adb('shell', 'settings', 'put', 'secure', 'location_mode', '3');
+else adb('shell', 'cmd', 'location', 'set-location-enabled', 'true');
 if (hybrid) adb('emu', 'geo', 'fix', '37.6156', '55.757');
 adb('shell', 'am', 'start', '-W', '-n', `${app}/.MainActivity`);
 await until(() => {
@@ -47,7 +54,7 @@ await until(() => {
   const bounds = allow?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/)?.slice(1).map(Number);
   if (bounds) adb('shell', 'input', 'tap', String(Math.round((bounds[0] + bounds[2]) / 2)), String(Math.round((bounds[1] + bounds[3]) / 2)));
   return false;
-}, 'Android did not grant precise foreground location via its permission dialog');
+}, 'Android did not grant precise foreground location');
 console.log('✓ APK installed, launched and granted precise foreground location in Android');
 
 const [device] = await android.devices();
@@ -166,10 +173,40 @@ try {
   if (modern) {
     await page.waitForFunction(() => {
       const map = window.__aceMap.state();
-      return map.camera.style === 'dynamic' && map.pitch >= 57 && map.car?.y > 0.64 && map.carWidthShare >= 0.13 && map.carWidthShare <= 0.21;
+      return map.camera.style === 'dynamic' && map.pitch >= 65 && map.zoom > 18.7 && map.car?.y > 0.67 && map.carLengthM === 4.8 && map.carWidthShare >= 0.015 && map.carWidthShare <= 0.13;
     });
     assert.equal(await page.locator('.android-cue.is-visible').count(), 0, 'A distant turn must leave the map clear');
     await page.screenshot({ path: `${screenshotDir}/02-driving.png` });
+    if (scaleCheck) {
+      // Sample the actual WebView rendering loop while successive GNSS fixes move the chase camera.
+      const sample = page.evaluate(() => new Promise((resolve) => {
+        let renders = 0;
+        const intervals = [];
+        const map = window.__aceMap.map;
+        const onRender = () => renders++;
+        map.on('render', onRender);
+        const start = performance.now();
+        let previous = start;
+        const frame = (now) => {
+          intervals.push(now - previous);
+          previous = now;
+          if (now - start >= 2500) {
+            map.off('render', onRender);
+            intervals.sort((a, b) => a - b);
+            resolve({ renders, frames: intervals.length, p95Ms: Math.round(intervals[Math.floor(intervals.length * 0.95)]) });
+          } else requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
+      }));
+      for (let i = 1; i <= 3; i++) {
+        fix(37.6156 - i * 0.000063, 55.757 + i * 0.000052);
+        await sleep(850);
+      }
+      const performance = await sample;
+      console.log('Android WebView render sample:', JSON.stringify(performance));
+      assert(performance.frames >= 8 && performance.renders >= 4 && performance.p95Ms < 1000, 'Android WebView rendering stalled');
+    }
+
   } else {
     const guideText = await page.locator('.maneuver-instr').textContent();
     assert(guideText?.trim());
