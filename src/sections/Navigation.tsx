@@ -1,4 +1,5 @@
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { offlineStatus } from '../lib/offlineMaps';
 import { androidDriving, ANDROID_OVERVIEW, maneuverNotice } from '../lib/androidDriving';
 import { CONTROLS_IDLE_MS, verticalSwipe } from '../lib/drivingControls';
 import type { MapApi } from './MapLibreMap';
@@ -112,6 +113,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const layers = useRef<{ me?: L.Marker; acc?: L.Circle; raw?: L.CircleMarker; dest?: L.Marker; via?: L.Marker; pick?: L.Marker; route?: L.LayerGroup; routeLines?: L.Polyline[]; poi?: L.LayerGroup }>({});
   const pick = useStore(pickStore);
   const geo = useStore(geoStore);
+  const offline = useStore(offlineStatus);
   const nav = useStore(navStore);
   const poi = useStore(poiStore);
   const navQuery = useStore(navQueryStore);
@@ -737,6 +739,21 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
 
         {/* Справа: управление картой */}
         {(!androidDriving || androidMenu) && <DiagOverlay engine={engine} />}
+        {androidDriving && offline.local && (
+          <div className="android-offline-tag" role="status">{offline.region ? `Офлайн · ${offline.region}` : 'Нет загруженной карты'}</div>
+        )}
+        {androidDriving && guiding && !navReliable && <div className="android-position-tag" role="status">
+          Положение не подтверждено
+          {onAutonomy && !panelHidden && <button className="btn" onClick={() => {
+            const active = navStore.get();
+            if (active.route && active.dest && active.route.coords.length <= 20_000) {
+              try { localStorage.setItem('ace:offline-autonomy-route', JSON.stringify({ route: active.route, destination: active.dest, at: Date.now() })); }
+              catch { /* Keep the normal route if it cannot be handed off. */ return; }
+            }
+            stopNavigation();
+            onAutonomy();
+          }}>Старт вручную</button>}
+        </div>}
         {androidDriving && !located && !guiding && !nav.dest && !pick && !panelOpen && !androidMenu && (
           <div className="android-locate card-float">
             <strong>Определите местоположение</strong>

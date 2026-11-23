@@ -77,6 +77,7 @@ export function DiagOverlay({ engine }: { engine: 'leaflet' | 'maplibre' }) {
           <div>Дороги карты рядом: {d.mapRoads ?? 'источник недоступен'} · маршрут: {route ? (d.hasRoute ? `${d.routeRoads} участков рядом` : 'предпросмотр') : 'нет'}</div>
           {d.lineId && <div>Дорога {d.lineId} · отрезок {d.segment == null ? '—' : d.segment + 1}</div>}
           {drawn && engine === 'maplibre' && <div>Маркер {coord(drawn.marker)} · цель слежения {coord(drawn.target)} · {drawn.following ? 'слежение' : 'свободный обзор'}</div>}
+          {drawn?.motion && <div>Пик за секунду на кадр · модель {drawn.motion.modelM.toFixed(2)} м / {drawn.motion.modelDeg.toFixed(1)}° · центр {drawn.motion.centerM.toFixed(2)} м · поворот камеры {drawn.motion.cameraDeg.toFixed(1)}°</div>}
           <div className="diag-reason">{d.reason || '—'}</div>
           {m.events.length > 0 && (
             <>

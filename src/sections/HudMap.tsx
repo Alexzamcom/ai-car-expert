@@ -1,5 +1,7 @@
 /* HUD «Полная карта»: отдельная неинтерактивная карта MapLibre — чёрный фон, дороги и перекрёстки,
    яркий маршрут, машинка; всегда по движению, с наклоном. Маршрут и GPS — общие с навигацией. */
+import { androidDriving, ANDROID_OVERVIEW } from '../lib/androidDriving';
+import { initializeOfflineMaps, offlineStatus, offlineStyleFor, registerOfflineProtocol } from '../lib/offlineMaps';
 import { useEffect, useRef } from 'react';
 import type { GeoJSONSource, Map as MlMap } from 'maplibre-gl';
 import { geoStore, navStore, readLastPos, visibleRouteCoords } from '../lib/nav';
@@ -26,10 +28,14 @@ export function HudMap({ color }: { color: string }) {
       const ml = await import('maplibre-gl');
       await import('maplibre-gl/dist/maplibre-gl.css');
       const workerUrl = (await import('maplibre-gl/dist/maplibre-gl-worker.mjs?url')).default;
+      if (androidDriving) {
+        registerOfflineProtocol(ml.addProtocol);
+        await initializeOfflineMaps().catch(() => {});
+      }
       if (disposed || !el.current) return;
       ml.setWorkerUrl(workerUrl);
       const g0 = geoStore.get();
-      const start = g0.lat != null && g0.lon != null ? { lat: g0.lat, lon: g0.lon } : (readLastPos() ?? { lat: 55.7539, lon: 37.6208 });
+      const start = g0.lat != null && g0.lon != null ? { lat: g0.lat, lon: g0.lon } : (readLastPos() ?? (androidDriving ? ANDROID_OVERVIEW : { lat: 55.7539, lon: 37.6208 }));
       const map = new ml.Map({
         container: el.current,
         // Сначала пустой чёрный стиль, затем векторный в палитре HUD — без вспышки светлой карты.
@@ -45,7 +51,20 @@ export function HudMap({ color }: { color: string }) {
       });
       mapRef.current = map;
       mapDiag.create('HUD-карта');
-      const restyle = () => map.setStyle(DEFAULT_STYLE_URL, { diff: false, transformStyle: paletteTransform('hud', { roadColor: '#8d969f' }) });
+      const restyle = () => {
+        const c = map.getCenter();
+        const source = androidDriving && (!navigator.onLine || offlineStatus.get().local)
+          ? offlineStyleFor({ lat: c.lat, lon: c.lng }).style : DEFAULT_STYLE_URL;
+        map.setStyle(source, { diff: false, transformStyle: paletteTransform('hud', { roadColor: '#8d969f' }) });
+      };
+      if (androidDriving) {
+        window.addEventListener('online', restyle);
+        window.addEventListener('offline', restyle);
+        cleanups.push(offlineStatus.subscribe(restyle), () => {
+          window.removeEventListener('online', restyle);
+          window.removeEventListener('offline', restyle);
+        });
+      }
       restyle();
 
       const addLayers = () => {

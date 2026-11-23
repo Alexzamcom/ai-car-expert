@@ -82,7 +82,8 @@ if (typeof window !== 'undefined') (window as unknown as { __aceDiag?: unknown }
 /** Только в памяти и только при включённой панели. */
 type FixVerdict = 'accept' | 'stale' | 'coarse' | 'jump';
 export const positionSampleStore = createStore<{ fix: RawFix; verdict: FixVerdict } | null>(null);
-export const mapPositionStore = createStore<{ marker: LatLon; target: LatLon; following: boolean } | null>(null);
+export type MapMotion = { modelM: number; modelDeg: number; centerM: number; cameraDeg: number };
+export const mapPositionStore = createStore<{ marker: LatLon; target: LatLon; following: boolean; motion?: MapMotion } | null>(null);
 export function recordPositionSample(fix: RawFix, verdict: FixVerdict) {
   if (diagModeStore.get().on) positionSampleStore.set({ fix, verdict });
 }

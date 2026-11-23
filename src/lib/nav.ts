@@ -1,3 +1,4 @@
+import { androidDriving } from './androidDriving';
 import { createStore } from './store';
 import { placesStore, savePlace, removePlace, placeOfType, findSaved } from './places';
 import {
@@ -987,17 +988,21 @@ export interface NavSession {
   via: Place | null;
   guiding: boolean;
   at: number;
+  route?: Route;
 }
 
+let lastSavedRoute: Route | null = null;
 navStore.subscribe(() => {
   const s = navStore.get();
   // Пишем только при смене цели/остановки/режима, а не на каждую точку GPS.
   const key = s.dest ? JSON.stringify([s.dest, s.via, s.status === 'guiding']) : '';
-  if (key === lastSaved || s.status === 'routing') return;
+  if (key === lastSaved && (!androidDriving || s.route === lastSavedRoute) || s.status === 'routing') return;
   lastSaved = key;
+  lastSavedRoute = s.route;
   try {
     if (!s.dest || s.status === 'arrived') localStorage.removeItem(NAV_KEY);
-    else localStorage.setItem(NAV_KEY, JSON.stringify({ dest: s.dest, via: s.via, guiding: s.status === 'guiding', at: Date.now() } satisfies NavSession));
+    else localStorage.setItem(NAV_KEY, JSON.stringify({ dest: s.dest, via: s.via, guiding: s.status === 'guiding', at: Date.now(),
+      route: androidDriving && s.route && s.route.coords.length <= 20_000 ? s.route : undefined } satisfies NavSession));
   } catch {
     /* хранилище недоступно */
   }
@@ -1018,6 +1023,14 @@ export function readNavSession(now = Date.now()): NavSession | null {
 export function restoreNavSession() {
   const saved = readNavSession();
   if (!saved || navStore.get().dest) return;
+  const route = saved.route;
+  if (androidDriving && route && route.coords?.length >= 2 && route.steps?.length) {
+    setRoute(route);
+    const pos = currentPos();
+    navStore.set({ ...navStore.get(), dest: saved.dest, via: saved.via, route, routes: [route],
+      status: saved.guiding ? 'guiding' : 'preview', progress: pos ? routeProgress(route, pos, routeCache!) : null });
+    return;
+  }
   const go = async () => {
     await setDestination(saved.dest, saved.via);
     if (saved.guiding && navStore.get().route) startGuidance();
