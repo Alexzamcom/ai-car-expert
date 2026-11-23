@@ -7,6 +7,7 @@ import { _android as android } from 'playwright';
 
 const app = 'com.aicarexpert.app';
 const modern = process.env.EXPECT_ANDROID_UX === '1';
+const hybrid = process.env.EXPECT_NATIVE_POSITION === '1';
 const screenshotDir = 'android-navigation-screens';
 if (modern) mkdirSync(screenshotDir, { recursive: true });
 const apk = process.argv[2];
@@ -34,6 +35,7 @@ async function until(fn, message, timeout = 60_000) {
 adb('install', '-r', apk);
 adb('shell', 'settings', 'put', 'system', 'screen_off_timeout', '600000');
 adb('shell', 'cmd', 'location', 'set-location-enabled', 'true');
+if (hybrid) adb('emu', 'geo', 'fix', '37.6156', '55.757');
 adb('shell', 'am', 'start', '-W', '-n', `${app}/.MainActivity`);
 await until(() => {
   const permissions = adb('shell', 'dumpsys', 'package', app);
@@ -77,8 +79,9 @@ try {
 
   const fix = (lon, lat) => adb('emu', 'geo', 'fix', String(lon), String(lat));
   const position = async (lon, lat) => {
+    let sequence = 0;
     await until(async () => {
-      fix(lon, lat);
+      fix(lon + (hybrid ? (++sequence % 2) * 0.000005 : 0), lat);
       return await page.evaluate(([x, y]) => {
         const gps = window.__aceMap?.state()?.raw;
         return gps && Math.abs(gps.lat - y) < 0.00006 && Math.abs(gps.lon - x) < 0.00006;
@@ -86,6 +89,14 @@ try {
     }, 'WebView did not receive the emulator GPS fix');
   };
   await position(37.6156, 55.757);
+  if (hybrid) {
+    assert(await page.evaluate(() => window.Capacitor.isPluginAvailable('NativePosition')));
+    await page.waitForFunction(() => {
+      const native = window.__aceMap.state().nativePosition;
+      return native.trust === 'confirmed' && ['fused', 'gps'].includes(native.source);
+    });
+    console.log('✓ Native Android location confirms the emulator fix');
+  }
 
   const click = (locator) => locator.evaluate((node) => node.click());
   if (modern) {
@@ -105,7 +116,12 @@ try {
     const [lon, lat] = JSON.parse(route).routes[0].geometry.coordinates[0];
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x, y], zoom: 17 }), [lon, lat]);
     await click(button('Установить автомобиль'));
-    await position(37.6201, 55.7601);
+    if (hybrid) {
+      // The ordinary native stream is suspended during this experiment.
+      fix(37.6201, 55.7601);
+      await sleep(1000);
+      fix(37.6156, 55.757);
+    } else await position(37.6201, 55.7601);
     const manual = await page.evaluate(() => window.__aceMap.state().experimentalEstimate);
     assert(Math.abs(manual.lat - lat) < 0.00001 && Math.abs(manual.lon - lon) < 0.00001);
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x + 0.003, y], zoom: 17 }), [lon, lat]);
@@ -161,12 +177,18 @@ try {
 
   adb('shell', 'input', 'keyevent', '223');
   await until(() => /mWakefulness=Asleep/.test(adb('shell', 'dumpsys', 'power')), 'Emulator screen did not lock');
-  fix(37.61524, 55.7573);
+  if (hybrid) fix(37.61553, 55.75708);
+  else fix(37.61524, 55.7573);
   await sleep(2500);
   adb('shell', 'input', 'keyevent', '224');
   adb('shell', 'wm', 'dismiss-keyguard');
   await page.waitForFunction(() => document.visibilityState === 'visible');
-  await position(37.61488, 55.7576);
+  // The native estimator must reject a teleport from a stopped vehicle.
+  // Advance ~20 m across sleep/wake so reacquisition tests a reachable trajectory.
+  if (hybrid) {
+    await position(37.61546, 55.75716);
+    await page.waitForFunction(() => window.__aceMap.state().nativePosition.trust === 'confirmed');
+  } else await position(37.61488, 55.7576);
   assert.equal(await page.evaluate(() => window.__aceMap.state().routePoints), routePoints);
   assert(await guiding.isVisible());
   console.log('✓ Screen sleep/wake delivers a fresh GPS fix and keeps the active route');
@@ -188,6 +210,13 @@ try {
   if (process.env.EXPECT_AUTONOMY === '1') assert(await page.locator('.hud-speed').isVisible());
   console.log('✓ HUD route is rendered in the Android WebView with mirror transform');
 } catch (error) {
+  if (hybrid) {
+    const providers = adb('shell', 'dumpsys', 'location').split('\n')
+      .filter((line) => /last location|com\.aicarexpert\.app|provider manager|enabled=/.test(line));
+    console.error('Android location providers:', providers.slice(0, 80).join('\n'));
+    const logs = adb('logcat', '-d', '-s', 'Capacitor', 'Capacitor/Plugin', 'AndroidRuntime');
+    console.error('Native bridge:', logs.split('\n').filter((line) => /NativePosition|FATAL|Exception/.test(line)).slice(-20).join('\n'));
+  }
   if (page) {
     const status = await page.evaluate(() => ({
       url: location.href,

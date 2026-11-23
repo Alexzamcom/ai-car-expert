@@ -84,7 +84,7 @@ function routeNear(coords: LatLon[] | null, p: LatLon, radius: number): RoadLine
 }
 
 /** Новая принятая точка GPS → отображаемая позиция. route — координаты активного маршрута (или null). */
-export function updateDisplay(fix: DisplayFix, route: LatLon[] | null, now = Date.now()) {
+export function updateDisplay(fix: DisplayFix, route: LatLon[] | null, now = Date.now(), predict = true) {
   lastFixAt = now;
   const radius = 120;
   const routeRoads = routeNear(route, fix, radius);
@@ -106,7 +106,11 @@ export function updateDisplay(fix: DisplayFix, route: LatLon[] | null, now = Dat
   displayStore.set({ lat: r.lat, lon: r.lon, heading, accuracy: r.accuracy, mode: r.mode, confidence: r.confidence, lineId: r.lineId,
     segment: r.lineId ? matcher.current?.seg ?? null : null, reason: r.reason, shift: r.shift, at: now,
     mapRoads: mapRoads?.length ?? null, routeRoads: routeRoads.length, hasRoute: !!route, course });
-  timer ??= setInterval(tick, 500);
+  if (predict) timer ??= setInterval(tick, 500);
+  else if (timer) {
+    clearInterval(timer);
+    timer = null;
+  }
 }
 
 /** Потеря сигнала: короткий прогноз вдоль дороги (Matcher.predict ограничивает время и растит неопределённость). */

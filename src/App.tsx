@@ -1,3 +1,4 @@
+import { usesAndroidNativePosition } from './lib/geo/nativePosition';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { androidDriving } from './lib/androidDriving';
 import { Capacitor } from '@capacitor/core';
@@ -12,7 +13,7 @@ import { Navigation } from './sections/Navigation';
 import { useStore } from './lib/store';
 import { layoutStore, settingsStore, closePage, driveUiStore } from './lib/state';
 import { setKeepAwake, retryWakeLockOnGesture } from './lib/wakeLock';
-import { startGeo, restartGeo, geoStore } from './lib/nav';
+import { startGeo, restartGeo, geoStore, setAndroidGeoExperiment } from './lib/nav';
 import { restorePlayer } from './lib/player';
 import { chatgptReturnMessage } from './lib/chatgpt';
 import { takeReturn } from './lib/handoff';
@@ -31,6 +32,7 @@ export function App() {
   const [androidMenu, setAndroidMenu] = useState(false);
   const openAutonomy = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('TripSensors')
     ? () => { setAndroidMenu(false); setAutonomous(true); } : undefined;
+  useEffect(() => { setAndroidGeoExperiment(autonomous); }, [autonomous]);
   const layout = useStore(layoutStore);
   const settings = useStore(settingsStore);
   const ui = useStore(driveUiStore);
@@ -56,7 +58,8 @@ export function App() {
   useEffect(() => {
     const onTouch = () => retryWakeLockOnGesture();
     window.addEventListener('pointerdown', onTouch, { passive: true });
-    navigator.permissions
+    if (usesAndroidNativePosition()) startGeo();
+    else navigator.permissions
       ?.query({ name: 'geolocation' as PermissionName })
       .then((p) => p.state === 'granted' && startGeo())
       .catch(() => {});

@@ -9,9 +9,13 @@
    Каким способом устройство определило координаты (спутники, Wi-Fi, сотовая сеть), браузер не сообщает и
    переключать эти способы не позволяет. Известно только, каким запросом получена точка и её точность. */
 
-export type FixSource = 'quick' | 'high' | 'low';
+export type FixSource = 'quick' | 'high' | 'low' | 'gps' | 'fused' | 'network' | 'inertial';
 
 export const FIX_SOURCE_LABEL: Record<FixSource, string> = {
+  fused: 'Android Fused Location',
+  gps: 'спутниковый GPS Android',
+  network: 'сетевая позиция Android',
+  inertial: 'оценка по датчикам',
   quick: 'быстрый запрос (обычная точность, допускается кеш)',
   high: 'слежение с высокой точностью',
   low: 'запасное слежение (обычная точность)',
