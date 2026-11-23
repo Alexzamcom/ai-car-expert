@@ -32,6 +32,8 @@ import { androidDriving, maneuverNotice } from '../lib/androidDriving';
 import { Capacitor } from '@capacitor/core';
 import { autonomyMap } from '../lib/autonomy/map';
 import { tripSensors } from '../lib/autonomy/native';
+import { GameHudRoad } from './GameHudRoad';
+import { canAlignGameHud } from '../lib/gameHud';
 import { displayStore } from '../lib/matching/display';
 
 const HudMap = lazy(() => import('./HudMap').then((m) => ({ default: m.HudMap })));
@@ -137,16 +139,20 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
 
   const reliable = autonomous ? (experiment.position?.uncertainty ?? Infinity) <= 45 :
     reliableSpeed(geo) != null || !!(geo.updated && Date.now() - geo.updated < 3500 && !geo.held && (geo.accuracy ?? Infinity) <= 50);
-  const cue = androidDriving && nav.status === 'guiding' ? maneuverNotice(nav.route, nav.progress,
+  const game = s.style === 'game';
+  const courseAligned = canAlignGameHud({ fresh: autonomous || Date.now() - (geo.updated ?? 0) < 3500,
+    held: !autonomous && !!geo.held, accuracy: autonomous ? experiment.position?.uncertainty ?? Infinity : geo.accuracy ?? Infinity,
+    offRoute: nav.progress?.offRouteM ?? Infinity, trusted: autonomous || geo.nativeTrust == null || geo.nativeTrust === 'confirmed' });
+  const cue = (androidDriving || game) && nav.status === 'guiding' ? maneuverNotice(nav.route, nav.progress,
     autonomous ? (experiment.position?.speed ?? 0) * 3.6 : geo.speedKmh, reliable && (nav.progress?.offRouteM ?? Infinity) <= 35) : null;
-  const step = androidDriving ? cue?.step : nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
+  const step = androidDriving || game ? cue?.step : nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
   const remainingS = nav.route && nav.progress ? nav.route.duration * (nav.progress.remainingM / Math.max(1, nav.route.distance)) : null;
   const position = experiment.position;
   const approximateSpeed = !autonomous && androidDriving && geo.nativeTrust != null && geo.nativeTrust !== 'confirmed' &&
     (geo.accuracy ?? Infinity) <= 100 && geo.speedKmh != null && Date.now() - (geo.updated ?? 0) < 1500;
   const speed = autonomous ? position && position.uncertainty <= 120 ? Math.round(position.speed * 3.6) : null :
     approximateSpeed ? Math.round(geo.speedKmh!) : reliableSpeed(geo);
-  const withSpeed = autonomous || androidDriving || hudShowsSpeed(s.mode, s);
+  const withSpeed = game || autonomous || androidDriving || hudShowsSpeed(s.mode, s);
   const arrived = nav.status === 'arrived';
   const status = nav.rerouting ? 'Перестраиваю маршрут…' : nav.status === 'routing' ? 'Восстанавливаю маршрут…' : arrived ? 'Вы прибыли' : !nav.route ? 'Нет маршрута' : autonomous && !nav.progress ? 'Положение уточняется' : null;
 
@@ -154,8 +160,8 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
     <div className={`hud-maneuver ${cue?.urgent ? 'is-urgent' : ''}`}>
       <Icon name={stepIcon(step)} size="1em" stroke={2.6} />
       <div>
-        <div className="hud-dist">{androidDriving && cue ? cue.distance == null ? 'Уточняем' : cue.distance < 10 ? 'Сейчас' : fmtDistance(cue.distance, lang) : fmtDistance(nav.progress.toStepM, lang)}</div>
-        {s.mode !== 'minimal' && <div className="hud-instr">{stepText(step, lang)}</div>}
+        <div className="hud-dist">{(androidDriving || game) && cue ? (game && !courseAligned) || cue.distance == null ? 'Уточняем' : cue.distance < 10 ? 'Сейчас' : fmtDistance(cue.distance, lang) : fmtDistance(nav.progress.toStepM, lang)}</div>
+        {(game || s.mode !== 'minimal') && <div className="hud-instr">{stepText(step, lang)}</div>}
       </div>
     </div>
   );
@@ -176,7 +182,8 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
 
   return (
     <div
-      className={`hud mode-${s.mode} contrast-${look.contrast}`}
+      className={`hud mode-${game ? 'game' : s.mode} contrast-${look.contrast}`}
+      data-style={game ? 'game' : 'classic'}
       style={{
         ['--hud-color' as string]: color,
         ['--hud-digits' as string]: look.digits,
@@ -189,7 +196,9 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
       onClick={showControls}
     >
       <div className={`hud-stage ${s.mirror ? 'is-mirrored' : ''}`} style={{ opacity: androidDriving && look.palette === 'day' ? s.brightness : look.brightness }} data-testid="hud-stage">
-        {!autonomous && s.mode === 'map' ? (
+        {game ? <GameHudRoad route={nav.route} remaining={nav.progress?.remainingM ?? null}
+          step={cue?.index ?? null} aligned={courseAligned && nav.status === 'guiding' && !nav.rerouting} />
+          : !autonomous && s.mode === 'map' ? (
           <Suspense fallback={null}>
             <HudMap color={color} />
           </Suspense>
@@ -197,8 +206,8 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
           <HudRoute route={nav.route} color={color} />
         ) : null}
         <div className="hud-layer">
-          <div className="hud-top">{status ? <div className="hud-status">{status}</div> : maneuver}{autonomous && position && <div className="hud-status">±{Math.ceil(position.uncertainty)} м</div>}</div>
-          {s.mode === 'minimal' && !status && step && <div className="hud-big-arrow" aria-hidden="true"><Icon name={stepIcon(step)} size="1em" stroke={2.4} /></div>}
+          <div className="hud-top">{status || game && !courseAligned && !maneuver ? <div className="hud-status">{status ?? 'Положение уточняется'}</div> : maneuver}{autonomous && position && <div className="hud-status">±{Math.ceil(position.uncertainty)} м</div>}</div>
+          {!game && s.mode === 'minimal' && !status && step && <div className="hud-big-arrow" aria-hidden="true"><Icon name={stepIcon(step)} size="1em" stroke={2.4} /></div>}
           <div className="hud-bottom">
             {etaRow || <span />}
             {speedEl}
@@ -220,7 +229,7 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
       {controls && (
         <div className="hud-controls" onClick={(e) => (e.stopPropagation(), showControls())} role="toolbar" aria-label="Настройки HUD">
           <div className="hud-chips">
-            {!autonomous && HUD_MODES.map((m) => (
+            {!game && !autonomous && HUD_MODES.map((m) => (
               <button key={m.id} className={`hud-chip ${s.mode === m.id ? 'is-active' : ''}`} onClick={() => set({ mode: m.id as HudMode })} aria-pressed={s.mode === m.id}>
                 {m.label}
               </button>
