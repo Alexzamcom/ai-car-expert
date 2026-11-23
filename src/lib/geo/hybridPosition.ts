@@ -34,6 +34,7 @@ export class HybridPosition {
   private heading: number | null = null;
   private speed: number | null = null;
   private recovering = false;
+  private confirmedAnchor = false;
 
   reset() {
     this.state = this.accepted = this.candidate = this.lastMotion = this.odometry = null;
@@ -41,6 +42,7 @@ export class HybridPosition {
     this.integrationAt = 0;
     this.heading = this.speed = null;
     this.recovering = false;
+    this.confirmedAnchor = false;
     this.reason = 'Ожидание свежей позиции';
   }
 
@@ -111,9 +113,19 @@ export class HybridPosition {
       this.reason = f.mock ? 'Отброшен тестовый источник Android' : 'Отброшена старая или неточная точка';
       return null;
     }
-    const previous = this.accepted;
-    if (previous && f.at <= previous.at + 250) return null; // correlated Fused/GPS deliveries
     const network = f.source === 'network' || f.accuracy > 30;
+    // A provisional network marker must not block a later precise cold start.
+    if (!this.confirmedAnchor && network) {
+      if (this.accepted && f.at <= this.accepted.at + 250) return null;
+      this.accepted = f;
+      this.integrationAt = now;
+      this.reason = 'Приблизительная сетевая позиция';
+      this.state = { lat: f.lat, lon: f.lon, at: now, accuracy: f.accuracy, heading: null,
+        speed: null, source: f.source, speedSource: 'unknown', trust: 'network' };
+      return this.state;
+    }
+    const previous = this.confirmedAnchor ? this.accepted : null;
+    if (previous && f.at <= previous.at + 250) return null; // correlated Fused/GPS deliveries
     if (previous && now - previous.at < 8000 && (network && previous.source !== 'network' && previous.accuracy <= 30 ||
       f.accuracy > previous.accuracy * 1.8 + 8)) return null;
     const dt = previous ? (f.at - previous.at) / 1000 : 0;
@@ -147,7 +159,7 @@ export class HybridPosition {
       this.streak = 1;
     } else this.streak++;
     this.candidate = f;
-    const recover = this.recovering || !!(previous && dt > 3.5);
+    const recover = this.confirmedAnchor && (this.recovering || dt > 3.5);
     if ((!previous && !network || recover) && this.streak < (recover ? 3 : 2)) {
       this.reason = 'Ожидание согласованных последовательных точек';
       return null;
@@ -173,6 +185,7 @@ export class HybridPosition {
     }
     const pos = recover && this.state && innovation > 7 ? advance(this.state, courseBetween(this.state, f), Math.min(12, innovation * 0.45)) : f;
     this.recovering = pos !== f;
+    if (!network) this.confirmedAnchor = true;
     this.accepted = f;
     this.integrationAt = now;
     this.reason = this.recovering ? 'Плавное уточнение по восстановившемуся GNSS' : network ? 'Приблизительная сетевая позиция' : 'Согласованные точки Android';

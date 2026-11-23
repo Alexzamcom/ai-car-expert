@@ -33,6 +33,13 @@ describe('Нативное позиционирование Android', () => {
     expect(fix(h, observation(0, 1000, { source: 'network', accuracy: 37 }))).toMatchObject({ trust: 'network', source: 'network', speed: null });
     expect(moving().state?.source).toBe('gps');
   });
+  it('уточняет ошибочную сетевую точку холодного старта только после двух точных отсчётов', () => {
+    const h = new HybridPosition();
+    expect(fix(h, observation(700, 0, { source: 'network', accuracy: 40 }))?.trust).toBe('network');
+    expect(fix(h, observation(0, 1000))).toBeNull();
+    expect(fix(h, observation(710, 1600, { source: 'network', accuracy: 41 }))?.trust).toBe('network');
+    expect(fix(h, observation(10, 2000))).toMatchObject({ ...advance(a, 0, 10), trust: 'confirmed' });
+  });
   it('отбрасывает даже несколько согласованных между собой точек другого города с правдоподобной скоростью', () => {
     const h = moving();
     const p = h.state!;

@@ -56,11 +56,14 @@ try {
   const send = (data) => page.evaluate((f) => window.sendPosition(f), data);
   await send({ ...good, source: 'network', accuracy: 80 });
   assert.equal(await page.evaluate(() => window.__aceMap.state().raw.lat), null);
-  await send({ ...good, source: 'network', accuracy: 36 });
+  await send({ ...good, lat: good.lat + 0.006, source: 'network', accuracy: 36 });
   await wait(() => window.__aceMap.state().nativePosition.trust === 'network' && document.body.innerText.includes('Приблизительная сетевая позиция'));
   await page.waitForTimeout(850);
   await send({ ...good, source: 'gps' });
-  await wait(() => window.__aceMap.state().nativePosition.trust === 'confirmed');
+  assert.equal(await page.evaluate(() => window.__aceMap.state().nativePosition.trust), 'network');
+  await page.waitForTimeout(850);
+  await send({ ...good, source: 'gps' });
+  await wait(() => window.__aceMap.state().nativePosition.trust === 'confirmed' && Math.abs(window.__aceMap.state().raw.lat - 48.46) < 0.00001);
   for (let i = 0; i < 3; i++) {
     await page.waitForTimeout(750);
     await send({ lat: -12.04, lon: -77.04, source: 'fused', accuracy: 4, speed: 10 });
