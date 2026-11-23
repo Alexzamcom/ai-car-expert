@@ -34,9 +34,14 @@ async function until(fn, message, timeout = 60_000) {
   throw new Error(message, { cause: lastError });
 }
 
-adb('install', '-r', apk);
+const apiLevel = Number(adb('shell', 'getprop', 'ro.build.version.sdk'));
+if (apiLevel <= 29) {
+  // The old image can spend a full minute initializing PackageManager after boot.
+  console.log(execFileSync('adb', ['install', '--no-streaming', '-r', '-g', apk], { encoding: 'utf8', timeout: 120_000 }).trim());
+  console.log(adb('shell', 'dumpsys', 'webviewupdate').split('\n').find((line) => line.includes('Current WebView package')));
+} else adb('install', '-r', apk);
 adb('shell', 'settings', 'put', 'system', 'screen_off_timeout', '600000');
-if (Number(adb('shell', 'getprop', 'ro.build.version.sdk')) <= 29) adb('shell', 'settings', 'put', 'secure', 'location_mode', '3');
+if (apiLevel <= 29) adb('shell', 'settings', 'put', 'secure', 'location_mode', '3');
 else adb('shell', 'cmd', 'location', 'set-location-enabled', 'true');
 if (hybrid) adb('emu', 'geo', 'fix', '37.6156', '55.757');
 adb('shell', 'am', 'start', '-W', '-n', `${app}/.MainActivity`);
