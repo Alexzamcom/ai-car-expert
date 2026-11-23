@@ -368,11 +368,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
 
       /* ---------- Машинка: 3D-слой или плоская; плавно между точками GPS ---------- */
       let carNow: { lon: number; lat: number; heading: number } | null = null;
+      const androidBody = hexToRgb('#f7f8fa');
       const car3d = createCar3dLayer(
-        () => (carNow ? { ...carNow, color: hexToRgb(androidDriving ? '#f7f8fa' : CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
+        () => (carNow ? { ...carNow, color: androidDriving ? androidBody : hexToRgb(CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
         {
           gameSize: isGame,
           lengthM: androidDriving ? ANDROID_CAR_LENGTH_M : undefined,
+          roofColor: androidDriving ? androidBody : undefined,
           sizePx: () => Math.min(76, Math.max(50, Math.min(innerWidth, innerHeight) * 0.095)),
           // Фары и задние огни — только в ночной «Игровой 3D».
           night: () => appliedPalette === 'game-night',

@@ -2,7 +2,7 @@
    Размер в обычном режиме постоянный, в игровом зависит от масштаба, курс — от севера по часовой, наклон и поворот карты — от MapLibre. */
 import type { CustomLayerInterface, CustomRenderMethodInput, Map as MlMap } from 'maplibre-gl';
 import { MercatorCoordinate } from 'maplibre-gl';
-import { CAR_MODELS, MAT_COLOR, type CarModelId, type CarMesh } from './mesh';
+import { CAR_MODELS, MAT, MAT_COLOR, type CarModelId, type CarMesh } from './mesh';
 
 export interface Car3dState {
   lon: number;
@@ -249,7 +249,7 @@ export interface Car3dLayer extends CustomLayerInterface {
 
 export function createCar3dLayer(
   get: () => Car3dState | null,
-  opts: { model?: CarModelId; sizePx?: () => number; gameSize?: () => boolean; lengthM?: number; onError?: (e: unknown) => void; night?: () => boolean } = {},
+  opts: { model?: CarModelId; sizePx?: () => number; gameSize?: () => boolean; lengthM?: number; roofColor?: [number, number, number]; onError?: (e: unknown) => void; night?: () => boolean } = {},
 ): Car3dLayer {
   const mesh: CarMesh = CAR_MODELS[opts.model ?? 'ev'].build();
   const count = mesh.positions.length / 3;
@@ -260,7 +260,8 @@ export function createCar3dLayer(
   let glow: WebGLProgram | null = null;
   let vbo: WebGLBuffer | null = null;
   let sbo: WebGLBuffer | null = null;
-  const mats = new Float32Array(Object.keys(MAT_COLOR).flatMap((k) => MAT_COLOR[Number(k)]));
+  const mats = new Float32Array(Object.values(MAT_COLOR).flat());
+  if (opts.roofColor) mats.set(opts.roofColor, MAT.roof * 4);
 
   const layer: Car3dLayer = {
     id: 'car-3d',
@@ -298,13 +299,12 @@ export function createCar3dLayer(
       const g = gl as WebGLRenderingContext;
       const mc = MercatorCoordinate.fromLngLat([st.lon, st.lat], 0);
       const zoom = map.getZoom();
-      const baseUnit = mc.meterInMercatorCoordinateUnits() * metersPerPixel(st.lat, zoom) / mesh.length;
       const main = (args.defaultProjectionData?.mainMatrix ?? args.modelViewProjectionMatrix) as unknown as ArrayLike<number>;
       const game = opts.lengthM == null && opts.gameSize?.();
       const { clientWidth: width, clientHeight: height } = map.getCanvas();
       const targetWidth = game ? gameCarWidthPx(zoom, width, height) : 0;
       let unit = opts.lengthM == null
-        ? baseUnit * (game ? targetWidth * 1.9 : (opts.sizePx?.() ?? 60))
+        ? carWorldUnit(mc.meterInMercatorCoordinateUnits(), metersPerPixel(st.lat, zoom) * (game ? targetWidth * 1.9 : (opts.sizePx?.() ?? 60)), mesh.length)
         : carWorldUnit(mc.meterInMercatorCoordinateUnits(), opts.lengthM, mesh.length);
       let mvp = mul4(main, modelMatrix(mc.x, mc.y, st.heading, unit));
       layer.renderedBounds = null;
