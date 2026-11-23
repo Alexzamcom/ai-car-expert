@@ -82,7 +82,7 @@ export class HybridPosition {
     const s = this.state;
     if (!s || !this.accepted || (s.trust === 'confirmed' || s.trust === 'network') && now - this.accepted.at < 2800 ||
       now - this.integrationAt < 220) return null;
-    if (!this.recovering) {
+    if (this.confirmedAnchor && !this.recovering) {
       this.recovering = true;
       this.candidate = null;
       this.streak = 0;

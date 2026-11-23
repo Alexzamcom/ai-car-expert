@@ -46,6 +46,7 @@ try {
     };
   });
   const page = await ctx.newPage();
+  page.on('pageerror', (error) => console.error('[WebView]', error.message));
   await page.goto(url.href, { waitUntil: 'domcontentloaded' });
   const wait = (fn, arg) => page.waitForFunction(fn, arg, { polling: 150, timeout: 30_000 });
   await wait(() => window.nativeStarted && window.__aceMap?.state().styleReady);
@@ -63,7 +64,11 @@ try {
   assert.equal(await page.evaluate(() => window.__aceMap.state().nativePosition.trust), 'network');
   await page.waitForTimeout(850);
   await send({ ...good, source: 'gps' });
-  await wait(() => window.__aceMap.state().nativePosition.trust === 'confirmed' && Math.abs(window.__aceMap.state().raw.lat - 48.46) < 0.00001);
+  await wait(() => window.__aceMap.state().nativePosition.trust === 'confirmed' && Math.abs(window.__aceMap.state().raw.lat - 48.46) < 0.00001)
+    .catch(async (error) => {
+      console.error(await page.evaluate(() => window.__aceMap.state()));
+      throw error;
+    });
   for (let i = 0; i < 3; i++) {
     await page.waitForTimeout(750);
     await send({ lat: -12.04, lon: -77.04, source: 'fused', accuracy: 4, speed: 10 });
