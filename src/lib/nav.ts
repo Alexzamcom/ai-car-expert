@@ -474,7 +474,10 @@ async function stopNativePosition() {
   await Promise.allSettled([nativePosition.stop(), ...handles.map((handle) => handle.remove())]);
 }
 
+let nativePermissionRequested = false;
+
 async function startNativePosition(ask: boolean) {
+  if (ask) nativePermissionRequested = true;
   if (nativeRunning || experiment || !geoActive) return;
   nativeRunning = true;
   const generation = ++nativeGeneration;
@@ -491,8 +494,9 @@ async function startNativePosition(ask: boolean) {
       if (generation === nativeGeneration && geoActive && !experiment) acceptNative({ kind: 'motion', data });
     }));
     if (generation !== nativeGeneration) return;
-    await nativePosition.start({ ask });
+    await nativePosition.start({ ask: nativePermissionRequested });
     if (generation !== nativeGeneration) return;
+    nativePermissionRequested = false;
     geoStore.set((s) => ({ ...s, status: 'watching', permission: 'granted' }));
     nativeTimer = setInterval(() => {
       const now = Date.now();
@@ -500,6 +504,7 @@ async function startNativePosition(ask: boolean) {
     }, 500);
   } catch (error) {
     if (generation !== nativeGeneration) return;
+    nativePermissionRequested = false;
     const denied = (error as { code?: string }).code === 'DENIED';
     handleGeoError({ code: denied ? 1 : 2, kind: denied ? 'denied' : 'unavailable', at: Date.now(), source: 'fused',
       message: error instanceof Error ? error.message : 'Нативные источники Android недоступны' });

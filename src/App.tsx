@@ -1,3 +1,4 @@
+import { usesAndroidNativePosition } from './lib/geo/nativePosition';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { androidDriving } from './lib/androidDriving';
 import { Capacitor } from '@capacitor/core';
@@ -57,7 +58,8 @@ export function App() {
   useEffect(() => {
     const onTouch = () => retryWakeLockOnGesture();
     window.addEventListener('pointerdown', onTouch, { passive: true });
-    navigator.permissions
+    if (usesAndroidNativePosition()) startGeo();
+    else navigator.permissions
       ?.query({ name: 'geolocation' as PermissionName })
       .then((p) => p.state === 'granted' && startGeo())
       .catch(() => {});
