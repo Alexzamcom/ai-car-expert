@@ -90,7 +90,9 @@ export function HudMap({ color }: { color: string }) {
       const carEl = document.createElement('div');
       carEl.className = 'hud-map-car';
       carEl.innerHTML = '<svg viewBox="-20 -24 40 44" width="44" height="48"><path d="M0 -22 L15 16 L0 8 L-15 16 Z" fill="currentColor"/></svg>';
-      const marker = new ml.Marker({ element: carEl, rotationAlignment: 'map', pitchAlignment: 'map' }).setLngLat([start.lon, start.lat]).addTo(map);
+      const marker = new ml.Marker({ element: carEl, rotationAlignment: 'map', pitchAlignment: 'map' }).setLngLat([start.lon, start.lat]);
+      let markerVisible = !androidDriving;
+      if (markerVisible) marker.addTo(map);
 
       let from: LatLon | null = null;
       let to: LatLon | null = null;
@@ -121,6 +123,8 @@ export function HudMap({ color }: { color: string }) {
       const onGeo = () => {
         const g = displayStore.get(); // отображаемая позиция (привязка к дороге)
         if (g.lat == null || g.lon == null) return;
+        const fix = geoStore.get();
+        if (androidDriving && !to && (fix.held || (fix.accuracy ?? Infinity) > 50 || Date.now() - (fix.updated ?? 0) > 5000)) return;
         if (to && to.lat === g.lat && to.lon === g.lon && heading === g.heading) return;
         const now = performance.now();
         const first = !to;
@@ -143,6 +147,10 @@ export function HudMap({ color }: { color: string }) {
           headingShown += Math.max(-6, Math.min(6, (target - headingShown) * 0.15));
         }
         marker.setLngLat([p.lon, p.lat]).setRotation(headingShown);
+        if (!markerVisible) {
+          marker.addTo(map);
+          markerVisible = true;
+        }
       };
       raf = requestAnimationFrame(frame);
       cleanups.push(() => cancelAnimationFrame(raf));
