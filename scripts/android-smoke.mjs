@@ -79,8 +79,9 @@ try {
 
   const fix = (lon, lat) => adb('emu', 'geo', 'fix', String(lon), String(lat));
   const position = async (lon, lat) => {
+    let sequence = 0;
     await until(async () => {
-      fix(lon, lat);
+      fix(lon + (hybrid ? (++sequence % 2) * 0.000005 : 0), lat);
       return await page.evaluate(([x, y]) => {
         const gps = window.__aceMap?.state()?.raw;
         return gps && Math.abs(gps.lat - y) < 0.00006 && Math.abs(gps.lon - x) < 0.00006;
@@ -203,6 +204,13 @@ try {
   if (process.env.EXPECT_AUTONOMY === '1') assert(await page.locator('.hud-speed').isVisible());
   console.log('✓ HUD route is rendered in the Android WebView with mirror transform');
 } catch (error) {
+  if (hybrid) {
+    const providers = adb('shell', 'dumpsys', 'location').split('\n')
+      .filter((line) => /last location|com\.aicarexpert\.app|provider manager|enabled=/.test(line));
+    console.error('Android location providers:', providers.slice(0, 80).join('\n'));
+    const logs = adb('logcat', '-d', '-s', 'Capacitor', 'Capacitor/Plugin', 'AndroidRuntime');
+    console.error('Native bridge:', logs.split('\n').filter((line) => /NativePosition|FATAL|Exception/.test(line)).slice(-20).join('\n'));
+  }
   if (page) {
     const status = await page.evaluate(() => ({
       url: location.href,

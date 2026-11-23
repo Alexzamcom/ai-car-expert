@@ -754,7 +754,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             windows: !!map.getLayer('game-buildings') && !!map.getPaintProperty('game-buildings', 'fill-extrusion-pattern'),
             styleReady: !!(map as unknown as { style?: { _loaded?: boolean } }).style?._loaded,
             raw: { lat: geoStore.get().lat, lon: geoStore.get().lon },
-            nativePosition: { source: geoStore.get().source, trust: geoStore.get().nativeTrust, speedSource: geoStore.get().speedSource },
+            nativePosition: { source: geoStore.get().source, trust: geoStore.get().nativeTrust, speedSource: geoStore.get().speedSource, reason: geoStore.get().nativeReason, status: geoStore.get().status, error: geoStore.get().lastError?.message },
             accuracyCircle: accShown,
             routePoints: navStore.get().route?.coords.length ?? 0,
             routeTrim: (() => {
