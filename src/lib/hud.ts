@@ -50,7 +50,10 @@ export const HUD_SWATCHES = ['#f2f4f7', '#3ee6ff', '#39ff88', '#ffe14a', '#ffae3
 /** Дневная палитра: в отражении днём лучше всего видны белые цифры и жёлтые указания на полной яркости. */
 export const HUD_DAY = { digits: '#ffffff', arrows: '#ffe14a', brightness: 1, minScale: 1.15 } as const;
 
+export type HudStyle = 'classic' | 'game';
+
 export interface HudSettings {
+  style: HudStyle;
   mode: HudMode;
   /** Палитра: авто / дневная / ручная. */
   look: HudLook;
@@ -71,6 +74,7 @@ export interface HudSettings {
 }
 
 export const DEFAULT_HUD: HudSettings = {
+  style: 'classic',
   mode: 'route',
   look: 'auto',
   manual: DEFAULT_HUD_MANUAL,

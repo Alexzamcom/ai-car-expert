@@ -5,6 +5,8 @@ import { createRequire } from 'node:module';
 import { cameraFixtureStyle } from './game-camera-visual.mjs';
 const { chromium, devices } = createRequire(import.meta.url)('playwright');
 const [url = 'http://localhost:4173/', out = 'android-ux-visuals'] = process.argv.slice(2);
+const gameHud = process.env.ACE_GAME_HUD === '1';
+const record = process.env.ACE_HUD_VIDEO === '1';
 const fixture = (name) => fs.readFileSync(new URL(`../tests/fixtures/${name}`, import.meta.url), 'utf8');
 const route = JSON.parse(fixture('osrm-route.json')).routes[0];
 const coords = route.geometry.coordinates.map(([lon, lat]) => ({ lat, lon }));
@@ -24,7 +26,7 @@ fs.mkdirSync(out, { recursive: true });
 const browser = await chromium.launch();
 try {
   const { defaultBrowserType, ...device } = devices['Pixel 7'];
-  const ctx = await browser.newContext({ ...device, viewport: { width: 412, height: 798 }, deviceScaleFactor: 1, serviceWorkers: 'block' });
+  const ctx = await browser.newContext({ ...device, viewport: { width: 412, height: 798 }, deviceScaleFactor: 1, serviceWorkers: 'block', ...(record ? { recordVideo: { dir: out, size: { width: 412, height: 798 } } } : {}) });
   await ctx.route('**/*', (r) => {
     const target = new URL(r.request().url());
     if (target.origin === new URL(url).origin) return r.continue();
@@ -33,7 +35,8 @@ try {
     if (target.pathname.includes('/route/v1/')) return r.fulfill({ body: fixture('osrm-route.json'), contentType: 'application/json', headers });
     return r.fulfill({ status: 204, headers });
   });
-  await ctx.addInitScript(() => {
+  await ctx.addInitScript((game) => {
+    if (game && !localStorage.getItem('ace:hud')) localStorage.setItem('ace:hud', JSON.stringify({ style: 'game' }));
     window.CapacitorCustomPlatform = { name: 'android' };
     localStorage.setItem('ace:settings', JSON.stringify({ mapEngine: 'maplibre', mapEngineExplicit: true, theme: 'day', speakNavigation: false }));
     let coords;
@@ -54,7 +57,7 @@ try {
       t = Math.max(t + 1200, Date.now());
       for (const fn of callbacks.values()) fn({ coords, timestamp: t });
     };
-  });
+  }, gameHud);
   const page = await ctx.newPage();
   page.setDefaultTimeout(45_000);
   await page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -121,6 +124,19 @@ try {
   await stage.waitFor();
   assert(await page.locator('.hud-maneuver').isVisible());
   assert(await page.locator('.hud-speed').isVisible());
+  assert.equal(await stage.evaluate((node) => new DOMMatrixReadOnly(getComputedStyle(node).transform).a), -1);
+  if (gameHud) {
+    await page.evaluate(() => {
+      Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+      window.dispatchEvent(new Event('offline'));
+    });
+    await fix(1590);
+    await wait(() => Number(document.querySelector('.hud-game-road')?.dataset.chevrons) >= 2);
+    await page.screenshot({ path: `${out}/05-game-mirrored-offline.png` });
+  } else {
+    assert.equal(await page.locator('.hud-game-road').count(), 0);
+    await page.screenshot({ path: `${out}/05-classic-mirrored.png` });
+  }
   await stage.evaluate((el) => el.click());
   await click('Зеркально');
   assert.equal(await stage.evaluate((el) => el.classList.contains('is-mirrored')), false);
@@ -129,6 +145,30 @@ try {
   await wait(() => document.querySelector('.hud-speed strong')?.textContent !== '—' &&
     document.querySelector('.hud-dist')?.textContent !== 'Уточняем');
   await page.screenshot({ path: `${out}/04-hud.png` });
+  if (gameHud) {
+    const frame = () => page.locator('.hud-game-road').evaluate((c) => c.toDataURL());
+    const before = await frame();
+    for (const d of [1605, 1620, 1635, 1650, 1665, 1680]) {
+      await fix(d);
+      await page.waitForTimeout(220);
+    }
+    await wait(() => document.querySelector('.hud-game-road')?.dataset.chevrons === '0');
+    assert.notEqual(await frame(), before);
+    for (const d of [1695, 1700]) await fix(d);
+    await wait(() => document.querySelector('.hud-status')?.textContent === 'Положение уточняется');
+    assert.equal(await page.locator('.hud-game-road').getAttribute('data-chevrons'), '0');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('.hud[data-style="game"]').waitFor();
+    assert.equal(await page.locator('.hud').getAttribute('data-mirror'), '0');
+    assert.equal(await page.locator('.hud-game-road').getAttribute('data-chevrons'), '0');
+    console.log('✓ Игровой HUD: сохранённый стиль, зеркальное отображение, движение шевронов офлайн, исчезновение после манёвра и при потере позиции');
+    if (record) {
+      const video = page.video();
+      await ctx.close();
+      await video.saveAs(`${out}/game-hud-turn.webm`);
+    }
+  }
+  if (!gameHud) {
   await click('Выйти из HUD');
   await wait(() => document.querySelector('.android-position-tag') ||
     document.querySelector('.android-cue.is-visible')?.textContent.includes('Положение уточняется'));
@@ -139,6 +179,7 @@ try {
   await page.locator('.ml-map canvas').dispatchEvent('pointerdown');
   await page.getByRole('button', { name: 'Завершить маршрут' }).waitFor();
   console.log('✓ Старт без GPS, поиск, маршрут, камера, приближение, HUD, потеря GPS и скрытие управления');
+  }
 } finally {
   await browser.close();
 }

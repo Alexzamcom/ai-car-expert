@@ -744,6 +744,10 @@ function HudSettingsCard() {
         голос продолжают работать. Системную яркость и постоянно включённый экран веб-приложение гарантировать не может.
       </p>
       <div className="setting-row">
+        <div><strong>Стиль HUD</strong></div>
+        {seg('Стиль HUD', h.style ?? 'classic', [['classic', 'Классический'], ['game', 'Игровой']] as const, (style) => patch({ style }))}
+      </div>
+      <div className="setting-row">
         <div>
           <strong>Режим</strong>
           <small>{HUD_MODES.find((m) => m.id === h.mode)?.hint}</small>
