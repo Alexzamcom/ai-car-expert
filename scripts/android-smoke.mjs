@@ -177,12 +177,18 @@ try {
 
   adb('shell', 'input', 'keyevent', '223');
   await until(() => /mWakefulness=Asleep/.test(adb('shell', 'dumpsys', 'power')), 'Emulator screen did not lock');
-  fix(37.61524, 55.7573);
+  if (hybrid) fix(37.61553, 55.75708);
+  else fix(37.61524, 55.7573);
   await sleep(2500);
   adb('shell', 'input', 'keyevent', '224');
   adb('shell', 'wm', 'dismiss-keyguard');
   await page.waitForFunction(() => document.visibilityState === 'visible');
-  await position(37.61488, 55.7576);
+  // The native estimator must reject a teleport from a stopped vehicle.
+  // Advance ~20 m across sleep/wake so reacquisition tests a reachable trajectory.
+  if (hybrid) {
+    await position(37.61546, 55.75716);
+    await page.waitForFunction(() => window.__aceMap.state().nativePosition.trust === 'confirmed');
+  } else await position(37.61488, 55.7576);
   assert.equal(await page.evaluate(() => window.__aceMap.state().routePoints), routePoints);
   assert(await guiding.isVisible());
   console.log('✓ Screen sleep/wake delivers a fresh GPS fix and keeps the active route');
