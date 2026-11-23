@@ -35,10 +35,13 @@ async function until(fn, message, timeout = 60_000) {
 }
 
 const apiLevel = Number(adb('shell', 'getprop', 'ro.build.version.sdk'));
+let webViewVersion = null;
 if (apiLevel <= 29) {
   // The old image can spend a full minute initializing PackageManager after boot.
   console.log(execFileSync('adb', ['install', '--no-streaming', '-r', '-g', apk], { encoding: 'utf8', timeout: 120_000 }).trim());
-  console.log(adb('shell', 'dumpsys', 'webviewupdate').split('\n').find((line) => line.includes('Current WebView package')));
+  const provider = adb('shell', 'dumpsys', 'webviewupdate').split('\n').find((line) => line.includes('Current WebView package'));
+  console.log(provider);
+  webViewVersion = Number(provider?.match(/, (\d+)\./)?.[1]) || null;
 } else adb('install', '-r', ...(scaleCheck ? ['-g'] : []), apk);
 adb('shell', 'settings', 'put', 'system', 'screen_off_timeout', '600000');
 if (apiLevel <= 29) adb('shell', 'settings', 'put', 'secure', 'location_mode', '3');
@@ -56,6 +59,11 @@ await until(() => {
   return false;
 }, 'Android did not grant precise foreground location');
 console.log('✓ APK installed, launched and granted precise foreground location in Android');
+if (apiLevel <= 29 && webViewVersion != null && webViewVersion < 80) {
+  assert(adb('shell', 'pidof', app), 'The Android 10 activity did not stay running');
+  console.log(`✓ Android 10 package/permissions/launch smoke. WebView ${webViewVersion} predates the module workers required by MapLibre; skipping browser driving on this image.`);
+  process.exit(0);
+}
 
 const [device] = await android.devices();
 assert(device, 'Playwright did not find the Android emulator');
