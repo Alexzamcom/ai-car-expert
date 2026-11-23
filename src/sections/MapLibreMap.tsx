@@ -553,7 +553,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             const { progress, route } = nav;
             const i = progress?.segIndex;
             let segment = i != null && route && progress && progress.offRouteM < 15 ? route.coords.slice(i, i + 2) : [];
-            if (i != null && route && segment.length === 2 && route.coords[i + 2]) {
+            if (gps.nativeTrust == null && i != null && route && segment.length === 2 && route.coords[i + 2]) {
               const pos = { lat: g.lat, lon: g.lon };
               const [a, b] = segment;
               const c = route.coords[i + 2];
@@ -563,7 +563,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             const estimated = gps.nativeTrust != null && gps.nativeTrust !== 'confirmed';
             const reliable = p.autonomous || (estimated && (gps.accuracy ?? Infinity) <= 150) || (!gps.held && (gps.accuracy ?? Infinity) <= 50 && Date.now() - (gps.updated ?? 0) <= 5000);
             animation.receive({ lat: g.lat, lon: g.lon, heading: g.heading, speedMps: speed, reliable,
-              predict: !p.autonomous && displayStore.get().mode !== 'predicted',
+              predict: !p.autonomous && !(gps.nativeTrust != null && guiding.current) && displayStore.get().mode !== 'predicted',
               roadHeading: guiding.current && (speed ?? 0) > 1.5 && segment.length === 2 && haversine(segment[0], segment[1]) > 2
                 ? courseBetween(segment[0], segment[1]) : null }, now);
           }

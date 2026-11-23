@@ -1,3 +1,4 @@
+import { ConfirmedRoute } from './confirmedRoute';
 import { nativePosition, usesAndroidNativePosition } from './geo/nativePosition';
 import { HybridPosition, type DrivingMeasurement, type PositionEstimate } from './geo/hybridPosition';
 import { courseBetween } from './autonomy/gnss';
@@ -364,10 +365,10 @@ export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'hi
     nativeTrust: native?.trust, speedSource: native?.speedSource, nativeReason: native ? nativeFusion.reason : undefined }));
   // Отображаемая позиция (привязка к дороге) — отдельно; решения ведения ниже — только по сырой точке.
   const nav = navStore.get();
-  updateDisplay({ lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speed: validDeg(fix.speed) ? fix.speed : null, heading, measuredCourse, timestamp: fix.timestamp }, nav.status === 'guiding' ? (nav.route?.coords ?? null) : null, now, !native);
+  if (!native || nav.status !== 'guiding' || !confirmedRoute) updateDisplay({ lat: fix.lat, lon: fix.lon, accuracy: fix.accuracy, speed: validDeg(fix.speed) ? fix.speed : null, heading, measuredCourse, timestamp: fix.timestamp }, nav.status === 'guiding' ? (nav.route?.coords ?? null) : null, now, !native);
   if (quality === 'precise') saveLastPos(fix);
   recordFix({ lat: fix.lat, lon: fix.lon }, fix.accuracy, speedKmh, now);
-  onPosition(fix, now);
+  onPosition(fix, now, native);
 }
 
 export function __resetGeo() {
@@ -428,7 +429,7 @@ function estimatedRoad() {
   const s = navStore.get();
   const point = nativeFusion.state;
   if (!point || s.status !== 'guiding' || !s.route || !routeCache) return undefined;
-  const p = routeProgress(s.route, point, routeCache, s.progress?.segIndex ?? 0);
+  const p = confirmedRoute?.snapshot().progress ?? routeProgress(s.route, point, routeCache, s.progress?.segIndex ?? 0);
   const a = s.route.coords[p.segIndex], b = s.route.coords[p.segIndex + 1];
   if (!a || !b || haversine(a, b) < 2 || p.offRouteM > 14) return undefined;
   return { heading: courseBetween(a, b), distance: p.offRouteM };
@@ -444,6 +445,17 @@ function publishNative(estimate: PositionEstimate | null, now: number, rawAt?: n
   const s = geoStore.get();
   geoStore.set({ ...s, status: 'watching', lat, lon, heading, accuracy, speedKmh: speed == null ? null : speed * 3.6,
     updated: now, fixAt: rawAt ?? s.fixAt, quality: 'approx', held: 'stale', source, nativeTrust: trust, speedSource, nativeReason: nativeFusion.reason });
+  const active = navStore.get();
+  if (active.status === 'guiding' && confirmedRoute) {
+    if (trust === 'network') return;
+    const match = confirmedRoute.update({ ...estimate, estimated: true, at: now, distanceM: trust === 'estimated' ? estimate.distanceM : 0 });
+    if (active.notice === 'Вы отклонились от маршрута') return;
+    if (active.progress || match.kind === 'estimated') {
+      showRouteMatch(match, estimate, now);
+      if (match.kind === 'estimated') navStore.set({ ...active, progress: match.progress });
+    }
+    return;
+  }
   const prev = displayStore.get();
   displayStore.set({ ...prev, lat, lon, heading, accuracy, mode: 'predicted', confidence: 0, at: now, reason: nativeFusion.reason });
   // Estimations can update a route overview, but never trigger arrival or rerouting.
@@ -456,6 +468,7 @@ function publishNative(estimate: PositionEstimate | null, now: number, rawAt?: n
 
 function acceptNative(input: DrivingMeasurement) {
   const now = Date.now();
+  nativeFusion.requireMotionEvidence = !!confirmedRoute && navStore.get().status === 'guiding';
   const rawAt = input.kind === 'position' ? input.data.at : undefined;
   const estimate = nativeFusion.update(input, now, input.kind === 'motion' && nativeFusion.state?.trust !== 'confirmed' ? estimatedRoad() : undefined);
   publishNative(estimate, now, estimate?.trust === 'held' ? undefined : rawAt);
@@ -500,6 +513,7 @@ async function startNativePosition(ask: boolean) {
     geoStore.set((s) => ({ ...s, status: 'watching', permission: 'granted' }));
     nativeTimer = setInterval(() => {
       const now = Date.now();
+      nativeFusion.requireMotionEvidence = !!confirmedRoute && navStore.get().status === 'guiding';
       publishNative(nativeFusion.tick(now, estimatedRoad()), now);
     }, 500);
   } catch (error) {
@@ -677,6 +691,21 @@ const emptyNav = (): NavState => ({ dest: null, via: null, route: null, routes: 
 export const navStore = createStore<NavState>(emptyNav());
 
 const routeTrimmer = new RouteTrimmer();
+let confirmedRoute: ConfirmedRoute | null = null;
+let routeId = '';
+let routeBuiltAt = 0;
+
+function showRouteMatch(match: ReturnType<ConfirmedRoute['update']>, pos: LatLon & { heading?: number | null; accuracy: number; speed: number | null }, now: number) {
+  const previous = displayStore.get();
+  const offRoute = match.kind === 'off-route';
+  const point = offRoute ? pos : match.point;
+  const heading = offRoute ? pos.heading ?? previous.heading
+    : (pos.speed ?? 0) > 0.8 && match.kind !== 'held' ? match.heading : previous.heading ?? match.heading;
+  displayStore.set({ ...previous, lat: point.lat, lon: point.lon, heading, accuracy: pos.accuracy, at: now,
+    mode: offRoute ? 'raw' : match.kind === 'matched' ? 'matched' : 'predicted', confidence: match.kind === 'matched' ? 1 : 0,
+    lineId: offRoute ? null : 'route:confirmed', segment: offRoute ? null : match.progress.segIndex, hasRoute: true,
+    shift: haversine(pos, point), reason: match.kind });
+}
 let routeCache: { route: Route; cum: number[]; offsets: number[] } | null = null;
 let routeAbort: AbortController | null = null;
 let lastReroute = 0;
@@ -720,6 +749,9 @@ function setRoute(route: Route) {
   const cum = cumulative(route.coords);
   routeCache = { route, cum, offsets: stepOffsets(route, cum) };
   routeTrimmer.reset();
+  confirmedRoute = usesAndroidNativePosition() && route.coords.length >= 2 ? new ConfirmedRoute(route, routeCache) : null;
+  routeId = globalThis.crypto?.randomUUID?.() ?? String(Date.now());
+  routeBuiltAt = Date.now();
   visibleRoute = undefined;
   announced.clear();
 }
@@ -795,11 +827,11 @@ export function startGuidance() {
   if (settingsStore.get().minimalGuidance) setMinimal(true);
   guidanceStarts += 1;
   offRouteCount = 0;
-  if (acceptedFix && geoStore.get().held == null) onPosition(acceptedFix, Date.now());
+  if (acceptedFix && geoStore.get().held == null) onPosition(acceptedFix, Date.now(), nativeFusion.state?.trust === 'confirmed' ? nativeFusion.state : undefined);
   const current = navStore.get();
   const p = current.progress;
   const step = p && s.route.steps[p.stepIndex];
-  if (current.status === 'guiding' && p && step && step.type !== 'arrive') say(`${stepText(step, navLang())}, ${t('through')} ${fmtDistance(p.toStepM, navLang())}`);
+  if (current.status === 'guiding' && p && Number.isFinite(p.offRouteM) && step && step.type !== 'arrive') say(`${stepText(step, navLang())}, ${t('through')} ${fmtDistance(p.toStepM, navLang())}`);
 }
 
 /** Голосовые подсказки навигации: выключение сразу прерывает текущую фразу, но не музыку, радио и ведение. */
@@ -816,6 +848,7 @@ export function stopNavigation() {
   if (driveUiStore.get().minimal) setMinimal(false);
   routeAbort?.abort();
   routeCache = null;
+  confirmedRoute = null;
   routeTrimmer.reset();
   visibleRoute = undefined;
   pendingReroute = false;
@@ -867,22 +900,44 @@ function reroute(pos: LatLon) {
 }
 
 if (typeof window !== 'undefined') {
+  window.addEventListener('offline', () => {
+    const s = navStore.get();
+    if (!confirmedRoute || s.status !== 'guiding' || !s.rerouting) return;
+    routeAbort?.abort();
+    navStore.set({ ...s, rerouting: false });
+  });
   window.addEventListener('online', () => {
     const s = navStore.get();
     const pos = currentPos();
+    if (confirmedRoute && s.status === 'guiding') {
+      confirmedRoute.requireFreshEvidence();
+      return;
+    }
     if (pendingReroute && s.status === 'guiding' && pos) reroute(pos);
     else if (s.notice) navStore.set({ ...s, notice: null });
   });
 }
 
-function onPosition(pos: RawFix, now: number) {
+function onPosition(pos: RawFix, now: number, native?: PositionEstimate) {
   const { accuracy } = pos;
   const s = navStore.get();
   if (!s.route || !routeCache || (s.status !== 'guiding' && s.status !== 'preview')) return;
   const use = guidanceUse(accuracy);
   // Приблизительная точка (> 100 м) только показывается на карте: прогресс по маршруту не сдвигаем, если он уже есть.
   if (use === 'display' && s.progress && s.status === 'guiding') return;
-  const p = routeProgress(s.route, pos, routeCache, s.progress?.segIndex ?? 0);
+  let p: Progress;
+  if (s.status === 'guiding' && confirmedRoute) {
+    if (!native || now - pos.timestamp > 5000) return;
+    const match = confirmedRoute.update({ ...pos, heading: native.heading, estimated: false, at: pos.timestamp });
+    p = match.progress;
+    showRouteMatch(match, { ...pos, heading: native.heading }, now);
+    if (match.kind !== 'matched') {
+      const deviated = match.kind === 'off-route';
+      navStore.set({ ...s, progress: p, notice: deviated ? 'Вы отклонились от маршрута' : 'Положение на маршруте требует уточнения' });
+      if (deviated && navigator.onLine && !s.rerouting && now - lastReroute > 15_000) reroute(pos);
+      return;
+    }
+  } else p = routeProgress(s.route, pos, routeCache, s.progress?.segIndex ?? 0);
   const full = use === 'full';
   const guiding = s.status === 'guiding';
   const finish = s.route.coords.at(-1);
@@ -900,7 +955,7 @@ function onPosition(pos: RawFix, now: number) {
   const routeCutM = guiding && full && now - pos.timestamp <= 10_000
     ? updateRouteCut(s.route, p, pos.timestamp, pos.speed)
     : s.routeCutM;
-  navStore.set({ ...s, progress: p, routeCutM });
+  navStore.set({ ...s, progress: p, routeCutM, notice: confirmedRoute && !s.rerouting ? null : s.notice });
   if (!guiding || use === 'display') return;
 
   // Сход с маршрута: 3 точки подряд дальше 60 м (с учётом точности GPS) → перестроение.
@@ -1101,6 +1156,7 @@ export async function navigateToQuery(query: string): Promise<{ ok: boolean; tex
    Цель, промежуточная точка и режим ведения сохраняются; маршрут перестраивается при возвращении. */
 
 const NAV_KEY = 'ace:nav-session';
+const NAV_PROGRESS_KEY = 'ace:nav-progress';
 const NAV_TTL = 6 * 3600 * 1000;
 let lastSaved = '';
 
@@ -1110,6 +1166,9 @@ export interface NavSession {
   guiding: boolean;
   at: number;
   route?: Route;
+  routeId?: string;
+  builtAt?: number;
+  geometry?: { cum: number[]; offsets: number[] };
 }
 
 let lastSavedRoute: Route | null = null;
@@ -1117,13 +1176,20 @@ navStore.subscribe(() => {
   const s = navStore.get();
   // Пишем только при смене цели/остановки/режима, а не на каждую точку GPS.
   const key = s.dest ? JSON.stringify([s.dest, s.via, s.status === 'guiding']) : '';
+  try {
+    if (confirmedRoute && s.status === 'guiding') {
+      const progress = JSON.stringify({ id: routeId, along: Math.floor(confirmedRoute.along) });
+      if (localStorage.getItem(NAV_PROGRESS_KEY) !== progress) localStorage.setItem(NAV_PROGRESS_KEY, progress);
+    } else if (s.status !== 'routing') localStorage.removeItem(NAV_PROGRESS_KEY);
+  } catch { /* browser storage can be unavailable */ }
   if (key === lastSaved && (!androidDriving || s.route === lastSavedRoute) || s.status === 'routing') return;
   lastSaved = key;
   lastSavedRoute = s.route;
   try {
     if (!s.dest || s.status === 'arrived') localStorage.removeItem(NAV_KEY);
     else localStorage.setItem(NAV_KEY, JSON.stringify({ dest: s.dest, via: s.via, guiding: s.status === 'guiding', at: Date.now(),
-      route: androidDriving && s.route && s.route.coords.length <= 20_000 ? s.route : undefined } satisfies NavSession));
+      route: androidDriving && s.route ? s.route : undefined, routeId: androidDriving ? routeId : undefined,
+      builtAt: androidDriving ? routeBuiltAt : undefined, geometry: androidDriving && routeCache ? { cum: routeCache.cum, offsets: routeCache.offsets } : undefined } satisfies NavSession));
   } catch {
     /* хранилище недоступно */
   }
@@ -1134,7 +1200,7 @@ export function readNavSession(now = Date.now()): NavSession | null {
     const raw = localStorage.getItem(NAV_KEY);
     if (!raw) return null;
     const s = JSON.parse(raw) as NavSession;
-    return s.dest && now - s.at < NAV_TTL ? s : null;
+    return s.dest && (s.guiding && s.route || now - s.at < NAV_TTL) ? s : null;
   } catch {
     return null;
   }
@@ -1147,9 +1213,18 @@ export function restoreNavSession() {
   const route = saved.route;
   if (androidDriving && route && route.coords?.length >= 2 && route.steps?.length) {
     setRoute(route);
+    if (saved.routeId) routeId = saved.routeId;
+    if (saved.builtAt) routeBuiltAt = saved.builtAt;
+    if (confirmedRoute && routeCache && saved.guiding) {
+      try {
+        const checkpoint = JSON.parse(localStorage.getItem(NAV_PROGRESS_KEY) ?? 'null');
+        if (checkpoint?.id === routeId && Number.isFinite(checkpoint.along)) confirmedRoute = new ConfirmedRoute(route, routeCache, checkpoint.along);
+      } catch { /* a damaged checkpoint can be rebuilt from GNSS */ }
+    }
     const pos = currentPos();
     navStore.set({ ...navStore.get(), dest: saved.dest, via: saved.via, route, routes: [route],
-      status: saved.guiding ? 'guiding' : 'preview', progress: pos ? routeProgress(route, pos, routeCache!) : null });
+      status: saved.guiding ? 'guiding' : 'preview', progress: confirmedRoute && saved.guiding ? confirmedRoute.snapshot(Infinity).progress
+        : pos ? routeProgress(route, pos, routeCache!) : null });
     return;
   }
   const go = async () => {

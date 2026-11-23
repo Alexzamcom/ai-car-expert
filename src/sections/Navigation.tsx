@@ -743,9 +743,9 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
         {androidDriving && offline.local && (
           <div className="android-offline-tag" role="status">{offline.region ? `Офлайн · ${offline.region}` : 'Нет загруженной карты'}</div>
         )}
-        {androidDriving && (guiding && !trustedGeo || !guiding && located && !panelOpen && !androidMenu &&
+        {androidDriving && (guiding && (!trustedGeo || nav.notice) || !guiding && located && !panelOpen && !androidMenu &&
           geo.nativeTrust != null && geo.nativeTrust !== 'confirmed') && <div className="android-position-tag" role="status">
-          {geo.nativeTrust === 'network' ? 'Приблизительная сетевая позиция' : geo.nativeTrust === 'estimated' ? 'Положение оценено по датчикам' : 'Положение не подтверждено'}
+          {guiding && nav.notice ? nav.notice : geo.nativeTrust === 'network' ? 'Приблизительная сетевая позиция' : geo.nativeTrust === 'estimated' ? 'Положение оценено по датчикам' : 'Положение не подтверждено'}
           {onAutonomy && !panelHidden && <button className="btn" onClick={() => {
             const active = navStore.get();
             if (active.route && active.dest && active.route.coords.length <= 20_000) {
