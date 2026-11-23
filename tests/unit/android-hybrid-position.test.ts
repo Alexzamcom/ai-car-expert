@@ -70,6 +70,16 @@ describe('Нативное позиционирование Android', () => {
     expect(recovering).toMatchObject({ trust: 'recovering' });
     expect(haversine(before, recovering!)).toBeLessThanOrEqual(12.1);
   });
+  it('удерживает позицию на подтверждённом маршруте без доказательств движения', () => {
+    const h = moving();
+    h.requireMotionEvidence = true;
+    const last = h.state!;
+    for (let t = 3200; t < 6700; t += 100) motion(h, t);
+    expect(haversine(last, h.state!)).toBeLessThan(0.01);
+    expect(h.state?.accuracy).toBeGreaterThan(last.accuracy);
+    for (let t = 6700; t < 8500; t += 100) motion(h, t, 0, 0.8);
+    expect(haversine(last, h.state!)).toBeGreaterThan(5);
+  });
   it('принимает подтверждённый поворот и непрерывный съезд с маршрута', () => {
     const h = moving();
     for (let t = 3000; t <= 4000; t += 100) motion(h, t, 90);

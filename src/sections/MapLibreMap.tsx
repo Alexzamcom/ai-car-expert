@@ -564,7 +564,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             const reliable = p.autonomous || (estimated && (gps.accuracy ?? Infinity) <= 150) || (!gps.held && (gps.accuracy ?? Infinity) <= 50 && Date.now() - (gps.updated ?? 0) <= 5000);
             animation.receive({ lat: g.lat, lon: g.lon, heading: g.heading, speedMps: speed, reliable,
               predict: !p.autonomous && !(gps.nativeTrust != null && guiding.current) && displayStore.get().mode !== 'predicted',
-              roadHeading: guiding.current && (speed ?? 0) > 1.5 && segment.length === 2 && haversine(segment[0], segment[1]) > 2
+              roadHeading: (p.autonomous || gps.nativeTrust == null) && guiding.current && (speed ?? 0) > 1.5 && segment.length === 2 && haversine(segment[0], segment[1]) > 2
                 ? courseBetween(segment[0], segment[1]) : null }, now);
           }
           if (to && to.lat === g.lat && to.lon === g.lon && headingTarget === g.heading) return;
