@@ -571,7 +571,8 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const step = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
   const next = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex + 1] : null;
   const located = geo.lat != null && geo.lon != null && (geo.accuracy ?? Infinity) <= 50;
-  const navReliable = located && !geo.held && cueClock - (geo.updated ?? 0) <= 3500 && (nav.progress?.offRouteM ?? Infinity) <= 35;
+  const trustedGeo = located && !geo.held && cueClock - (geo.updated ?? 0) <= 3500;
+  const navReliable = trustedGeo && (nav.progress?.offRouteM ?? Infinity) <= 35;
   const cue = androidDriving && guiding ? maneuverNotice(nav.route, nav.progress, geo.speedKmh, navReliable) : null;
   const lastCue = useRef(cue);
   if (cue) lastCue.current = cue;
@@ -742,7 +743,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
         {androidDriving && offline.local && (
           <div className="android-offline-tag" role="status">{offline.region ? `Офлайн · ${offline.region}` : 'Нет загруженной карты'}</div>
         )}
-        {androidDriving && guiding && !navReliable && <div className="android-position-tag" role="status">
+        {androidDriving && guiding && !trustedGeo && <div className="android-position-tag" role="status">
           Положение не подтверждено
           {onAutonomy && !panelHidden && <button className="btn" onClick={() => {
             const active = navStore.get();

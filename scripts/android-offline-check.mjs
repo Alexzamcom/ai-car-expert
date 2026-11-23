@@ -110,7 +110,8 @@ try {
     const s = window.__aceMap?.state();
     return s?.offline.region === 'Тестовый район' && s.routePoints > 2 && s.raw.lat == null && !s.car;
   });
-  assert(await page.getByText('Положение не подтверждено', { exact: true }).isVisible());
+  assert.match(await page.locator('.android-position-tag').innerText(), /Положение не подтверждено/);
+  assert(await page.locator('.android-position-tag').getByRole('button', { name: 'Старт вручную' }).isVisible());
   blocked = false;
   await page.evaluate(() => { sessionStorage.removeItem('test-offline'); window.dispatchEvent(new Event('online')); });
   await wait(() => {
@@ -118,5 +119,13 @@ try {
     return !s.offline.local && window.__aceMap.map.getStyle()?.glyphs?.startsWith('https:') && s.raw.lat == null && s.routePoints > 2;
   });
   assert.equal(routeRequests, 0, 'No routing server calls while restoring the existing route');
+  await click('Дополнительные настройки');
+  await click('Настройки навигации и HUD');
+  const section = page.getByRole('region', { name: 'Офлайн-карты' });
+  await section.getByRole('button', { name: 'Обновить', exact: true }).evaluate((el) => el.click());
+  await page.getByText('Регион доступен без интернета.', { exact: true }).waitFor();
+  assert.equal(await section.getByText('Тестовый район', { exact: true }).count(), 1);
+  await section.getByRole('button', { name: 'Удалить', exact: true }).evaluate((el) => el.click());
+  await section.getByText('Тестовый район', { exact: true }).waitFor({ state: 'hidden' });
   console.log('✓ 4 режима сети и GPS: загрузка региона, локальные векторы и названия, сохранённый маршрут, холодный офлайн-старт и возврат к онлайн-стилю');
 } finally { await browser.close(); }
