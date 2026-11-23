@@ -39,7 +39,7 @@ if (apiLevel <= 29) {
   // The old image can spend a full minute initializing PackageManager after boot.
   console.log(execFileSync('adb', ['install', '--no-streaming', '-r', '-g', apk], { encoding: 'utf8', timeout: 120_000 }).trim());
   console.log(adb('shell', 'dumpsys', 'webviewupdate').split('\n').find((line) => line.includes('Current WebView package')));
-} else adb('install', '-r', apk);
+} else adb('install', '-r', ...(scaleCheck ? ['-g'] : []), apk);
 adb('shell', 'settings', 'put', 'system', 'screen_off_timeout', '600000');
 if (apiLevel <= 29) adb('shell', 'settings', 'put', 'secure', 'location_mode', '3');
 else adb('shell', 'cmd', 'location', 'set-location-enabled', 'true');
@@ -54,7 +54,7 @@ await until(() => {
   const bounds = allow?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/)?.slice(1).map(Number);
   if (bounds) adb('shell', 'input', 'tap', String(Math.round((bounds[0] + bounds[2]) / 2)), String(Math.round((bounds[1] + bounds[3]) / 2)));
   return false;
-}, 'Android did not grant precise foreground location via its permission dialog');
+}, 'Android did not grant precise foreground location');
 console.log('✓ APK installed, launched and granted precise foreground location in Android');
 
 const [device] = await android.devices();
