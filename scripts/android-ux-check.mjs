@@ -268,10 +268,17 @@ try {
       return camera.following && camera.target?.pitch >= 67 && pitch > 64;
     });
     await page.screenshot({ path: `${out}/07-camera-return.png` });
-    await page.mouse.move(195, 480);
-    await page.mouse.down();
-    await page.mouse.move(280, 470, { steps: 10 });
-    await page.mouse.up();
+    const cdp = await ctx.newCDPSession(page);
+    const input = (type, x, y) => cdp.send('Input.dispatchTouchEvent', {
+      type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1 }],
+    });
+    await input('touchStart', 175, 424);
+    for (const x of [190, 210, 235, 260, 285]) {
+      await input('touchMove', x, 420);
+      await page.waitForTimeout(65);
+    }
+    await input('touchEnd');
+    await cdp.detach();
     await page.getByRole('button', { name: 'Вернуться к автомобилю' }).waitFor();
   }
   const activeCue = page.locator('.android-cue.is-visible');

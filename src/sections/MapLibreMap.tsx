@@ -153,7 +153,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const cameraSnapshot = () => ({
         target: followTarget ? { ...androidChasePose(followTarget.speed, followTarget.lift, followTarget.landscape, map.getMaxPitch()), bearing: carNow?.heading ?? map.getBearing() } : null,
         applied: { pitch: map.getPitch(), zoom: map.getZoom(), bearing: map.getBearing() },
-        following: follow.current && touching === 0,
+        following: follow.current && touching === 0 && !pointerHeld,
         toStepM: (p.autonomous ? autonomyMap.get() : navStore.get()).progress?.toStepM ?? null,
       });
       map.on('render', () => frames++);
@@ -451,7 +451,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
               modelDeg: previous ? Math.abs(headingDelta(next.heading, previous.heading)) : 0,
               centerM: 0, cameraDeg: 0,
             };
-            if (followTarget && follow.current && guiding.current && touching === 0) {
+            if (followTarget && follow.current && guiding.current && touching === 0 && !pointerHeld) {
               const height = lift.update(followTarget.lift, dt / 1000);
               const followPose = androidChasePose(followTarget.speed, height, followTarget.landscape, map.getMaxPitch());
               const blend = 1 - Math.exp(-dt / 290);
@@ -496,12 +496,19 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
 
       /* ---------- Камера ---------- */
       let touching = 0;
+      let pointerHeld = false;
       let userZoom = false;
       const box = map.getCanvasContainer();
       const onTouch = (e: TouchEvent) => (touching = e.touches.length);
       box.addEventListener('touchstart', onTouch, { passive: true });
       box.addEventListener('touchend', onTouch, { passive: true });
-      const clearTouch = () => { touching = 0; };
+      const clearTouch = () => { touching = 0; pointerHeld = false; };
+      const holdPointer = () => { pointerHeld = true; };
+      if (androidDriving) {
+        box.addEventListener('pointerdown', holdPointer);
+        window.addEventListener('pointerup', clearTouch);
+        window.addEventListener('pointercancel', clearTouch);
+      }
       const interrupt = () => {
         if (androidDriving) follow.current = false;
         onUserMove.current();
@@ -515,7 +522,11 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         box.removeEventListener('touchcancel', clearTouch);
         window.removeEventListener('orientationchange', clearTouch);
         window.removeEventListener('blur', clearTouch);
+        box.removeEventListener('pointerdown', holdPointer);
+        window.removeEventListener('pointerup', clearTouch);
+        window.removeEventListener('pointercancel', clearTouch);
       });
+      if (androidDriving) map.on('movestart', (e) => { if (e.originalEvent && follow.current) interrupt(); });
       for (const ev of ['dragstart', 'rotatestart', 'pitchstart'] as const) map.on(ev, (e) => {
         if ((e as { originalEvent?: Event }).originalEvent && follow.current) interrupt();
       });
@@ -729,7 +740,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         resumeFollow() {
           map.stop();
           userZoom = false;
-          touching = 0;
+          clearTouch();
           follow.current = true;
           recoveringCenter = true;
           camera.current(true);
