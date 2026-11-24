@@ -10,7 +10,7 @@ it('exports bounded Android location metadata even for rejected fixes, omitting 
   const payload = JSON.parse(json);
   expect(payload.samples).toHaveLength(60);
   expect(payload.samples.at(-1)).toEqual({
-    source: 'network', accuracy: 380, cached: true, at: 69, receivedAt: 1234, reason: 'Недостаточная заявленная точность',
+    source: 'network', accuracy: 380, cached: true, at: 69, receivedAt: 1234, ageMs: 1165, reason: 'Недостаточная заявленная точность',
   });
   expect(payload.status).toMatchObject({ playServices: 0, networkEnabled: true });
   expect(json).not.toMatch(/latitude|longitude|"lat"|"lon"|"speed"|"heading"|12\.34567|45\.6789/);

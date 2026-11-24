@@ -1,3 +1,4 @@
+import { recordLocationMarker } from '../lib/geo/locationDiagnostics';
 import { watchAndroidViewport } from '../lib/androidViewport';
 /* Карта навигации на MapLibre GL: векторная карта, поворот по движению, наклон 3D, 3D-машинка.
    Только отрисовка и камера: GPS, маршрут, остановки, перестроение, поиск и интерфейс поверх карты — общие
@@ -143,6 +144,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       }
       /* Диагностика жизненного цикла: создание/удаление, смена и загрузка стиля, ошибки, потеря WebGL, кадры. */
       mapDiag.create();
+      if (androidDriving && !p.autonomous) recordLocationMarker('waiting-for-display-position');
       map.on('style.load', () => mapDiag.styleLoad());
       const canvas = map.getCanvas();
       const onLost = () => mapDiag.contextLost();
@@ -164,6 +166,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (!p.autonomous && diagModeStore.get().on && carNow && to) {
           mapPositionStore.set({ marker: { lat: carNow.lat, lon: carNow.lon }, target: to,
             following: follow.current && touching === 0 && !hudUiStore.get().active, motion: androidDriving ? motionPeaks : undefined });
+        }
+        if (androidDriving && !p.autonomous && carNow && !hudUiStore.get().active) {
+          const canvasPoint = map.project([carNow.lon, carNow.lat]);
+          const canvas = map.getCanvas();
+          recordLocationMarker(canvasPoint.x < 0 || canvasPoint.y < 0 ||
+            canvasPoint.x > canvas.clientWidth || canvasPoint.y > canvas.clientHeight ? 'marker-outside-viewport'
+            : car3d.renderedBounds ? '3d-marker-rendered' : car3d.failed ? 'flat-marker-on-map' : '3d-marker-awaits-render');
         }
         motionPeaks = { modelM: 0, modelDeg: 0, centerM: 0, cameraDeg: 0 };
       }, 1000);
@@ -313,7 +322,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const drawAcc = () => {
         const g = geoStore.get();
         const src = map.getSource('acc') as GeoJSONSource | undefined;
-        const show = !p.autonomous && g.lat != null && g.lon != null && (g.accuracy ?? 0) > 30;
+        const show = !p.autonomous && g.lat != null && g.lon != null && ((g.accuracy ?? 0) > 30 || g.nativeTrust === 'network');
         src?.setData(show ? circle({ lat: g.lat!, lon: g.lon! }, g.accuracy!) : empty);
         accShown = src && show ? g.accuracy! : 0;
       };
@@ -487,6 +496,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           } else {
             flatMarker.setLngLat([pos.lon, pos.lat]).setRotation(headingShown);
             if (!flatOn) flatMarker.addTo(map);
+            if (androidDriving && !p.autonomous && changed) recordLocationMarker('flat-marker-on-map');
           }
         }
         raf = requestAnimationFrame(frame);
@@ -599,7 +609,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           }
           if (g.lat == null || g.lon == null) return;
           if (!to && androidDriving && !p.autonomous) {
-            if ((geoStore.get().accuracy ?? Infinity) > 50 && geoStore.get().nativeTrust !== 'network') return;
+            if ((geoStore.get().accuracy ?? Infinity) > 50 && geoStore.get().nativeTrust !== 'network') {
+              recordLocationMarker('display-position-not-accurate-enough');
+              return;
+            }
             if (follow.current) map.jumpTo({ center: [g.lon, g.lat], zoom: 16 });
           }
           const now = performance.now();
@@ -876,6 +889,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
     })();
     return () => {
       disposed = true;
+      if (androidDriving && !p.autonomous) recordLocationMarker('map-not-ready');
       cleanups.forEach((f) => f());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

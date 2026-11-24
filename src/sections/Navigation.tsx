@@ -1,4 +1,3 @@
-import { locateOnAndroid } from '../lib/nav';
 import { usesAndroidNativePosition } from '../lib/geo/nativePosition';
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { offlineStatus } from '../lib/offlineMaps';
@@ -515,13 +514,6 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
     }
     const native = usesAndroidNativePosition();
     if (!native) startGeo();
-    else void locateOnAndroid().then((message) => {
-      const fix = geoStore.get();
-      if (!guiding && fix.nativeTrust === 'network' && fix.lat != null && fix.lon != null) {
-        mlApi.current?.centerOn({ lat: fix.lat, lon: fix.lon }, 15);
-      }
-      toast(message);
-    });
     zoomBand.current = null; // масштаб по скорости — заново
     const target = disp.lat != null && disp.lon != null ? disp : geo;
     if (target.lat != null && target.lon != null) {
@@ -529,7 +521,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
       else if (engine === 'maplibre') mlApi.current?.centerOn({ lat: target.lat, lon: target.lon }, guiding ? undefined : 16);
       else map.current?.setView([target.lat, target.lon], guiding ? 17 : 16);
     }
-    else if (native) toast('Запрашиваю место у Android…');
+    else if (native) toast('Геопозиция уточняется автоматически');
     else if (geo.status === 'denied') toast(`Геопозиция запрещена. ${geoHelp()}`, 'warn');
     else toast('Ищу геопозицию…');
   };
@@ -783,10 +775,8 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
           }}>Старт вручную</button>}
         </div>}
         {androidDriving && !located && !guiding && !nav.dest && !pick && !panelOpen && !androidMenu && (
-          <div className="android-locate card-float">
-            <strong>Определите местоположение</strong>
-            <div><button className="btn btn-primary" onClick={recenter}>Найти меня</button>
-              {onAutonomy && <button className="btn" onClick={onAutonomy}>Старт вручную</button>}</div>
+          <div className="android-position-tag" role="status">
+            {geo.status === 'denied' ? 'Геопозиция недоступна. Проверьте разрешение в настройках Android' : 'Ищем местоположение…'}
           </div>
         )}
         {androidDriving && androidMenu && (

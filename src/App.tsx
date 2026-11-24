@@ -1,5 +1,5 @@
 import { watchAndroidViewport } from './lib/androidViewport';
-import { usesAndroidNativePosition } from './lib/geo/nativePosition';
+import { nativePosition, usesAndroidNativePosition } from './lib/geo/nativePosition';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { androidDriving } from './lib/androidDriving';
 import { Capacitor } from '@capacitor/core';
@@ -89,6 +89,11 @@ export function App() {
       if (document.visibilityState !== 'visible') return;
       // После фона iOS может отдать старую точку: перезапускаем слежение за свежей.
       if (geoStore.get().status !== 'denied' && geoStore.get().status !== 'idle') restartGeo();
+      else if (usesAndroidNativePosition() && geoStore.get().status === 'denied') {
+        void nativePosition.diagnostics().then((status) => {
+          if (status.fine || status.coarse) startGeo();
+        }).catch(() => {});
+      }
       const h = takeReturn();
       if (!h) return;
       if (h.app === 'chatgpt') toast(chatgptReturnMessage(h), 'ok');

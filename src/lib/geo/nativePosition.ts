@@ -5,6 +5,9 @@ import type { MotionObservation, PositionObservation } from './hybridPosition';
 interface NativeLocation {
   start(options: { ask: boolean }): Promise<AndroidLocationStatus>;
   exportDiagnostics(options: { json: string }): Promise<void>;
+  diagnostics(): Promise<AndroidLocationStatus>;
+  copyDiagnostics(options: { json: string }): Promise<void>;
+  acknowledge(options: { sequence: number }): Promise<void>;
   refresh(): Promise<AndroidLocationStatus>;
   stop(): Promise<void>;
   addListener(event: 'position', fn: (sample: PositionObservation) => void): Promise<PluginListenerHandle>;

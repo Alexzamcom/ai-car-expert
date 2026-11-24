@@ -1,4 +1,4 @@
-import { androidLocationDiagnostics, recordLocationSample, recordLocationStatus } from './geo/locationDiagnostics';
+import { androidLocationDiagnostics, recordLocationMarker, recordLocationSample, recordLocationStatus } from './geo/locationDiagnostics';
 import { ConfirmedRoute } from './confirmedRoute';
 import { nativePosition, usesAndroidNativePosition } from './geo/nativePosition';
 import { HybridPosition, type DrivingMeasurement, type PositionEstimate } from './geo/hybridPosition';
@@ -448,7 +448,10 @@ function publishNative(estimate: PositionEstimate | null, now: number, rawAt?: n
     updated: now, fixAt: rawAt ?? s.fixAt, quality: 'approx', held: 'stale', source, nativeTrust: trust, speedSource, nativeReason: nativeFusion.reason });
   const active = navStore.get();
   if (active.status === 'guiding' && confirmedRoute) {
-    if (trust === 'network') return;
+    if (trust === 'network') {
+      recordLocationMarker('approximate-position-awaits-route-confirmation');
+      return;
+    }
     const match = confirmedRoute.update({ ...estimate, estimated: true, at: now, distanceM: trust === 'estimated' ? estimate.distanceM : 0 });
     if (active.notice === 'Вы отклонились от маршрута') return;
     if (active.progress || match.kind === 'estimated') {
@@ -472,7 +475,10 @@ function acceptNative(input: DrivingMeasurement) {
   nativeFusion.requireMotionEvidence = !!confirmedRoute && navStore.get().status === 'guiding';
   const rawAt = input.kind === 'position' ? input.data.at : undefined;
   const estimate = nativeFusion.update(input, now, input.kind === 'motion' && nativeFusion.state?.trust !== 'confirmed' ? estimatedRoad() : undefined);
-  if (input.kind === 'position') recordLocationSample(input.data, now, nativeFusion.reason);
+  if (input.kind === 'position') {
+    recordLocationSample(input.data, now, nativeFusion.reason, estimate?.trust ?? 'rejected');
+    if (input.data.sequence != null) void nativePosition.acknowledge({ sequence: input.data.sequence }).catch(() => {});
+  }
   publishNative(estimate, now, estimate?.trust === 'held' ? undefined : rawAt);
   if (!estimate && input.kind === 'position' && geoStore.get().nativeReason !== nativeFusion.reason) {
     geoStore.set((s) => ({ ...s, nativeReason: nativeFusion.reason }));
@@ -517,8 +523,20 @@ async function startNativePosition(ask: boolean) {
     if (generation !== nativeGeneration) return;
     nativePermissionRequested = false;
     geoStore.set((s) => ({ ...s, status: 'watching', permission: 'granted' }));
+    let retryDelay = 12_000;
+    let retryAt = Date.now() + retryDelay;
     nativeTimer = setInterval(() => {
       const now = Date.now();
+      const state = geoStore.get();
+      const ready = state.nativeTrust === 'confirmed' || state.nativeTrust === 'network';
+      if (ready) {
+        retryDelay = 12_000;
+        retryAt = now + retryDelay;
+      } else if (now >= retryAt && document.visibilityState === 'visible') {
+        retryDelay = Math.min(60_000, retryDelay * 2);
+        retryAt = now + retryDelay;
+        void nativePosition.refresh().then(recordLocationStatus).catch(() => {});
+      }
       nativeFusion.requireMotionEvidence = !!confirmedRoute && navStore.get().status === 'guiding';
       publishNative(nativeFusion.tick(now, estimatedRoad()), now);
     }, 500);

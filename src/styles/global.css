@@ -1672,11 +1672,9 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .android-drive .android-cue.is-urgent { color: var(--accent-ink); background: var(--accent); }
 .android-drive .android-cue div { min-width: 0; display: grid; gap: 2px; }
 .android-drive .android-cue span { font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.android-drive .android-locate, .android-drive .android-drive-menu {
+.android-drive .android-drive-menu {
   position: absolute; display: grid; gap: 9px; padding: 12px; pointer-events: auto; z-index: 4;
 }
-.android-drive .android-locate { bottom: 28px; left: 12px; right: 70px; max-width: 430px; }
-.android-drive .android-locate > div { display: flex; flex-wrap: wrap; gap: 6px; }
 .android-drive .android-drive-menu { top: 70px; right: 12px; width: min(320px, calc(100% - 24px)); }
 .android-drive .android-drive-shortcuts { position: absolute; bottom: 28px; left: 12px; }
 .android-drive .panel {
