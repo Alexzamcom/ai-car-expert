@@ -510,6 +510,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
     setFollow(true);
     if (androidDriving && guiding && mlApi.current?.resumeFollow && (disp.lat != null || geo.lat != null)) {
       mlApi.current.resumeFollow();
+      setPanelHidden(false);
       return;
     }
     const native = usesAndroidNativePosition();
@@ -604,7 +605,9 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const straight = nav.dest && geo.lat != null && geo.lon != null ? haversine({ lat: geo.lat, lon: geo.lon }, nav.dest) : null;
 
   return (
-    <div className={`navigation ${guiding ? 'android-guiding' : ''}`} onPointerDownCapture={() => { if (androidDriving && guiding && panelHidden) setPanelHidden(false); }}>
+    <div className={`navigation ${guiding ? 'android-guiding' : ''}`} onPointerDownCapture={(event) => {
+      if (androidDriving && guiding && panelHidden && !(event.target as Element).closest('.recenter-needed')) setPanelHidden(false);
+    }}>
       {engine === 'maplibre' ? (
         <Suspense fallback={<div className="map" />}>
           <MapErrorBoundary>
