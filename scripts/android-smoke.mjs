@@ -122,6 +122,25 @@ try {
     assert.equal(await page.locator('.dock').count(), 0);
     await page.screenshot({ path: `${screenshotDir}/01-home.png` });
   }
+  if (process.env.EXPECT_PHONE_PICKER === '1') {
+    await page.locator('#map-search').evaluate((input) => input.focus());
+    await click(page.getByRole('button', { name: 'Добавить место' }));
+    await click(page.locator('.place-editor').getByRole('radio', { name: 'Дом', exact: true }));
+    await click(page.getByRole('button', { name: 'Указать на карте' }));
+    const confirm = page.getByRole('button', { name: 'Подтвердить', exact: true });
+    await page.waitForFunction(() => [...document.querySelectorAll('.place-map-picker button')]
+      .some((button) => button.textContent === 'Подтвердить' && !button.disabled));
+    const [, width, height] = [...adb('shell', 'wm', 'size').matchAll(/(\d+)x(\d+)/g)].at(-1);
+    adb('shell', 'input', 'tap', String(Math.round(width * 0.67)), String(Math.round(height * 0.43)));
+    await page.waitForFunction(() => parseFloat(document.querySelector('.place-map-picker-pin')?.style.left) >
+      document.querySelector('.place-map-picker-map')?.clientWidth * 0.60);
+    await click(confirm);
+    assert(await page.evaluate(() => {
+      const home = JSON.parse(localStorage.getItem('ace:places') ?? '[]').find((place) => place.placeType === 'home');
+      return home && Math.abs(home.lon - 37.6156) > 0.0001;
+    }));
+    console.log('✓ Android touchscreen moves the pin and saves the tapped position');
+  }
   if (process.env.EXPECT_AUTONOMY === '1') {
     assert(await page.evaluate(() => window.Capacitor.isPluginAvailable('TripSensors')));
     const button = (name) => page.getByRole('button', { name, exact: true });

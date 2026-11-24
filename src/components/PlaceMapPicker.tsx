@@ -12,7 +12,7 @@ export function PlaceMapPicker({ start, cancel, confirm }: { start: LatLon | nul
   const map = useRef<MapLibre | null>(null);
   const initial = useRef(start);
   const selected = useRef<LatLon | null>(null);
-  const pending = useRef<LatLon | null>(null);
+  const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const [selectable, setSelectable] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -47,47 +47,88 @@ export function PlaceMapPicker({ start, cancel, confirm }: { start: LatLon | nul
           view.setStyle(style);
         }
       };
-      let tapTimer: ReturnType<typeof setTimeout> | undefined;
-      const cancelTap = () => {
-        clearTimeout(tapTimer);
-        tapTimer = undefined;
-        pending.current = null;
-      };
+      const holder = view.getCanvasContainer();
+      let finger: { id: number; x: number; y: number; at: number } | null = null;
+      let lastTouch = -Infinity;
+      let tapAt = -Infinity;
+      let tapX = 0;
+      let tapY = 0;
       const interrupt = () => {
-        cancelTap();
+        finger = null;
         selected.current = null;
+        setAnchor(null);
       };
-      const canvas = view.getCanvasContainer();
-      const multiTouch = (event: TouchEvent) => { if (event.touches.length > 1) interrupt(); };
-      canvas.addEventListener('touchstart', multiTouch, { passive: true });
-      canvas.addEventListener('touchcancel', interrupt, { passive: true });
-      view.on('click', (event) => {
-        if (!ready || view.isMoving() || event.originalEvent.button !== 0) return;
-        cancelTap();
-        const point = event.lngLat.wrap();
-        pending.current = { lat: point.lat, lon: point.lng };
-        // MapLibre's double-tap recognizer allows 500 ms between taps.
-        tapTimer = setTimeout(() => {
-          selected.current = pending.current;
-          pending.current = null;
-          if (selected.current) view.easeTo({ center: [selected.current.lon, selected.current.lat], duration: 240 });
-        }, 520);
+      const select = (clientX: number, clientY: number) => {
+        if (!ready || view.getZoom() < 12) return;
+        const bounds = holder.getBoundingClientRect();
+        const x = clientX - bounds.left, y = clientY - bounds.top;
+        const point = view.unproject([x, y]).wrap();
+        selected.current = { lat: point.lat, lon: point.lng };
+        setAnchor({ x, y });
+      };
+      const touchStart = (event: TouchEvent) => {
+        lastTouch = performance.now();
+        if (event.touches.length !== 1 || (event.target as Element | null)?.closest('.maplibregl-ctrl')) {
+          interrupt();
+          return;
+        }
+        const touch = event.touches[0];
+        finger = { id: touch.identifier, x: touch.clientX, y: touch.clientY, at: lastTouch };
+      };
+      const touchMove = (event: TouchEvent) => {
+        if (!finger) return;
+        const touch = event.touches[0];
+        if (event.touches.length !== 1 || Math.hypot(touch.clientX - finger.x, touch.clientY - finger.y) > 10) interrupt();
+      };
+      const touchEnd = (event: TouchEvent) => {
+        lastTouch = performance.now();
+        const start = finger;
+        finger = null;
+        if (!start || event.touches.length || lastTouch - start.at > 400) return;
+        const touch = Array.from(event.changedTouches).find((item) => item.identifier === start.id);
+        if (!touch || Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) return;
+        if (lastTouch - tapAt < 500 && Math.hypot(touch.clientX - tapX, touch.clientY - tapY) < 30) {
+          tapAt = -Infinity;
+          interrupt(); // MapLibre retains its double-tap zoom.
+          return;
+        }
+        tapAt = lastTouch;
+        tapX = touch.clientX;
+        tapY = touch.clientY;
+        select(tapX, tapY);
+      };
+      // Like the previous map picker, consume actual screen coordinates and unproject them.
+      // Capturing native touch events avoids depending on a synthesized mouse click in WebView.
+      const capture = { capture: true, passive: true };
+      holder.addEventListener('touchstart', touchStart, capture);
+      holder.addEventListener('touchmove', touchMove, capture);
+      holder.addEventListener('touchend', touchEnd, capture);
+      holder.addEventListener('touchcancel', interrupt, capture);
+      view.on('click', ({ originalEvent }) => {
+        if (performance.now() - lastTouch >= 750 && originalEvent.button === 0) select(originalEvent.clientX, originalEvent.clientY);
       });
       view.on('dblclick', interrupt);
       view.on('movestart', (event) => { if (event.originalEvent) interrupt(); });
       view.on('moveend', settled);
       view.once('load', () => { ready = true; settled(); });
-      const resize = () => view.resize();
+      const resize = () => {
+        view.resize();
+        if (selected.current) {
+          const point = view.project([selected.current.lon, selected.current.lat]);
+          setAnchor({ x: point.x, y: point.y });
+        }
+      };
       const observer = new ResizeObserver(resize);
       observer.observe(element.current);
       const unwatch = watchAndroidViewport(resize);
       addEventListener('online', settled);
       addEventListener('offline', settled);
       cleanup = () => {
-        cancelTap();
         selected.current = null;
-        canvas.removeEventListener('touchstart', multiTouch);
-        canvas.removeEventListener('touchcancel', interrupt);
+        holder.removeEventListener('touchstart', touchStart, true);
+        holder.removeEventListener('touchmove', touchMove, true);
+        holder.removeEventListener('touchend', touchEnd, true);
+        holder.removeEventListener('touchcancel', interrupt, true);
         removeEventListener('online', settled);
         removeEventListener('offline', settled);
         observer.disconnect();
@@ -115,12 +156,12 @@ export function PlaceMapPicker({ start, cancel, confirm }: { start: LatLon | nul
   return createPortal(
     <div className="place-map-picker" role="dialog" aria-modal="true" aria-label="Выбор места на карте">
       <div ref={element} className="place-map-picker-map" />
-      <div className="place-map-picker-pin" aria-hidden="true"><Icon name="locate" size="2.5rem" /></div>
+      <div className="place-map-picker-pin" style={anchor ? { left: anchor.x, top: anchor.y } : undefined} aria-hidden="true"><Icon name="locate" size="2.5rem" /></div>
       <div className="place-map-picker-actions">
         {failed && <div role="status">Карта недоступна</div>}
         <button type="button" className="btn" onClick={cancel}>Отмена</button>
         <button type="button" className="btn btn-primary" disabled={failed || !selectable} onClick={() => {
-          const tapped = pending.current ?? selected.current;
+          const tapped = selected.current;
           if (tapped) return confirm(tapped);
           const point = map.current?.getCenter().wrap();
           if (point) confirm({ lat: point.lat, lon: point.lng });

@@ -5,6 +5,7 @@ import type { MotionObservation, PositionObservation } from './hybridPosition';
 interface NativeLocation {
   start(options: { ask: boolean }): Promise<AndroidLocationStatus>;
   exportDiagnostics(options: { json: string }): Promise<void>;
+  resolveLocationSettings(): Promise<AndroidLocationStatus>;
   diagnostics(): Promise<AndroidLocationStatus>;
   copyDiagnostics(options: { json: string }): Promise<void>;
   acknowledge(options: { sequence: number }): Promise<void>;

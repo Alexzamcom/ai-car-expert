@@ -70,7 +70,7 @@ try {
   await send({ ...good, source: 'network', accuracy: 1800 });
   assert.equal(await page.evaluate(() => window.__aceMap.state().raw.lat), null);
   await send({ ...good, lat: good.lat + 0.006, source: 'network', accuracy: 380 });
-  await wait(() => window.__aceMap.state().nativePosition.trust === 'network' && document.body.innerText.includes('Приблизительная сетевая позиция'));
+  await wait(() => window.__aceMap.state().nativePosition.trust === 'network' && document.body.innerText.includes('Приблизительная позиция'));
   await wait(() => document.body.innerText.includes('±380 м') && window.__aceMap.state().accuracyCircle >= 380);
   await page.waitForTimeout(850);
   await send({ ...good, source: 'gps' });

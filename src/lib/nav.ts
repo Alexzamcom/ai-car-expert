@@ -1,3 +1,4 @@
+import { recordMapLocation } from './geo/mapLocation';
 import { androidLocationDiagnostics, recordLocationMarker, recordLocationSample, recordLocationStatus } from './geo/locationDiagnostics';
 import { ConfirmedRoute } from './confirmedRoute';
 import { nativePosition, usesAndroidNativePosition } from './geo/nativePosition';
@@ -476,7 +477,8 @@ function acceptNative(input: DrivingMeasurement) {
   const rawAt = input.kind === 'position' ? input.data.at : undefined;
   const estimate = nativeFusion.update(input, now, input.kind === 'motion' && nativeFusion.state?.trust !== 'confirmed' ? estimatedRoad() : undefined);
   if (input.kind === 'position') {
-    recordLocationSample(input.data, now, nativeFusion.reason, estimate?.trust ?? 'rejected');
+    const visible = recordMapLocation(input.data, now, estimate?.trust === 'held');
+    recordLocationSample(input.data, now, nativeFusion.reason, estimate?.trust ?? 'rejected', visible);
     if (input.data.sequence != null) void nativePosition.acknowledge({ sequence: input.data.sequence }).catch(() => {});
   }
   publishNative(estimate, now, estimate?.trust === 'held' ? undefined : rawAt);

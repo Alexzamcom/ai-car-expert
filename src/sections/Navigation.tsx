@@ -1,3 +1,4 @@
+import { mapLocationStore, MAP_LOCATION_STALE_MS } from '../lib/geo/mapLocation';
 import { usesAndroidNativePosition } from '../lib/geo/nativePosition';
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { offlineStatus } from '../lib/offlineMaps';
@@ -114,6 +115,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const layers = useRef<{ me?: L.Marker; acc?: L.Circle; raw?: L.CircleMarker; dest?: L.Marker; via?: L.Marker; pick?: L.Marker; route?: L.LayerGroup; routeLines?: L.Polyline[]; poi?: L.LayerGroup }>({});
   const pick = useStore(pickStore);
   const geo = useStore(geoStore);
+  const ordinaryFix = useStore(mapLocationStore);
   const offline = useStore(offlineStatus);
   const nav = useStore(navStore);
   const poi = useStore(poiStore);
@@ -146,7 +148,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const lang = navLang();
   const [cueClock, setCueClock] = useState(Date.now);
   useEffect(() => {
-    if (!androidDriving || !guiding) return;
+    if (!androidDriving || !guiding && !usesAndroidNativePosition()) return;
     const timer = window.setInterval(() => setCueClock(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [guiding]);
@@ -513,6 +515,10 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
       return;
     }
     const native = usesAndroidNativePosition();
+    if (native && !guiding && ordinaryFix && engine === 'maplibre') {
+      mlApi.current?.centerOn(ordinaryFix, ordinaryFix.accuracy > 250 ? 14 : 16);
+      return;
+    }
     if (!native) startGeo();
     zoomBand.current = null; // масштаб по скорости — заново
     const target = disp.lat != null && disp.lon != null ? disp : geo;
@@ -586,7 +592,8 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const isFav = nav.dest ? favorites.some((f) => f.lat === nav.dest!.lat && f.lon === nav.dest!.lon) : false;
   const step = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
   const next = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex + 1] : null;
-  const located = geo.lat != null && geo.lon != null && ((geo.accuracy ?? Infinity) <= 50 || geo.nativeTrust === 'network');
+  const browsingFix = androidDriving && !guiding && usesAndroidNativePosition() ? ordinaryFix : null;
+  const located = geo.lat != null && geo.lon != null && ((geo.accuracy ?? Infinity) <= 50 || geo.nativeTrust === 'network') || !!browsingFix;
   const trustedGeo = located && !geo.held && cueClock - (geo.updated ?? 0) <= 3500;
   const navReliable = trustedGeo && (nav.progress?.offRouteM ?? Infinity) <= 35;
   const cue = androidDriving && guiding ? maneuverNotice(nav.route, nav.progress, geo.speedKmh, navReliable) : null;
@@ -761,7 +768,10 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
         {androidDriving && offline.local && (
           <div className="android-offline-tag" role="status">{offline.region ? `Офлайн · ${offline.region}` : 'Нет загруженной карты'}</div>
         )}
-        {androidDriving && (guiding && (!trustedGeo || nav.notice) || !guiding && located && !panelOpen && !androidMenu &&
+        {browsingFix && !panelOpen && !androidMenu && <div className="android-position-tag" role="status">
+          {cueClock - browsingFix.at > MAP_LOCATION_STALE_MS ? 'Последняя известная позиция' : 'Приблизительная позиция'} · ±{Math.round(browsingFix.accuracy)} м
+        </div>}
+        {androidDriving && !browsingFix && (guiding && (!trustedGeo || nav.notice) || !guiding && located && !panelOpen && !androidMenu &&
           geo.nativeTrust != null && geo.nativeTrust !== 'confirmed') && <div className="android-position-tag" role="status">
           {guiding && nav.notice ? nav.notice : geo.nativeTrust === 'network' ? `Приблизительная сетевая позиция · ±${Math.round(geo.accuracy ?? 0)} м` : geo.nativeTrust === 'estimated' ? 'Положение оценено по датчикам' : 'Положение не подтверждено'}
           {onAutonomy && !panelHidden && <button className="btn" onClick={() => {
