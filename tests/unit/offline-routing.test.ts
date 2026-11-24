@@ -42,6 +42,18 @@ describe('local Valhalla automotive profile', () => {
     expect(() => engine.route({ locations: [finish, start], costing: 'auto' })).toThrow();
   });
 
+  it('stops advancing and raises uncertainty when no new measurement supports inferred speed', () => {
+    const engine = new Estimator({ position: start, heading: 90, at: 1000 }, [start, advance(start, 90, 500)], 'road');
+    for (let at = 1100; at < 3900; at += 100) engine.update({ type: 'motion', sample: { x: 2, y: 0, yawRate: 0, at } });
+    expect(engine.state.speed).toBeGreaterThan(1);
+    for (let at = 3900; at < 19000; at += 100) engine.update({ type: 'motion', sample: { x: 0, y: 0, yawRate: 0, at } });
+    expect(engine.state).toMatchObject({ speed: 0, stopped: false });
+    expect(engine.state.uncertainty).toBeGreaterThan(45);
+    const held = engine.state.distance.fused;
+    for (let at = 19000; at < 20000; at += 100) engine.update({ type: 'motion', sample: { x: 0, y: 0, yawRate: 0, at } });
+    expect(engine.state.distance.fused).toBe(held);
+  });
+
   it('holds an autonomous manual anchor through a spoof and stationary samples, then preserves it on a mode change', () => {
     const estimate = new Estimator({ position: start, heading: 90, at: 1000 }, [start, finish], 'road');
     estimate.update({ type: 'gps', sample: { lat: -12.04, lon: -77.04, accuracy: 5, speed: 14, at: 2000 } });

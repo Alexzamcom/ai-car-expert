@@ -356,7 +356,11 @@ export function AutonomousNavigation({ close }: { close(): void }) {
     setVariant(next);
     mode.current = next;
     engine.current?.setVariant(next);
-    if (engine.current) setEstimate(engine.current.state);
+    if (engine.current) {
+      const position = engine.current.state;
+      setEstimate(position);
+      autonomyMap.set({ ...autonomyMap.get(), position });
+    }
     if (!accepting.current || usedGps === (next !== 'road')) return;
     const request = next === 'road' ? tripSensors.stopGps() : tripSensors.startGps();
     void request.catch(() => setMessage(next === 'road' ? 'GPS исключён из расчёта позиции.' : 'Спутниковый источник недоступен.'));

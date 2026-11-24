@@ -83,7 +83,10 @@ try {
   await click('Скачать регион');
   await page.getByText('Регион доступен без интернета.').waitFor();
   online = false;
-  await page.evaluate(() => sessionStorage.setItem('offline', '1'));
+  await page.evaluate(() => {
+    sessionStorage.setItem('offline', '1');
+    localStorage.setItem('ace:hud', JSON.stringify({ style: 'game', warned: true, mirror: true }));
+  });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await click('Старт вручную');
   await page.waitForFunction(() => window.__aceMap?.state().styleReady);
@@ -97,7 +100,7 @@ try {
   await click('Найти офлайн');
   await click('Тестова 12 · Павлоград');
   await btn('Начать поездку без GPS').waitFor();
-  assert(await page.evaluate(() => window.__aceMap.state().routePoints >= 5));
+  await page.waitForFunction(() => window.__aceMap.state().routePoints >= 5);
   await click('Начать поездку без GPS');
   await btn('HUD').waitFor();
   assert.equal(await page.evaluate(() => window.gpsStarted), false);
@@ -113,11 +116,18 @@ try {
   await click('HUD');
   const warning = page.getByRole('button', { name: /Понятно/ });
   if (await warning.count()) await warning.evaluate((button) => button.click());
-  await page.locator('.hud-speed').waitFor();
+  await page.locator('.hud[data-style="game"] .hud-speed').waitFor();
+  assert(await page.locator('.hud-stage').evaluate((stage) => stage.classList.contains('is-mirrored')));
   await page.locator('.hud-stage').evaluate((node) => node.click());
   await click('Выйти из HUD');
   await click('Меню поездки');
   await page.getByLabel('Режим').selectOption('adaptive');
+  const pos = { lat: original.lat, lon: original.lon, accuracy: 8, speed: 0 };
+  for (let i = 0; i < 4; i++) {
+    await page.waitForTimeout(560);
+    await page.evaluate((value) => window.emit('gps', { ...value, at: Date.now() }), pos);
+  }
+  await page.waitForFunction(() => window.__aceMap.state().experimentalEstimate.gps === 'trusted');
   await page.getByLabel('Режим').selectOption('road');
   await page.waitForFunction(() => window.gpsStopped && window.__aceMap.state().routePoints >= 5);
   assert.equal(remoteRoutes, 0);

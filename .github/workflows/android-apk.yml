@@ -39,6 +39,8 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
       - name: Verify signature, package and foreground permissions
+        env:
+          VERIFY_LOCAL_ROUTER: ${{ github.head_ref == 'codex/android-offline-routing' && '1' || '0' }}
         run: |
           apk=android/app/build/outputs/apk/debug/app-debug.apk
           tools="$ANDROID_HOME/build-tools/35.0.0"
@@ -51,6 +53,10 @@ jobs:
           unzip -Z1 "$apk" > apk-entries.txt
           grep -Fx 'assets/public/index.html' apk-entries.txt
           grep -E '^assets/public/assets/maplibre-gl-worker-.*\.mjs$' apk-entries.txt
+          if [ "$VERIFY_LOCAL_ROUTER" = 1 ]; then
+            grep -E '^assets/public/assets/valhalla-.*\.wasm$' apk-entries.txt
+            grep -E '^assets/public/assets/offlineRouter\.worker-.*\.js$' apk-entries.txt
+          fi
           if grep -Fxq 'assets/public/sw.js' apk-entries.txt; then exit 1; fi
       - name: Upload installable APK
         id: apk

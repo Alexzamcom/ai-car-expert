@@ -42,6 +42,7 @@ export class Estimator {
   private lastTick: number;
   private lastMotion: number | null = null;
   private motionEvidenceAt = -Infinity;
+  private distanceHeld = false;
   private lastGps: Fix | null = null;
   private relativeSpeed: { speed: number; at: number } | null = null;
   private calibration: { x: number; y: number; samples: number } = { x: 0, y: 0, samples: 0 };
@@ -65,6 +66,7 @@ export class Estimator {
     this.lastGps = this.goodAt = this.relativeSpeed = null;
     this.goodRun = 0;
     this.motionEvidenceAt = -Infinity;
+    this.distanceHeld = false;
     this.state = { ...this.state, gps: ['gps', 'hybrid', 'adaptive'].includes(variant) ? 'waiting' : 'disabled',
       source: 'inertial', speed: 0, event: undefined };
   }
@@ -102,6 +104,7 @@ export class Estimator {
       this.lastMotion = this.goodAt = null;
       this.sensorSpeed = this.goodRun = 0;
       this.motionEvidenceAt = -Infinity;
+      this.distanceHeld = false;
       this.lastTick = input.at;
       this.lastGps = null;
       this.relativeSpeed = null;
@@ -219,8 +222,9 @@ export class Estimator {
     let speed = clamp(s.speed + dv, 0, 55);
     const aid = this.relativeSpeed && Math.abs(this.relativeSpeed.at - sample.at) <= 3500 ? this.relativeSpeed : null;
     if (aid) speed += (aid.speed - speed) * Math.min(0.25, elapsed * 0.3);
-    const unmeasured = (this.variant === 'road' || this.variant === 'adaptive') && !aid && (speed > 0 || !s.stopped) &&
-      sample.at - Math.max(this.motionEvidenceAt, this.goodAt ?? -Infinity) > 12_000;
+    const unmeasured = (this.variant === 'road' || this.variant === 'adaptive') && !aid &&
+      (speed > 0 || this.distanceHeld) && sample.at - Math.max(this.motionEvidenceAt, this.goodAt ?? -Infinity) > 12_000;
+    this.distanceHeld = unmeasured;
     if (unmeasured) speed = 0;
     const stopped = !unmeasured && speed < 0.35 && strength < 0.25 && yawRate === 0;
     if (stopped) speed = 0;
