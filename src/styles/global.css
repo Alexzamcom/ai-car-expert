@@ -1691,3 +1691,28 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
   border-radius: 12px; padding: 5px 10px; background: var(--panel); color: var(--text); font-size: .76rem;
 }
 .android-drive .android-position-tag { top: auto; bottom: 112px; }
+
+.app.android-drive {
+  position: fixed;
+  inset: 0 auto auto 0;
+  width: var(--android-viewport-width, 100%);
+  height: var(--android-viewport-height, 100%);
+}
+.android-drive .controls-hidden .android-map-controls > .recenter-needed { display: grid; }
+.place-map-picker {
+  position: fixed; top: 0; left: 0;
+  width: var(--android-viewport-width, 100%);
+  height: var(--android-viewport-height, 100%);
+  z-index: 8000; background: var(--bg);
+}
+.place-map-picker-map { position: absolute; inset: 0; }
+.place-map-picker-pin {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  display: grid; place-items: center; width: 54px; height: 54px; pointer-events: none;
+  border-radius: 50%; background: var(--panel); color: var(--accent); box-shadow: 0 2px 12px #0005;
+}
+.place-map-picker-actions {
+  position: absolute; bottom: max(20px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: calc(100% - 24px); display: flex; gap: 10px; align-items: center;
+  padding: 8px; border-radius: 16px; background: var(--panel); box-shadow: 0 2px 16px #0004;
+}

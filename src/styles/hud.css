@@ -101,3 +101,9 @@
 .hud.mode-game .hud-dist { font-size: calc(3.2rem * var(--sn)); }
 .hud.mode-game .hud-speed strong { font-size: calc(6rem * var(--sn)); }
 .hud.mode-game .hud-status { font-size: clamp(1rem, 4vw, 1.7rem); color: #ade8fd; }
+
+.android-drive > .hud {
+  inset: 0 auto auto 0;
+  width: var(--android-viewport-width, 100%);
+  height: var(--android-viewport-height, 100%);
+}

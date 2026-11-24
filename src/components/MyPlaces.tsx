@@ -8,6 +8,7 @@ import { toast } from '../lib/state';
 import { fmtDistance, haversine } from '../lib/routing';
 import { PLACE_TYPES, placesStore, savePlace, removePlace, storageStore, exportPlaces, importPlaces, type MyPlace, type PlaceType } from '../lib/places';
 import { Icon } from './Icon';
+import { PlaceMapPicker } from './PlaceMapPicker';
 
 type Draft = Partial<MyPlace> & { lat?: number; lon?: number };
 /** Открытый редактор: null — закрыт. */
@@ -110,6 +111,7 @@ function PlaceEditorSheet({ draft }: { draft: Draft }) {
   const [q, setQ] = useState('');
   const [found, setFound] = useState<Place[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [mapChoosing, setMapChoosing] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const geo = useStore(geoStore);
   const close = () => placeEditorStore.set(null);
@@ -147,23 +149,26 @@ function PlaceEditorSheet({ draft }: { draft: Draft }) {
       setBusy(false);
     }
   };
-  const fromMap = () => {
-    close();
-    toast('Зажмите палец на нужной точке карты и нажмите «В мои места»', 'info');
-  };
-  const save = () => {
-    if (!point) return toast('Выберите точку: по GPS, поиском адреса или на карте', 'warn');
-    const name = label.trim() || point.name || typeOf(type).label;
-    const p = savePlace({ ...draft, ...point, id: editing ? draft.id : undefined, kind: point.kind, placeType: type, label: name, savedAt: editing ? draft.savedAt : undefined });
+  const save = (chosen = point) => {
+    if (!chosen) return toast('Выберите точку: по GPS, поиском адреса или на карте', 'warn');
+    const name = label.trim() || chosen.name || typeOf(type).label;
+    const p = savePlace({ ...draft, ...chosen, id: editing ? draft.id : undefined, kind: chosen.kind, placeType: type, label: name, savedAt: editing ? draft.savedAt : undefined });
     if (p) toast(`Сохранено: «${p.label}»`, 'ok');
     close();
   };
 
   useEffect(() => {
+    if (mapChoosing) return;
     const k = (e: KeyboardEvent) => e.key === 'Escape' && close();
     addEventListener('keydown', k);
     return () => removeEventListener('keydown', k);
-  }, []);
+  }, [mapChoosing]);
+
+  if (mapChoosing) return <PlaceMapPicker
+    start={point ?? (geo.lat != null && geo.lon != null ? { lat: geo.lat, lon: geo.lon } : null)}
+    cancel={() => setMapChoosing(false)}
+    confirm={(coords) => save({ ...coords, id: '', address: '', name: label.trim() || typeOf(type).label })}
+  />;
 
   return (
     <div className="cg-sheet-backdrop place-editor-backdrop" role="dialog" aria-modal="true" aria-label={editing ? 'Изменить место' : 'Новое место'} onClick={close}>
@@ -200,8 +205,8 @@ function PlaceEditorSheet({ draft }: { draft: Draft }) {
             <button className="btn" onClick={() => void fromGps()}>
               <Icon name="locate" /> Текущее местоположение
             </button>
-            <button className="btn" onClick={fromMap}>
-              <Icon name="map" /> Выбрать на карте
+            <button className="btn" onClick={() => setMapChoosing(true)}>
+              <Icon name="map" /> Указать на карте
             </button>
           </div>
           <form
@@ -261,7 +266,7 @@ function PlaceEditorSheet({ draft }: { draft: Draft }) {
           <button className="btn" onClick={close}>
             Отмена
           </button>
-          <button className="btn btn-primary" onClick={save} disabled={!point}>
+          <button className="btn btn-primary" onClick={() => save()} disabled={!point}>
             <Icon name="check" /> Сохранить
           </button>
         </div>

@@ -1,3 +1,4 @@
+import { mapCameraStore } from '../lib/diag';
 import { androidLocationDiagnostics, locationDiagnosticsJson } from '../lib/geo/locationDiagnostics';
 import { locateOnAndroid } from '../lib/nav';
 import { diagModeStore } from '../lib/diag';
@@ -999,6 +1000,7 @@ function GpsDiagnostics() {
   const use = g.accuracy != null ? guidanceUse(g.accuracy) : null;
   const native = usesAndroidNativePosition();
   const diagnostic = useStore(androidLocationDiagnostics);
+  const camera = useStore(mapCameraStore);
   const system = diagnostic.status;
   const last = diagnostic.samples.at(-1);
   const trust = g.nativeTrust && { confirmed: 'подтверждён', network: 'сетевая оценка', recovering: 'плавное уточнение',
@@ -1019,8 +1021,17 @@ function GpsDiagnostics() {
       ['Достоверность позиции', trust ?? 'ожидание'],
       ['Источник скорости', speedInput ?? '—'],
       ['Решение фильтра', last?.reason ?? g.nativeReason ?? '—'],
+      ...camera ? [
+        ['Сопровождение', camera.following ? 'активно' : 'отключено'],
+        ['До манёвра', camera.toStepM == null ? '—' : `${Math.round(camera.toStepM)} м`],
+        ['Камера (pitch / zoom / bearing)', [camera.target, camera.applied].map((pose) =>
+          pose ? [pose.pitch, pose.zoom, pose.bearing].map((value) => value.toFixed(1)).join(' / ') : '—').join(' → ')],
+      ] : [],
       ['Последнее измерение', last ? `${FIX_SOURCE_LABEL[last.source]} · ${ago(last.at)} · ${last.accuracy > 0 ? '±' + Math.round(last.accuracy) + ' м' : 'точность неизвестна'}${last.cached ? ' · кеш' : ''}` : '—'],
       ['Разрешения Android', system ? `FINE ${system.fine ? 'да' : 'нет'} · COARSE ${system.coarse ? 'да' : 'нет'}` : '—'],
+      ['Запрос координат', ago(system?.requestStartedAt ?? null)],
+      ['Первое измерение', system?.firstMeasurementAt && system.requestStartedAt
+        ? `${system.firstMeasurementAt - system.requestStartedAt} мс после запроса` : '—'],
       ['Google Play Services', system ? system.playServices === 0 ? 'доступны' : `недоступны (код ${system.playServices})` : '—'],
       ['Поставщики Android', system ? `Fused: ${system.fusedStatus} · GPS ${system.gpsEnabled ? 'вкл.' : 'выкл.'} · Network ${system.networkEnabled ? 'вкл.' : 'выкл.'}` : '—'],
     ] as [string, string][] : []),

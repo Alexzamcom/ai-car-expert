@@ -83,6 +83,13 @@ if (typeof window !== 'undefined') (window as unknown as { __aceDiag?: unknown }
 type FixVerdict = 'accept' | 'stale' | 'coarse' | 'jump';
 export const positionSampleStore = createStore<{ fix: RawFix; verdict: FixVerdict } | null>(null);
 export type MapMotion = { modelM: number; modelDeg: number; centerM: number; cameraDeg: number };
+export type MapCameraDiagnostic = {
+  target: { pitch: number; zoom: number; bearing: number } | null;
+  applied: { pitch: number; zoom: number; bearing: number };
+  following: boolean;
+  toStepM: number | null;
+};
+export const mapCameraStore = createStore<MapCameraDiagnostic | null>(null);
 export const mapPositionStore = createStore<{ marker: LatLon; target: LatLon; following: boolean; motion?: MapMotion } | null>(null);
 export function recordPositionSample(fix: RawFix, verdict: FixVerdict) {
   if (diagModeStore.get().on) positionSampleStore.set({ fix, verdict });

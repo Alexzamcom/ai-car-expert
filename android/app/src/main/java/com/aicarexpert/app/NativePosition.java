@@ -49,6 +49,9 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     private CancellationTokenSource currentRequest;
     private String fusedStatus = "idle";
     private boolean active;
+    private boolean requested;
+    private long requestStartedAt;
+    private long firstMeasurementAt;
     private boolean oriented;
     private boolean earthFrame;
     private long lastMotion;
@@ -60,7 +63,8 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     private final LocationCallback fusedCallback = new LocationCallback() {
         @Override
         public void onLocationResult(LocationResult result) {
-            for (Location location : result.getLocations()) emit(location, "fused");
+            boolean provisional = !permitted(Manifest.permission.ACCESS_FINE_LOCATION);
+            for (Location location : result.getLocations()) emit(location, "fused", false, provisional);
         }
     };
 
@@ -89,40 +93,41 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
                 call.reject("Разрешите местоположение", "DENIED");
                 return;
             }
-            if (active) {
-                probe();
-                call.resolve(status());
-                return;
-            }
-            active = true;
-            boolean precise = permitted(Manifest.permission.ACCESS_FINE_LOCATION);
-            manager = (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
-            subscribe(LocationManager.NETWORK_PROVIDER);
-            if (precise) subscribe(LocationManager.GPS_PROVIDER);
-            if (playServices() == ConnectionResult.SUCCESS) {
-                try {
-                    fused = LocationServices.getFusedLocationProviderClient(getActivity());
-                    LocationRequest request = new LocationRequest.Builder(
-                        precise ? Priority.PRIORITY_HIGH_ACCURACY : Priority.PRIORITY_BALANCED_POWER_ACCURACY, 1000)
-                        .setMinUpdateIntervalMillis(650).setMaxUpdateAgeMillis(4000).build();
-                    fusedStatus = "starting";
-                    fused.requestLocationUpdates(request, fusedCallback, Looper.getMainLooper())
-                        .addOnSuccessListener(ignored -> { if (active) { fusedStatus = "watching"; report(); } })
-                        .addOnFailureListener(error -> { if (active) { fusedStatus = "updates-failed"; report(); } });
-                } catch (RuntimeException ignored) {
-                    fusedStatus = "updates-failed";
-                }
-            }
-            probe();
-            sensors = (SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
-            Sensor attitude = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
-            if (attitude == null) attitude = sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
-            earthFrame = attitude != null && attitude.getType() == Sensor.TYPE_ROTATION_VECTOR;
-            register(attitude);
-            register(sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE));
-            register(sensors.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION));
+            requested = true;
+            if (active) probe();
+            else activate();
             call.resolve(status());
         });
+    }
+
+    private void activate() {
+        active = true;
+        boolean precise = permitted(Manifest.permission.ACCESS_FINE_LOCATION);
+        manager = (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
+        subscribe(LocationManager.NETWORK_PROVIDER);
+        if (precise) subscribe(LocationManager.GPS_PROVIDER);
+        if (playServices() == ConnectionResult.SUCCESS) {
+            try {
+                fused = LocationServices.getFusedLocationProviderClient(getActivity());
+                LocationRequest request = new LocationRequest.Builder(
+                    precise ? Priority.PRIORITY_HIGH_ACCURACY : Priority.PRIORITY_BALANCED_POWER_ACCURACY, 1000)
+                    .setMinUpdateIntervalMillis(650).setMaxUpdateAgeMillis(4000).build();
+                fusedStatus = "starting";
+                fused.requestLocationUpdates(request, fusedCallback, Looper.getMainLooper())
+                    .addOnSuccessListener(ignored -> { if (active) { fusedStatus = "watching"; report(); } })
+                    .addOnFailureListener(error -> { if (active) { fusedStatus = "updates-failed"; report(); } });
+            } catch (RuntimeException ignored) {
+                fusedStatus = "updates-failed";
+            }
+        }
+        probe();
+        sensors = (SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
+        Sensor attitude = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+        if (attitude == null) attitude = sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
+        earthFrame = attitude != null && attitude.getType() == Sensor.TYPE_ROTATION_VECTOR;
+        register(attitude);
+        register(sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE));
+        register(sensors.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION));
     }
 
     private void subscribe(String provider) {
@@ -149,6 +154,8 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         state.put("coarse", permitted(Manifest.permission.ACCESS_COARSE_LOCATION));
         state.put("playServices", playServices());
         state.put("fusedStatus", fusedStatus);
+        if (requestStartedAt > 0) state.put("requestStartedAt", requestStartedAt);
+        if (firstMeasurementAt > 0) state.put("firstMeasurementAt", firstMeasurementAt);
         state.put("gpsEnabled", enabled(LocationManager.GPS_PROVIDER));
         state.put("networkEnabled", enabled(LocationManager.NETWORK_PROVIDER));
         return state;
@@ -199,6 +206,11 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     }
 
     private void probe() {
+        long now = System.currentTimeMillis();
+        if (active && now - requestStartedAt < 2000) return;
+        requestStartedAt = now;
+        firstMeasurementAt = 0;
+        report();
         cached(LocationManager.NETWORK_PROVIDER);
         if (permitted(Manifest.permission.ACCESS_FINE_LOCATION)) cached(LocationManager.GPS_PROVIDER);
         if (fused == null) return;
@@ -209,15 +221,22 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
             fused.getLastLocation().addOnSuccessListener(location -> {
                 if (request == currentRequest && location != null) emit(location, "fused", true);
             });
-            CurrentLocationRequest options = new CurrentLocationRequest.Builder()
-                .setPriority(permitted(Manifest.permission.ACCESS_FINE_LOCATION) ? Priority.PRIORITY_HIGH_ACCURACY : Priority.PRIORITY_BALANCED_POWER_ACCURACY)
-                .setMaxUpdateAgeMillis(0).setDurationMillis(10000).build();
-            fused.getCurrentLocation(options, request.getToken()).addOnSuccessListener(location -> {
-                if (request == currentRequest && location != null) emit(location, "fused");
-            }).addOnFailureListener(error -> { if (request == currentRequest) report(); });
+            requestCurrent(request, Priority.PRIORITY_BALANCED_POWER_ACCURACY);
+            if (permitted(Manifest.permission.ACCESS_FINE_LOCATION)) requestCurrent(request, Priority.PRIORITY_HIGH_ACCURACY);
         } catch (RuntimeException ignored) {
             // System LocationManager subscriptions still provide network and GNSS updates.
         }
+    }
+
+    private void requestCurrent(CancellationTokenSource request, int priority) {
+        CurrentLocationRequest options = new CurrentLocationRequest.Builder()
+            .setPriority(priority)
+            .setMaxUpdateAgeMillis(0).setDurationMillis(10000).build();
+        fused.getCurrentLocation(options, request.getToken()).addOnSuccessListener(location -> {
+            if (request == currentRequest && location != null) {
+                emit(location, "fused", false, priority == Priority.PRIORITY_BALANCED_POWER_ACCURACY);
+            }
+        }).addOnFailureListener(error -> { if (request == currentRequest) report(); });
     }
 
     private void register(Sensor sensor) {
@@ -227,9 +246,15 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     @PluginMethod
     public void stop(PluginCall call) {
         getActivity().runOnUiThread(() -> {
+            requested = false;
             deactivate();
             call.resolve();
         });
+    }
+
+    @Override protected void handleOnStart() {
+        if (requested && !active && (permitted(Manifest.permission.ACCESS_FINE_LOCATION) ||
+            permitted(Manifest.permission.ACCESS_COARSE_LOCATION))) activate();
     }
 
     @Override protected void handleOnStop() { deactivate(); }
@@ -238,6 +263,7 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         active = false;
         if (currentRequest != null) currentRequest.cancel();
         currentRequest = null;
+        requestStartedAt = firstMeasurementAt = 0;
         if (manager != null) manager.removeUpdates(this);
         if (fused != null) fused.removeLocationUpdates(fusedCallback);
         fused = null;
@@ -258,6 +284,10 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     }
 
     private void emit(Location fix, String provider, boolean cached) {
+        emit(fix, provider, cached, false);
+    }
+
+    private void emit(Location fix, String provider, boolean cached, boolean provisional) {
         if (!active) return;
         JSObject data = new JSObject();
         data.put("at", System.currentTimeMillis() - (SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos()) / 1_000_000L);
@@ -266,10 +296,15 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         data.put("lon", fix.getLongitude());
         data.put("accuracy", fix.hasAccuracy() ? fix.getAccuracy() : -1);
         data.put("cached", cached);
+        data.put("provisional", provisional);
         data.put("mock", android.os.Build.VERSION.SDK_INT >= 31 ? fix.isMock() : fix.isFromMockProvider());
         if (fix.hasSpeed()) data.put("speed", fix.getSpeed());
         if (fix.hasBearing()) data.put("heading", fix.getBearing());
         if (android.os.Build.VERSION.SDK_INT >= 26 && fix.hasSpeedAccuracy()) data.put("speedAccuracy", fix.getSpeedAccuracyMetersPerSecond());
+        if (firstMeasurementAt == 0 && requestStartedAt > 0) {
+            firstMeasurementAt = System.currentTimeMillis();
+            report();
+        }
         notifyListeners("position", data);
     }
 

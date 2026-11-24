@@ -2,6 +2,8 @@ import { createStore } from '../store';
 import type { PositionObservation } from './hybridPosition';
 
 export interface AndroidLocationStatus {
+  requestStartedAt?: number;
+  firstMeasurementAt?: number;
   fine: boolean;
   coarse: boolean;
   playServices: number;
@@ -23,8 +25,8 @@ export const androidLocationDiagnostics = createStore<{ status: AndroidLocationS
 
 export function recordLocationStatus(status: AndroidLocationStatus | undefined) {
   if (!status || typeof status.fine !== 'boolean') return;
-  const { fine, coarse, playServices, fusedStatus, gpsEnabled, networkEnabled } = status;
-  androidLocationDiagnostics.set((state) => ({ ...state, status: { fine, coarse, playServices, fusedStatus, gpsEnabled, networkEnabled } }));
+  const { fine, coarse, playServices, fusedStatus, gpsEnabled, networkEnabled, requestStartedAt, firstMeasurementAt } = status;
+  androidLocationDiagnostics.set((state) => ({ ...state, status: { fine, coarse, playServices, fusedStatus, gpsEnabled, networkEnabled, requestStartedAt, firstMeasurementAt } }));
 }
 
 export function recordLocationSample(fix: PositionObservation, receivedAt: number, reason: string) {

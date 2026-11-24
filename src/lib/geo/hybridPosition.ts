@@ -4,7 +4,7 @@ import { haversine, type LatLon } from '../routing';
 
 export type NativeProvider = 'fused' | 'gps' | 'network';
 export type PositionObservation = LatLon & {
-  at: number; source: NativeProvider; accuracy: number; mock?: boolean; cached?: boolean;
+  at: number; source: NativeProvider; accuracy: number; mock?: boolean; cached?: boolean; provisional?: boolean;
   speed?: number; speedAccuracy?: number; heading?: number;
 };
 export type MotionObservation = { at: number; yawRate: number; east?: number; north?: number };
@@ -118,14 +118,14 @@ export class HybridPosition {
   }
 
   private position(f: PositionObservation, now: number): PositionEstimate | null {
-    const network = f.source === 'network' || f.accuracy > 30 || !!f.cached;
+    const network = f.source === 'network' || f.accuracy > 30 || !!f.cached || !!f.provisional;
     const provisional = !this.confirmedAnchor && network;
     const maxAge = provisional ? (f.cached ? 60_000 : 30_000) : 5_000;
     const maxAccuracy = provisional ? 1500 : 50;
     if (f.mock || !['fused', 'gps', 'network'].includes(f.source) ||
       ![f.lat, f.lon, f.at, f.accuracy].every(Number.isFinite) || Math.abs(f.lat) > 85 || Math.abs(f.lon) > 180 ||
       f.accuracy <= 0 || f.accuracy > maxAccuracy || now - f.at > maxAge || f.at - now > 500 ||
-      this.confirmedAnchor && (f.cached || f.source === 'network' || f.accuracy > 30)) {
+      this.confirmedAnchor && network) {
       this.reason = f.mock ? 'Отброшен тестовый источник Android'
         : !Number.isFinite(f.accuracy) || f.accuracy <= 0 ? 'Источник не сообщил точность'
         : now - f.at > maxAge || f.at - now > 500 ? 'Устаревшее время измерения'
