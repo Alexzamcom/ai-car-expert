@@ -1,12 +1,13 @@
 import { CapacitorHttp } from '@capacitor/core';
-import type { StyleSpecification } from 'maplibre-gl';
+import type { LayerSpecification, StyleSpecification } from 'maplibre-gl';
 import { createStore } from './store';
 import { DEFAULT_STYLE_URL } from './mapStyle';
 import type { LatLon } from './routing';
+import { matchOfflineAddresses, pointInBounds, validateOfflinePackage, type OfflineAddress, type OfflinePackage } from './offlinePackageFormat';
 
 type Bounds = [number, number, number, number];
 type Tile = [number, number, number];
-export type OfflineRegion = { id: string; name: string; center: LatLon; bounds: Bounds; style: StyleSpecification; bytes: number; updated: number };
+export type OfflineRegion = { id: string; name: string; center: LatLon; bounds: Bounds; style: StyleSpecification; bytes: number; updated: number; packageUrl?: string; graph?: string[]; radiusKm?: number };
 const LIMIT_TILES = 3000;
 const LIMIT_BYTES = 50_000_000;
 const GLYPHS = [0, 256, 512, 768, 1024, 1280, 1536, 1792, 8192, 8448];
@@ -156,7 +157,7 @@ export async function downloadOfflineRegion(name: string, center: LatLon, radius
       minzoom: json.minzoom ?? 0, maxzoom: maxZoom, attribution: json.attribution ?? source.attribution ?? 'OpenFreeMap · © OpenMapTiles · © OpenStreetMap contributors' } };
     delete style.sprite;
     style.glyphs = `${root}/g/{range}?font={fontstack}`;
-    style.layers = style.layers.flatMap((layer) => {
+    style.layers = style.layers.flatMap<LayerSpecification>((layer) => {
       if ('source' in layer && layer.source !== sourceId) return [];
       if (layer.type === 'symbol') {
         if (!layer.layout?.['text-field']) return [];
@@ -189,6 +190,106 @@ export async function downloadOfflineRegion(name: string, center: LatLon, radius
     if (!published) await purge(id).catch(() => {});
     downloading = false;
   }
+}
+
+export async function getOfflinePackage(url: string, signal?: AbortSignal) {
+  const endpoint = new URL(url);
+  if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password) throw new Error('Укажите HTTPS-адрес пакета.');
+  const response = await fetch(endpoint, { signal, credentials: 'omit' });
+  if (!response.ok) throw new Error('У поставщика нет пакета для выбранного населённого пункта и радиуса.');
+  return validateOfflinePackage(await response.json());
+}
+
+export async function downloadNavigationPackage(name: string, center: LatLon, radiusKm: number, packageUrl: string, manifest: OfflinePackage,
+  progress: (data: { done: number; total: number; bytes: number }) => void, signal?: AbortSignal) {
+  if (downloading) throw new Error('Дождитесь завершения текущей загрузки.');
+  const pkg = validateOfflinePackage(manifest);
+  const bounds = areaBounds(center, radiusKm);
+  if (!pointInBounds({ lon: bounds[0], lat: bounds[1] }, pkg.bounds) ||
+    !pointInBounds({ lon: bounds[2], lat: bounds[3] }, pkg.bounds)) throw new Error('Пакет не покрывает выбранную территорию.');
+  const url = new URL(packageUrl);
+  if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Укажите HTTPS-адрес пакета.');
+  const key = `${name} · ${radiusKm} км`;
+  const old = offlineRegions.get().find((item) => item.name === key);
+  const id = `p${globalThis.crypto.randomUUID().replaceAll('-', '')}`;
+  const root = `${OFFLINE_PROTOCOL}://${id}`;
+  const style: StyleSpecification = JSON.parse(JSON.stringify(pkg.style));
+  const vectors = Object.entries(style.sources).filter(([, source]) => source.type === 'vector');
+  if (vectors.length !== 1) throw new Error('Пакет должен содержать один источник векторной карты.');
+  const [sourceId, source] = vectors[0];
+  if (source.type !== 'vector') throw new Error('Пакет не содержит векторный источник.');
+  style.sources = { [sourceId]: { type: 'vector', tiles: [`${root}/t/{z}/{x}/{y}`], bounds,
+    minzoom: source.minzoom ?? 0, maxzoom: source.maxzoom ?? 14, attribution: '© OpenStreetMap contributors' } };
+  style.layers = style.layers.filter((layer) => !('source' in layer) || layer.source === sourceId);
+  delete style.sprite;
+  style.glyphs = `${root}/g/{range}?font={fontstack}`;
+  style.layers = style.layers.flatMap<LayerSpecification>((layer) => {
+    if (layer.type !== 'symbol') return [layer];
+    if (!layer.layout?.['text-field']) return [];
+    layer.layout = { ...layer.layout, 'text-font': ['Noto Sans Regular'] };
+    delete layer.layout['icon-image'];
+    return [layer];
+  });
+  downloading = true;
+  let published = false;
+  let bytes = 0;
+  try {
+    for (let i = 0; i < pkg.assets.length; i += 4) {
+      signal?.throwIfAborted();
+      const batch = pkg.assets.slice(i, i + 4);
+      const data = await Promise.all(batch.map(async ({ path, bytes: expected }) => {
+        const response = await fetch(new URL(path, url), { signal, credentials: 'omit', redirect: 'error' });
+        if (!response.ok) throw new Error(`Не удалось загрузить ресурс пакета (HTTP ${response.status}).`);
+        const body = await response.arrayBuffer();
+        if (body.byteLength !== expected) throw new Error('Размер ресурса отличается от указанного в пакете.');
+        if (path === 'addresses.json') decodeAddresses(body);
+        return body;
+      }));
+      signal?.throwIfAborted();
+      await write('resources', (store) => batch.forEach(({ path }, index) => store.put(data[index], `${id}/${path}`)));
+      bytes += data.reduce((sum, item) => sum + item.byteLength, 0);
+      progress({ done: i + batch.length, total: pkg.assets.length, bytes });
+    }
+    const region: OfflineRegion = { id, name: key, center, bounds, style, bytes, updated: Date.now(), packageUrl, radiusKm,
+      graph: pkg.assets.filter(({ path }) => path.startsWith('graph/')).map(({ path }) => path) };
+    await write('regions', (store) => store.put(region));
+    published = true;
+    offlineRegions.set([region, ...offlineRegions.get().filter((item) => item.name !== key)]);
+    if (old) await purge(old.id).catch(() => {});
+    return region;
+  } finally {
+    if (!published) await purge(id).catch(() => {});
+    downloading = false;
+  }
+}
+
+function decodeAddresses(buffer: ArrayBuffer) {
+  const addresses = JSON.parse(new TextDecoder().decode(buffer)) as OfflineAddress[];
+  if (!Array.isArray(addresses) || !addresses.length || addresses.some((entry) => !entry || typeof entry.id !== 'string' ||
+    typeof entry.name !== 'string' || typeof entry.address !== 'string' || !Number.isFinite(entry.lat) || !Number.isFinite(entry.lon) ||
+    entry.aliases != null && (!Array.isArray(entry.aliases) || entry.aliases.some((alias) => typeof alias !== 'string')))) {
+    throw new Error('Адресный индекс пакета повреждён.');
+  }
+  return addresses;
+}
+
+export function readOfflineAsset(id: string, path: string) {
+  return read<ArrayBuffer | undefined>('resources', `${id}/${path}`);
+}
+
+export async function searchOfflineAddresses(query: string) {
+  await initializeOfflineMaps();
+  const results = new Map<string, OfflineAddress>();
+  for (const region of offlineRegions.get()) {
+    if (!region.graph) continue;
+    const data = await readOfflineAsset(region.id, 'addresses.json');
+    if (!data) continue;
+    for (const match of matchOfflineAddresses(decodeAddresses(data), query)) {
+      if (pointInBounds(match, region.bounds)) results.set(match.id, match);
+    }
+    if (results.size >= 12) break;
+  }
+  return [...results.values()].slice(0, 12);
 }
 
 export async function offlineResource(url: string) {

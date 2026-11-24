@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type { Map as MapLibre } from 'maplibre-gl';
 import type { LatLon } from '../lib/routing';
 import { DEFAULT_STYLE_URL } from '../lib/mapStyle';
-import { EMPTY_OFFLINE_STYLE, initializeOfflineMaps, offlineRegions, offlineStyleFor, registerOfflineProtocol } from '../lib/offlineMaps';
+import { EMPTY_OFFLINE_STYLE, initializeOfflineMaps, offlineRegions, offlineStyleFor, regionAt, registerOfflineProtocol } from '../lib/offlineMaps';
 import { watchAndroidViewport } from '../lib/androidViewport';
 import { Icon } from './Icon';
 
@@ -28,7 +28,10 @@ export function PlaceMapPicker({ start, cancel, confirm }: { start: LatLon | nul
       if (disposed || !element.current) return;
       const start = initial.current ?? (!navigator.onLine ? offlineRegions.get()[0]?.center : null);
       const center = start ?? { lat: 0, lon: 0 };
-      const styleAt = (point: LatLon) => navigator.onLine ? DEFAULT_STYLE_URL : offlineStyleFor(point)?.style ?? EMPTY_OFFLINE_STYLE;
+      const styleAt = (point: LatLon) => {
+        const region = regionAt(point);
+        return region?.graph ? region.style : navigator.onLine ? DEFAULT_STYLE_URL : offlineStyleFor(point)?.style ?? EMPTY_OFFLINE_STYLE;
+      };
       let style = styleAt(center);
       const view = new ml.Map({
         container: element.current, style, center: [center.lon, center.lat], zoom: start ? 16 : 2,

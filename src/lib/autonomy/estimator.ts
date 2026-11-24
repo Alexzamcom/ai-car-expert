@@ -8,7 +8,7 @@ export type Fix = LatLon & {
   at: number; accuracy: number; speed: number | null; speedAccuracy?: number;
   verticalAccuracy?: number; course?: number; courseAccuracy?: number;
 };
-export type Variant = 'inertial' | 'road' | 'hybrid' | 'adaptive';
+export type Variant = 'inertial' | 'road' | 'hybrid' | 'adaptive' | 'gps';
 export type Measurement =
   | { type: 'motion'; sample: Motion }
   | { type: 'gps'; sample: Fix }
@@ -41,6 +41,8 @@ export class Estimator {
   private sensorSpeed = 0;
   private lastTick: number;
   private lastMotion: number | null = null;
+  private motionEvidenceAt = -Infinity;
+  private distanceHeld = false;
   private lastGps: Fix | null = null;
   private relativeSpeed: { speed: number; at: number } | null = null;
   private calibration: { x: number; y: number; samples: number } = { x: 0, y: 0, samples: 0 };
@@ -51,15 +53,32 @@ export class Estimator {
   private roadDistance = 0;
   private roadSegment = 0;
   private roadAligned = false;
-  private readonly cumulative: number[];
-  constructor(origin: Origin, private readonly road: LatLon[], private readonly variant: Variant) {
+  private cumulative: number[];
+  constructor(origin: Origin, private road: LatLon[], private variant: Variant) {
     this.lastTick = origin.at;
     this.cumulative = cumulative(road);
     this.state = this.initial(origin.position, origin.heading);
     this.alignAnchor(origin.position);
   }
+  setVariant(variant: Variant) {
+    if (variant === this.variant) return;
+    this.variant = variant;
+    this.lastGps = this.goodAt = this.relativeSpeed = null;
+    this.goodRun = 0;
+    this.motionEvidenceAt = -Infinity;
+    this.distanceHeld = false;
+    this.state = { ...this.state, gps: ['gps', 'hybrid', 'adaptive'].includes(variant) ? 'waiting' : 'disabled',
+      source: 'inertial', speed: 0, event: undefined };
+  }
+
+  setRoute(road: LatLon[]) {
+    this.road = road;
+    this.cumulative = cumulative(road);
+    this.alignAnchor(this.state);
+  }
+
   private initial(position: LatLon, heading: number): Estimate {
-    return { ...position, heading: wrap(heading), speed: 0, stopped: true, uncertainty: 12, gps: this.variant === 'hybrid' || this.variant === 'adaptive' ? 'waiting' : 'disabled', source: 'inertial', distance: { gps: 0, sensors: 0, fused: 0 } };
+    return { ...position, heading: wrap(heading), speed: 0, stopped: true, uncertainty: 12, gps: ['gps', 'hybrid', 'adaptive'].includes(this.variant) ? 'waiting' : 'disabled', source: 'inertial', distance: { gps: 0, sensors: 0, fused: 0 } };
   }
   private alignAnchor(position: LatLon) {
     const anchor = roadAnchor(position, [this.road], this.state.heading);
@@ -72,17 +91,20 @@ export class Estimator {
     if (input.type === 'tick') {
       const dt = Math.min(5, Math.max(0, (input.at - this.lastTick) / 1000));
       this.lastTick = input.at;
-      if (this.variant === 'adaptive' && (this.goodAt == null || input.at - this.goodAt > 2500)) {
+      if ((this.variant === 'adaptive' || this.variant === 'gps') && (this.goodAt == null || input.at - this.goodAt > 2500)) {
         const source = this.goodAt != null && input.at - this.goodAt <= 6000 ? 'hybrid' : 'inertial';
         const idle = this.lastMotion == null || input.at - this.lastMotion > 1500;
         this.state = { ...this.state, gps: this.state.gps === 'trusted' ? 'waiting' : this.state.gps, source,
-          uncertainty: Math.min(5000, this.state.uncertainty + (idle ? dt * 3 : 0)), event: undefined };
+          uncertainty: Math.min(5000, this.state.uncertainty + (idle || this.variant === 'gps' ? dt * 3 : 0)),
+          speed: this.variant === 'gps' ? 0 : this.state.speed, event: undefined };
       }
       return this.state;
     }
     if (input.type === 'correction' || input.type === 'pause') {
       this.lastMotion = this.goodAt = null;
       this.sensorSpeed = this.goodRun = 0;
+      this.motionEvidenceAt = -Infinity;
+      this.distanceHeld = false;
       this.lastTick = input.at;
       this.lastGps = null;
       this.relativeSpeed = null;
@@ -97,7 +119,7 @@ export class Estimator {
         this.state = { ...this.state, stopped: false, speed: 0, uncertainty: Math.min(5000, this.state.uncertainty + 35), event: undefined };
       }
     } else if (input.type === 'gps') {
-      if (this.variant === 'adaptive') this.adaptiveGps(input.sample);
+      if (this.variant === 'adaptive' || this.variant === 'gps') this.adaptiveGps(input.sample);
       else this.gps(input.sample);
     } else if (input.type === 'vehicle') {
       // Reserved for a trusted vehicle sensor. GPS never enters through this interface.
@@ -189,21 +211,28 @@ export class Estimator {
     const acceleration = this.forward == null ? 0 :
       sample.x * Math.cos(this.forward * radians) + sample.y * Math.sin(this.forward * radians);
     const dv = Math.abs(acceleration) > 0.15 ? clamp(acceleration, -5, 4) * elapsed : 0;
+    if (dv !== 0 || Math.abs(yawRate) >= 5) this.motionEvidenceAt = sample.at;
     this.sensorSpeed = clamp(this.sensorSpeed + dv, 0, 55);
     const sensorDistance = s.distance.sensors + this.sensorSpeed * elapsed;
     if (this.variant === 'adaptive' && s.gps === 'trusted' && this.goodAt != null && sample.at - this.goodAt <= 2500) {
       this.state = { ...s, heading, distance: { ...s.distance, sensors: sensorDistance }, event: undefined };
       return;
     }
+    if (this.variant === 'gps') return;
     let speed = clamp(s.speed + dv, 0, 55);
     const aid = this.relativeSpeed && Math.abs(this.relativeSpeed.at - sample.at) <= 3500 ? this.relativeSpeed : null;
     if (aid) speed += (aid.speed - speed) * Math.min(0.25, elapsed * 0.3);
-    const stopped = speed < 0.35 && strength < 0.25 && yawRate === 0;
+    const unmeasured = (this.variant === 'road' || this.variant === 'adaptive') && !aid &&
+      (speed > 0 || this.distanceHeld) && sample.at - Math.max(this.motionEvidenceAt, this.goodAt ?? -Infinity) > 12_000;
+    this.distanceHeld = unmeasured;
+    if (unmeasured) speed = 0;
+    const stopped = !unmeasured && speed < 0.35 && strength < 0.25 && yawRate === 0;
     if (stopped) speed = 0;
     const distance = speed * elapsed;
-    const raw = advance(s, heading, distance);
+    const raw = distance > 0 ? advance(s, heading, distance) : s;
     let position = raw;
     let uncertainty = Math.min(5000, s.uncertainty + elapsed * (stopped ? 0.15 : 0.85) + distance * 0.18 + Math.abs(yaw) * 0.08);
+    if (unmeasured) uncertainty = Math.max(50, uncertainty);
     this.headingDelta = Math.abs(yawRate) > 5 ? this.headingDelta + yaw : this.headingDelta * Math.max(0, 1 - elapsed);
     const turn = Math.abs(this.headingDelta) >= 24 && sample.at - this.lastTurnAt > 4000;
     if (turn) this.lastTurnAt = sample.at;
@@ -217,7 +246,7 @@ export class Estimator {
       // eligible until the measured heading actually aligns with the exit.
       const confirmed = sample.at - this.lastTurnAt <= 3000 && this.roadTurnAt !== this.lastTurnAt &&
         bend >= 24 && gap < Math.min(45, uncertainty) && Math.abs(difference(heading, nextBearing)) < 22;
-      if (confirmed) {
+      if (confirmed && !unmeasured) {
         this.roadTurnAt = this.lastTurnAt;
         this.roadDistance = this.cumulative[next];
         this.roadSegment = next;

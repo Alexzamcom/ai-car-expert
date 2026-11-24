@@ -897,7 +897,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             raw: { lat: geoStore.get().lat, lon: geoStore.get().lon },
             nativePosition: { source: geoStore.get().source, trust: geoStore.get().nativeTrust, speedSource: geoStore.get().speedSource, reason: geoStore.get().nativeReason, status: geoStore.get().status, error: geoStore.get().lastError?.message },
             accuracyCircle: accShown,
-            routePoints: navStore.get().route?.coords.length ?? 0,
+            routePoints: (p.autonomous ? autonomyMap.get().route : navStore.get().route)?.coords.length ?? 0,
             routeTrim: (() => {
               const s = navStore.get();
               const c = shownCoords ?? [];

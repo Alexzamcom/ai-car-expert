@@ -36,6 +36,7 @@ function serviceWorker(): Plugin {
 
 export default defineConfig(({ mode }) => ({
   base: './',
+  worker: { format: 'es' },
   define: {
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.1.0'),
   },

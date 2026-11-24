@@ -786,7 +786,8 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
         </div>}
         {androidDriving && !located && !guiding && !nav.dest && !pick && !panelOpen && !androidMenu && (
           <div className="android-position-tag" role="status">
-            {geo.status === 'denied' ? 'Геопозиция недоступна. Проверьте разрешение в настройках Android' : 'Ищем местоположение…'}
+            <span>{geo.status === 'denied' ? 'Геопозиция недоступна. Проверьте разрешение в настройках Android' : 'Ищем местоположение…'}</span>
+            {onAutonomy && <button className="btn" onClick={onAutonomy}>Старт вручную</button>}
           </div>
         )}
         {androidDriving && androidMenu && (

@@ -1,3 +1,4 @@
+import { offlineRegions, searchOfflineAddresses } from './offlineMaps';
 import { recordMapLocation } from './geo/mapLocation';
 import { androidLocationDiagnostics, recordLocationMarker, recordLocationSample, recordLocationStatus } from './geo/locationDiagnostics';
 import { ConfirmedRoute } from './confirmedRoute';
@@ -706,8 +707,18 @@ export function geoStatusText(g: GeoState, now = Date.now()): { text: string; to
 
 /* ---------- Поиск мест ---------- */
 
-export function searchPlaces(query: string, near?: LatLon, signal?: AbortSignal): Promise<Place[]> {
-  return geoSearch(query, { near, lang: navLang(), signal });
+export async function searchPlaces(query: string, near?: LatLon, signal?: AbortSignal): Promise<Place[]> {
+  if (!usesAndroidNativePosition()) return geoSearch(query, { near, lang: navLang(), signal });
+  if (!navigator.onLine) return searchOfflineAddresses(query);
+  try {
+    const places = await geoSearch(query, { near, lang: navLang(), signal });
+    return places.length ? places : searchOfflineAddresses(query).catch(() => []);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    const places = await searchOfflineAddresses(query).catch(() => []);
+    if (places.length) return places;
+    throw error;
+  }
 }
 
 export function addRecent(p: Place) {
@@ -938,7 +949,7 @@ function reroute(pos: LatLon) {
   if (!s.dest) return;
   lastReroute = Date.now();
   offRouteCount = 0;
-  if (navigator.onLine === false) {
+  if (navigator.onLine === false && !offlineRegions.get().some((region) => region.graph?.length)) {
     if (!pendingReroute) say(t('offline'));
     pendingReroute = true;
     navStore.set({ ...s, notice: 'Нет интернета: вы ушли с маршрута, перестрою, когда появится связь' });
@@ -998,7 +1009,7 @@ function onPosition(pos: RawFix, now: number, native?: PositionEstimate) {
     if (match.kind !== 'matched') {
       const deviated = match.kind === 'off-route';
       navStore.set({ ...s, progress: p, notice: deviated ? 'Вы отклонились от маршрута' : 'Положение на маршруте требует уточнения' });
-      if (deviated && navigator.onLine && !s.rerouting && now - lastReroute > 15_000) reroute(pos);
+      if (deviated && !s.rerouting && now - lastReroute > 15_000) reroute(pos);
       return;
     }
   } else p = routeProgress(s.route, pos, routeCache, s.progress?.segIndex ?? 0);

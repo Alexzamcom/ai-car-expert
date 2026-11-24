@@ -5,6 +5,7 @@ interface TripSensorsPlugin {
   start(options: { gps: boolean; allowGpsOnly?: boolean }): Promise<void>;
   setHudAwake(options: { enabled: boolean }): Promise<void>;
   startGps(): Promise<void>;
+  stopGps(): Promise<void>;
   stop(): Promise<void>;
   exportTrip(options: { data: string }): Promise<void>;
   addListener(name: 'motion', callback: (data: Motion) => void): Promise<PluginListenerHandle>;
