@@ -2,6 +2,7 @@ package com.aicarexpert.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.Context;
 import android.content.ClipData;
@@ -32,6 +33,7 @@ import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.ApiException;
+import com.google.android.gms.common.api.ResolvableApiException;
 import com.google.android.gms.location.LocationSettingsRequest;
 import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.location.FusedLocationProviderClient;
@@ -60,6 +62,8 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     private CancellationSignal systemRequest;
     private final ArrayDeque<JSObject> attempts = new ArrayDeque<>();
     private int probeId, sent, received;
+    private PendingIntent settingsResolution;
+    private boolean resolutionShown;
     private final LinkedHashSet<String> pending = new LinkedHashSet<>();
 
     private String fusedStatus = "idle";
@@ -210,6 +214,25 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     }
 
     @PluginMethod
+    public void resolveLocationSettings(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            if (resolutionShown || settingsResolution == null) {
+                call.reject("No resolution available");
+                return;
+            }
+            resolutionShown = true;
+            try {
+                settingsResolution.send();
+                outcome(probeId, "gms-location-settings", "resolution-opened");
+                call.resolve(status());
+            } catch (PendingIntent.CanceledException error) {
+                outcome(probeId, "gms-location-settings", "resolution-cancelled");
+                call.reject("Resolution expired");
+            }
+        });
+    }
+
+    @PluginMethod
     public void diagnostics(PluginCall call) {
         getActivity().runOnUiThread(() -> call.resolve(status()));
     }
@@ -235,6 +258,7 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
             state.put("wifiScanAvailable", wifi.isScanAlwaysAvailable());
         }
         state.put("sdk", android.os.Build.VERSION.SDK_INT);
+        state.put("settingsResolvable", settingsResolution != null && !resolutionShown);
         state.put("sent", sent);
         state.put("received", received);
         state.put("attempts", new JSONArray(attempts));
@@ -352,7 +376,15 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
                     .addLocationRequest(new LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 1000).build()).build();
                 outcome(id, "gms-location-settings", "requested");
                 LocationServices.getSettingsClient(getActivity()).checkLocationSettings(settings)
-                    .addOnSuccessListener(result -> { if (request == currentRequest) { outcome(id, "gms-location-settings", "available"); report(); } })
+                    .addOnSuccessListener(result -> {
+                        if (request != currentRequest) return;
+                        settingsResolution = null;
+                        var states = result.getLocationSettingsStates();
+                        outcome(id, "gms-location-settings", states == null ? "available" :
+                            "available:network-present=" + states.isNetworkLocationPresent() + ",network-usable=" +
+                            states.isNetworkLocationUsable() + ",gps-usable=" + states.isGpsUsable());
+                        report();
+                    })
                     .addOnFailureListener(error -> failed(id, request, "gms-location-settings", error));
             } catch (RuntimeException error) {
                 outcome(id, "fused", errorCode(error));
@@ -378,6 +410,9 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
 
     private void failed(int id, CancellationTokenSource request, String source, Exception error) {
         if (request != currentRequest) return;
+        if (source.equals("gms-location-settings")) {
+            settingsResolution = error instanceof ResolvableApiException ? ((ResolvableApiException) error).getResolution() : null;
+        }
         outcome(id, source, errorCode(error));
         report();
     }

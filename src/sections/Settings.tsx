@@ -1004,6 +1004,9 @@ function GpsDiagnostics() {
   const system = diagnostic.status;
   const last = diagnostic.samples.at(-1);
   const marker = ({
+    'ordinary-marker-visible': 'Обычная метка в видимой области',
+    'ordinary-marker-awaits-render': 'Обычная метка ожидает отрисовки',
+    'marker-covered': 'Маркер перекрыт интерфейсом',
     'map-not-ready': 'Карта ещё не готова',
     'waiting-for-display-position': 'Карта ждёт позицию от фильтра',
     'approximate-position-awaits-route-confirmation': 'Приблизительная точка не применяется к активному маршруту',
@@ -1045,6 +1048,8 @@ function GpsDiagnostics() {
       ['Wi‑Fi / сканирование', system ? `${system.wifiEnabled ? 'вкл.' : 'выкл.'} / ${system.wifiScanAvailable ? 'доступно постоянно' : 'только при включённом Wi‑Fi'}` : '—'],
       ['Передача Android → WebView', system ? `${system.sent ?? 0} отправлено / №${system.received ?? 0} подтверждён` : '—'],
       ['Маркер на карте', marker],
+      ['Видимость', diagnostic.visibility ? `виден: ${diagnostic.visibility.visible ? 'да' : 'нет'} · в кадре: ${diagnostic.visibility.inViewport ? 'да' : 'нет'} · перекрыт: ${diagnostic.visibility.covered ? 'да' : 'нет'}` : '—'],
+      ['Возраст отображаемой позиции', diagnostic.visibility?.ageMs == null ? '—' : `${Math.round(diagnostic.visibility.ageMs / 1000)} с`],
       ['Google Play Services', system ? system.playServices === 0 ? 'доступны' : `недоступны (код ${system.playServices})` : '—'],
       ['Поставщики Android', system ? `Fused: ${system.fusedStatus} · GPS ${system.gpsEnabled ? 'вкл.' : 'выкл.'} · Network ${system.networkEnabled ? 'вкл.' : 'выкл.'}` : '—'],
     ] as [string, string][] : []),
@@ -1078,6 +1083,9 @@ function GpsDiagnostics() {
         <button type="button" className="btn" onClick={() => { if (native) void locateOnAndroid().then((message) => toast(message)); else restartGeo(); toast('Запрашиваю свежую позицию', 'info'); }}>
           <Icon name="locate" /> Обновить позицию
         </button>
+        {native && system?.settingsResolvable && <button type="button" className="btn" onClick={() => {
+          void nativePosition.resolveLocationSettings().then(recordLocationStatus).catch(() => toast('Системный диалог недоступен', 'warn'));
+        }}>Открыть системный диалог геолокации</button>}
         {native && <button type="button" className="btn" onClick={() => {
           void nativePosition.diagnostics().then(recordLocationStatus).catch(() => {}).then(() =>
             nativePosition.copyDiagnostics({ json: locationDiagnosticsJson() }))

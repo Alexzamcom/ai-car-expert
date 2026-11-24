@@ -70,8 +70,13 @@ try {
   await send({ ...good, source: 'network', accuracy: 1800 });
   assert.equal(await page.evaluate(() => window.__aceMap.state().raw.lat), null);
   await send({ ...good, lat: good.lat + 0.006, source: 'network', accuracy: 380 });
-  await wait(() => window.__aceMap.state().nativePosition.trust === 'network' && document.body.innerText.includes('Приблизительная сетевая позиция'));
-  await wait(() => document.body.innerText.includes('±380 м') && window.__aceMap.state().accuracyCircle >= 380);
+  await wait(() => window.__aceMap.state().nativePosition.trust === 'network' && document.body.innerText.includes('Приблизительная позиция'));
+  await wait(() => {
+    const marker = document.querySelector('.ml-user-location');
+    const position = window.__aceMap.state().car;
+    return marker && position && Math.abs(position.x - 0.5) < 0.05 && Math.abs(position.y - 0.5) < 0.05 &&
+      document.body.innerText.includes('±380 м') && window.__aceMap.state().accuracyCircle >= 380;
+  });
   await page.waitForTimeout(850);
   await send({ ...good, source: 'gps' });
   assert.equal(await page.evaluate(() => window.__aceMap.state().nativePosition.trust), 'network');
@@ -96,6 +101,13 @@ try {
     await send({ ...good, source: 'gps' });
   }
   await wait(() => window.__aceMap.state().nativePosition.trust === 'confirmed' && window.__aceMap.state().offline.local);
+  await page.evaluate(() => {
+    const originalNow = Date.now.bind(Date);
+    Date.now = () => originalNow() + 17_000;
+  });
+  await wait(() => document.querySelector('.ml-user-location.is-last-known') &&
+    document.body.innerText.includes('Последняя известная позиция') &&
+    window.__aceMap.state().accuracyCircle === 4);
   await page.getByRole('button', { name: 'Дополнительные настройки' }).click();
   await page.getByRole('button', { name: 'Настройки навигации и HUD' }).click();
   await page.getByRole('button', { name: 'Скопировать отчёт без координат' }).click();
@@ -103,7 +115,8 @@ try {
   const report = await page.evaluate(() => window.copiedReport);
   const summary = JSON.parse(report);
   assert(summary.status.sent > 0 && summary.status.received === summary.status.sent);
-  assert(summary.samples.some((sample) => sample.decision === 'network'));
+  assert(summary.samples.some((sample) => sample.decision === 'network' && sample.mapAccepted));
+  assert(summary.visibility?.ageMs >= 15_000 && summary.visibility.inViewport && !summary.visibility.guiding);
   assert(summary.samples.some((sample) => sample.decision === 'rejected'));
   assert(!/"lat"|"lon"|"heading"|"speed"/.test(report));
   console.log('✓ Android: Wi-Fi без позиции, приблизительный сеть/GPS, блокировка скачка из другого города и восстановление GNSS без сети');
