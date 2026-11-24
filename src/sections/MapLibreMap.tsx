@@ -425,6 +425,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       let raf = 0;
       let followTarget: { speed: number | null; lift: number; height: number; landscape: boolean } | null = null;
       let cameraTime = 0;
+      let recoveringCenter = false;
       let motionDiag = { modelM: 0, centerM: 0, cameraDeg: 0, modelDeg: 0 };
       let motionPeaks = { ...motionDiag };
       const frame = (now: number) => {
@@ -462,9 +463,14 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
               const padding = top + (2 * followTarget.height * followPose.offset - top) * blend;
               motionDiag.centerM = haversine({ lat: center.lat, lon: center.lng }, next);
               motionDiag.cameraDeg = Math.abs(yawStep * blend);
+              if (motionDiag.centerM > 30) recoveringCenter = true;
+              if (motionDiag.centerM < 0.6) recoveringCenter = false;
+              const centerTarget: [number, number] = recoveringCenter
+                ? [center.lng + headingDelta(next.lon, center.lng) * blend, center.lat + (next.lat - center.lat) * blend]
+                : [next.lon, next.lat];
               if (motionDiag.centerM > 0.015 || motionDiag.cameraDeg > 0.015 || Math.abs(pitch - map.getPitch()) > 0.015 ||
                 Math.abs(zoom - map.getZoom()) > 0.002 || Math.abs(padding - top) > 0.3) {
-                map.jumpTo({ center: [next.lon, next.lat], bearing, pitch, zoom, padding: { top: padding, bottom: 0, left: 0, right: 0 } });
+                map.jumpTo({ center: centerTarget, bearing, pitch, zoom, padding: { top: padding, bottom: 0, left: 0, right: 0 } });
               }
             }
           }
@@ -724,6 +730,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           userZoom = false;
           touching = 0;
           follow.current = true;
+          recoveringCenter = true;
           camera.current(true);
         },
         zoomBy(amount) {

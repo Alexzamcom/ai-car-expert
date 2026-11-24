@@ -764,7 +764,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
         )}
         {androidDriving && (guiding && (!trustedGeo || nav.notice) || !guiding && located && !panelOpen && !androidMenu &&
           geo.nativeTrust != null && geo.nativeTrust !== 'confirmed') && <div className="android-position-tag" role="status">
-          {guiding && nav.notice ? nav.notice : geo.nativeTrust === 'network' ? 'Приблизительная сетевая позиция' : geo.nativeTrust === 'estimated' ? 'Положение оценено по датчикам' : 'Положение не подтверждено'}
+          {guiding && nav.notice ? nav.notice : geo.nativeTrust === 'network' ? `Приблизительная сетевая позиция · ±${Math.round(geo.accuracy ?? 0)} м` : geo.nativeTrust === 'estimated' ? 'Положение оценено по датчикам' : 'Положение не подтверждено'}
           {onAutonomy && !panelHidden && <button className="btn" onClick={() => {
             const active = navStore.get();
             if (active.route && active.dest && active.route.coords.length <= 20_000) {
