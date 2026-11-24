@@ -25,7 +25,7 @@ try {
   await ctx.route('**/*', (request) => {
     const target = new URL(request.request().url());
     if (target.origin === new URL(url).origin) return request.continue();
-    if (/route\/v1|nominatim|photon|reverse/.test(target.href)) serverRequests++;
+    if (offline && /route\/v1|nominatim|photon|reverse/.test(target.href)) serverRequests++;
     if (offline) return request.abort('internetdisconnected');
     const headers = { 'Access-Control-Allow-Origin': '*' };
     if (target.hostname === 'raw.githubusercontent.com') {
@@ -180,7 +180,10 @@ try {
   await page.evaluate(() => {
     window.motionTimer = setInterval(() => window.emit('TripSensors', 'motion', { x: 0, y: 0, yawRate: 0 }), 120);
   });
-  await page.waitForFunction(() => window.__aceMap.state().experimentalEstimate?.stopped);
+  await page.waitForFunction(() => {
+    const map = window.__aceMap.state();
+    return map.experimentalEstimate?.stopped && map.camera.style === 'dynamic' && map.pitch > 25;
+  });
   await click('HUD');
   if (await page.getByRole('button', { name: /Понятно/ }).count()) {
     await page.getByRole('button', { name: /Понятно/ }).evaluate((node) => node.click());
@@ -203,6 +206,7 @@ try {
   assert(await page.evaluate(() => JSON.parse(localStorage.getItem('ace:position-mode')).rechecking));
   for (let i = 0; i < 3; i++) { await emitFix(origin); await page.waitForTimeout(650); }
   await page.waitForFunction(() => !JSON.parse(localStorage.getItem('ace:position-mode')).rechecking);
+  await paint();
   assert.equal(serverRequests, 0);
   console.log('✓ Реальный Павлоград: два адреса, касания, дом → работа, ложная позиция, офлайн-перезапуск, подтверждение старта и HUD.');
 } finally { await browser.close(); }
