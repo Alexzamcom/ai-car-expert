@@ -5,6 +5,8 @@ import { createRequire } from 'node:module';
 import { cameraFixtureStyle } from './game-camera-visual.mjs';
 const { chromium, devices } = createRequire(import.meta.url)('playwright');
 const [url = 'http://localhost:4173/', out = 'android-ux-visuals'] = process.argv.slice(2);
+const cameraVideo = process.env.ACE_CAMERA_VIDEO === '1';
+const roadTest = process.env.ACE_ROAD_TEST === '1';
 const gameHud = process.env.ACE_GAME_HUD === '1';
 const record = process.env.ACE_HUD_VIDEO === '1';
 const fixture = (name) => fs.readFileSync(new URL(`../tests/fixtures/${name}`, import.meta.url), 'utf8');
@@ -61,7 +63,7 @@ try {
   const page = await ctx.newPage();
   page.setDefaultTimeout(45_000);
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  const wait = (fn, arg) => page.waitForFunction(fn, arg, { polling: 150 });
+  const wait = (fn, arg) => page.waitForFunction(fn, arg, { polling: 150, timeout: 30_000 });
   const click = (button) => page.getByRole('button', { name: button, exact: true }).evaluate((el) => el.click());
   const fix = async (metres) => {
     const position = along(metres);
@@ -79,6 +81,51 @@ try {
   assert(await page.getByPlaceholder('Куда едем?').isVisible());
   assert.equal(await page.locator('.dock').count(), 0);
   await page.screenshot({ path: `${out}/01-home.png` });
+  if (roadTest) {
+    const saved = [];
+    for (const [type, label] of [['Дом', 'Дом'], ['Работа', 'Работа'], ['Другое', 'Тестовая точка']]) {
+      await page.locator('#map-search').focus();
+      await click('Добавить место');
+      const editor = page.locator('.place-editor');
+      const radio = editor.getByRole('radio', { name: type, exact: true });
+      if (await radio.count()) await radio.click();
+      if (label === 'Тестовая точка') await editor.locator('input').first().fill(label);
+      await click('Указать на карте');
+      const picker = page.getByRole('dialog', { name: 'Выбор места на карте' });
+      await picker.waitFor();
+      assert.equal(await page.locator('.place-editor').count(), 0);
+      assert(await page.locator('.app').evaluate((root) => root.inert));
+      const confirm = picker.getByRole('button', { name: 'Подтвердить' });
+      await wait(() => document.querySelector('.place-map-picker .btn-primary')?.disabled === false);
+      await page.mouse.move(200, 330);
+      await page.mouse.down();
+      await page.mouse.move(240, 356, { steps: 8 });
+      await page.mouse.up();
+      if (type === 'Дом') {
+        await page.waitForTimeout(500);
+        await page.screenshot({ path: `${out}/06-place-picker.png` });
+        await page.setViewportSize({ width: 798, height: 412 });
+        await wait(() => document.querySelector('.place-map-picker canvas')?.clientHeight === 412);
+        await page.screenshot({ path: `${out}/06-place-picker-landscape.png` });
+        await page.setViewportSize({ width: 412, height: 798 });
+        await wait(() => document.querySelector('.place-map-picker canvas')?.clientHeight === 798);
+      }
+      await confirm.click();
+      saved.push(label);
+      await page.getByRole('button', { name: `Маршрут: ${label}` }).waitFor();
+    }
+    await page.getByRole('button', { name: 'Изменить: Дом' }).click();
+    await click('Указать на карте');
+    await page.getByRole('dialog', { name: 'Выбор места на карте' }).waitFor();
+    await page.getByRole('dialog', { name: 'Выбор места на карте' }).getByRole('button', { name: 'Отмена' }).click();
+    await page.locator('.place-editor').getByRole('button', { name: 'Отмена' }).click();
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await wait(() => window.__aceMap?.state().styleReady);
+    await fix(1185);
+    await page.locator('#map-search').focus();
+    for (const label of saved) await page.getByRole('button', { name: `Маршрут: ${label}` }).waitFor();
+    console.log('✓ Полноэкранный выбор трёх мест, отмена и восстановление после перезапуска');
+  }
   const search = page.locator('#map-search');
   await search.evaluate((input) => {
     input.focus();
@@ -99,6 +146,32 @@ try {
   assert(await page.locator('.android-map-controls .hud-btn').isVisible());
   assert(await page.locator('.android-map-controls button.voice-ctl').first().isVisible());
   await page.screenshot({ path: `${out}/02-driving.png` });
+  const verifyOrientation = async (selector) => {
+    for (const [width, height] of [[798, 412], [412, 798], [798, 412], [412, 798]]) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate(() => window.dispatchEvent(new Event('orientationchange')));
+      await wait(({ selector, width, height }) => {
+        const box = document.querySelector(selector)?.getBoundingClientRect();
+        return box && Math.abs(box.width - width) <= 2 && Math.abs(box.height - height) <= 2;
+      }, { selector, width, height });
+    }
+  };
+  if (roadTest) {
+    const count = await page.evaluate(() => window.__aceMap.state().routePoints);
+    await verifyOrientation('.ml-map canvas');
+    assert.equal(await page.evaluate(() => window.__aceMap.state().routePoints), count);
+    await wait(() => window.__aceMap.state().camera.following);
+    await page.evaluate(() => {
+      const map = window.__aceMap.map;
+      const center = map.getCenter();
+      map.jumpTo({ center: [center.lng + 0.03, center.lat] });
+    });
+    await wait(() => {
+      const car = window.__aceMap.state().car;
+      return car && Math.abs(car.x - 0.5) < 0.02 && car.y > 0.67;
+    });
+    console.log('✓ Смена ориентации карты и автоматическое восстановление сопровождения после стороннего сдвига');
+  }
   await page.evaluate(() => {
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
     window.dispatchEvent(new Event('offline'));
@@ -117,11 +190,27 @@ try {
     return s.styleReady && s.gameLayers.includes('game-buildings') && s.camera.lift >= 0.55 && s.pitch < 59;
   });
   await page.screenshot({ path: `${out}/03-approaching-turn.png` });
+  if (cameraVideo) {
+    for (const d of [1605, 1620, 1635, 1650, 1665, 1690, 1730]) {
+      await fix(d);
+      await page.waitForTimeout(250);
+    }
+    await wait(() => {
+      const { pitch, camera } = window.__aceMap.state();
+      return camera.following && camera.target?.pitch >= 67 && pitch > 64;
+    });
+    await page.screenshot({ path: `${out}/07-camera-return.png` });
+    const video = page.video();
+    await ctx.close();
+    await video.saveAs(`${out}/road-test-camera.webm`);
+  }
+  if (!cameraVideo) {
   await page.locator('.android-map-controls .hud-btn').evaluate((el) => el.click());
   const warning = page.getByRole('button', { name: /Понятно/ });
   if (await warning.count()) await warning.evaluate((el) => el.click());
   const stage = page.locator('.hud-stage');
   await stage.waitFor();
+  if (roadTest || gameHud) await verifyOrientation('.hud-stage');
   assert(await page.locator('.hud-maneuver').isVisible());
   assert(await page.locator('.hud-speed').isVisible());
   assert.equal(await stage.evaluate((node) => new DOMMatrixReadOnly(getComputedStyle(node).transform).a), -1);
@@ -172,13 +261,45 @@ try {
   await click('Выйти из HUD');
   await wait(() => document.querySelector('.android-position-tag') ||
     document.querySelector('.android-cue.is-visible')?.textContent.includes('Положение уточняется'));
+  if (roadTest) {
+    for (const d of [1605, 1620, 1635, 1650, 1665, 1690, 1730]) await fix(d);
+    await wait(() => {
+      const { pitch, camera } = window.__aceMap.state();
+      return camera.following && camera.target?.pitch >= 67 && pitch > 64;
+    });
+    await page.screenshot({ path: `${out}/07-camera-return.png` });
+    const cdp = await ctx.newCDPSession(page);
+    const input = (type, x, y) => cdp.send('Input.dispatchTouchEvent', {
+      type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1 }],
+    });
+    await input('touchStart', 175, 424);
+    for (const x of [190, 210, 235, 260, 285]) {
+      await input('touchMove', x, 420);
+      await page.waitForTimeout(65);
+    }
+    await input('touchEnd');
+    await cdp.detach();
+    await page.getByRole('button', { name: 'Вернуться к автомобилю' }).waitFor();
+  }
   const activeCue = page.locator('.android-cue.is-visible');
   if (await activeCue.count()) assert.match(await activeCue.innerText(), /Положение уточняется/);
   await page.waitForTimeout(20500);
   assert.equal(await page.getByRole('button', { name: 'Завершить маршрут' }).count(), 0);
+  if (roadTest) {
+    const back = page.getByRole('button', { name: 'Вернуться к автомобилю' });
+    assert(await back.isVisible());
+    await back.click();
+    await wait(() => {
+      const s = window.__aceMap.state();
+      return s.camera.following && s.car?.y > 0.67 && s.routePoints > 2;
+    });
+    console.log('✓ Камера вернулась после манёвра, ручного сдвига и скрытия интерфейса');
+  }
   await page.locator('.ml-map canvas').dispatchEvent('pointerdown');
   await page.getByRole('button', { name: 'Завершить маршрут' }).waitFor();
   console.log('✓ Старт без GPS, поиск, маршрут, камера, приближение, HUD, потеря GPS и скрытие управления');
+
+  }
   }
 } finally {
   await browser.close();

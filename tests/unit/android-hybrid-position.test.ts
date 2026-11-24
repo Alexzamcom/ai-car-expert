@@ -33,6 +33,15 @@ describe('Нативное позиционирование Android', () => {
     expect(fix(h, observation(0, 1000, { source: 'network', accuracy: 37 }))).toMatchObject({ trust: 'network', source: 'network', speed: null });
     expect(moving().state?.source).toBe('gps');
   });
+  it('accepts balanced Fused before GNSS without promoting it to precise guidance', () => {
+    const h = new HybridPosition();
+    expect(fix(h, observation(0, 1000, { source: 'fused', accuracy: 14, provisional: true })))
+      .toMatchObject({ trust: 'network', speed: null });
+    expect(fix(h, observation(0, 2000))).toBeNull();
+    expect(fix(h, observation(3, 3000))?.trust).toBe('confirmed');
+    expect(fix(h, observation(120, 4000, { source: 'fused', accuracy: 14, provisional: true }))).toBeNull();
+    expect(h.state?.trust).toBe('confirmed');
+  });
   it('показывает сетевую точку по Wi-Fi без GNSS и не превращает кеш в точное ведение', () => {
     const h = new HybridPosition();
     const cached = observation(700, 1000, { source: 'fused', cached: true, accuracy: 380 });

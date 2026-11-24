@@ -1,3 +1,4 @@
+import { watchAndroidViewport } from './lib/androidViewport';
 import { usesAndroidNativePosition } from './lib/geo/nativePosition';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { androidDriving } from './lib/androidDriving';
@@ -28,6 +29,20 @@ import { activeReminders, isDue, reminderLabel } from './lib/reminders';
 const AutonomousNavigation = lazy(() => import('./sections/AutonomousNavigation').then((m) => ({ default: m.AutonomousNavigation })));
 
 export function App() {
+  useEffect(() => {
+    if (!androidDriving) return;
+    const root = document.documentElement;
+    const dispose = watchAndroidViewport(() => {
+      const viewport = window.visualViewport;
+      root.style.setProperty('--android-viewport-height', `${Math.round(viewport?.height ?? innerHeight)}px`);
+      root.style.setProperty('--android-viewport-width', `${Math.round(viewport?.width ?? innerWidth)}px`);
+    });
+    return () => {
+      dispose();
+      root.style.removeProperty('--android-viewport-height');
+      root.style.removeProperty('--android-viewport-width');
+    };
+  }, []);
   const [autonomous, setAutonomous] = useState(false);
   const [androidMenu, setAndroidMenu] = useState(false);
   const openAutonomy = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('TripSensors')

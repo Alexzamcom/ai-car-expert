@@ -1,3 +1,4 @@
+import { watchAndroidViewport } from '../lib/androidViewport';
 /* Карта навигации на MapLibre GL: векторная карта, поворот по движению, наклон 3D, 3D-машинка.
    Только отрисовка и камера: GPS, маршрут, остановки, перестроение, поиск и интерфейс поверх карты — общие
    с картой Leaflet (резервный движок), поэтому смена движка не пересоздаёт маршрут. */
@@ -13,7 +14,7 @@ import { ANDROID_CAR_LENGTH_M, createCar3dLayer, hexToRgb } from '../lib/car3d/l
 import { androidChasePose, autoZoom, lookAheadOffset, effectiveNavCamera, maneuverLift, navCameraPose, gameFollowZoom, LiftFilter } from '../lib/camera';
 import { hudUiStore } from '../lib/hud';
 import { engineFallback } from '../lib/mapEngine';
-import { mapDiag, diagModeStore, mapPositionStore } from '../lib/diag';
+import { mapDiag, diagModeStore, mapPositionStore, mapCameraStore } from '../lib/diag';
 import { displayStore, setRoadProvider } from '../lib/matching/display';
 import { EMPTY_OFFLINE_STYLE, initializeOfflineMaps, offlineRegions, regionAt, offlineStatus, offlineStyleFor, registerOfflineProtocol } from '../lib/offlineMaps';
 import { VehicleAnimation } from '../lib/vehicleAnimation';
@@ -31,6 +32,8 @@ export interface MapApi {
   panTo(p: LatLon): void;
   contains(p: LatLon, pad?: number): boolean;
   resize(): void;
+  resumeFollow?(): void;
+  zoomBy?(amount: number): void;
   center?(): LatLon;
   roadsNear?(p: LatLon): LatLon[][];
 }
@@ -130,6 +133,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           // Авторы данных (OpenMapTiles, участники OpenStreetMap) указаны в самом стиле OpenFreeMap.
           attributionControl: { compact: true },
           maxPitch: 70,
+          trackResize: !androidDriving,
           fadeDuration: 150,
           canvasContextAttributes: { antialias: true },
         });
@@ -146,10 +150,17 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       canvas.addEventListener('webglcontextlost', onLost);
       canvas.addEventListener('webglcontextrestored', onRestored);
       let frames = 0;
+      const cameraSnapshot = () => ({
+        target: followTarget ? { ...androidChasePose(followTarget.speed, followTarget.lift, followTarget.landscape, map.getMaxPitch()), bearing: carNow?.heading ?? map.getBearing() } : null,
+        applied: { pitch: map.getPitch(), zoom: map.getZoom(), bearing: map.getBearing() },
+        following: follow.current && touching === 0 && !pointerHeld,
+        toStepM: (p.autonomous ? autonomyMap.get() : navStore.get()).progress?.toStepM ?? null,
+      });
       map.on('render', () => frames++);
       const fpsTimer = setInterval(() => {
         mapDiag.fps(frames);
         frames = 0;
+        if (androidDriving && diagModeStore.get().on) mapCameraStore.set(cameraSnapshot());
         if (!p.autonomous && diagModeStore.get().on && carNow && to) {
           mapPositionStore.set({ marker: { lat: carNow.lat, lon: carNow.lon }, target: to,
             following: follow.current && touching === 0 && !hudUiStore.get().active, motion: androidDriving ? motionPeaks : undefined });
@@ -414,12 +425,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       let raf = 0;
       let followTarget: { speed: number | null; lift: number; height: number; landscape: boolean } | null = null;
       let cameraTime = 0;
+      let recoveringCenter = false;
       let motionDiag = { modelM: 0, centerM: 0, cameraDeg: 0, modelDeg: 0 };
       let motionPeaks = { ...motionDiag };
       const frame = (now: number) => {
         const androidPose = androidDriving ? animation.frame(now) : null;
         const pos = androidDriving ? androidPose : carPos(now);
-        const dt = Math.min(100, Math.max(0, now - (cameraTime || now)));
+        const dt = Math.min(350, Math.max(0, now - (cameraTime || now)));
         cameraTime = now;
         // Пока открыт HUD, основная карта скрыта — не тратим на неё кадры.
         if (pos && !hudUiStore.get().active) {
@@ -439,21 +451,27 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
               modelDeg: previous ? Math.abs(headingDelta(next.heading, previous.heading)) : 0,
               centerM: 0, cameraDeg: 0,
             };
-            if (followTarget && follow.current && guiding.current && touching === 0 && !map.isZooming()) {
+            if (followTarget && follow.current && guiding.current && touching === 0 && !pointerHeld) {
               const height = lift.update(followTarget.lift, dt / 1000);
               const followPose = androidChasePose(followTarget.speed, height, followTarget.landscape, map.getMaxPitch());
               const blend = 1 - Math.exp(-dt / 290);
-              const pitch = map.getPitch() + (followPose.pitch - map.getPitch()) * blend;
-              const zoom = userZoom ? map.getZoom() : map.getZoom() + (followPose.zoom - map.getZoom()) * blend;
+              const pitchStep = (followPose.pitch - map.getPitch()) * blend;
+              const pitch = map.getPitch() + Math.max(-3, Math.min(3, pitchStep));
+              const zoom = map.getZoom() + (followPose.zoom - map.getZoom()) * blend;
               const yawStep = headingDelta(next.heading, yaw);
               const bearing = yaw + yawStep * blend;
               const top = map.getPadding().top ?? 0;
               const padding = top + (2 * followTarget.height * followPose.offset - top) * blend;
               motionDiag.centerM = haversine({ lat: center.lat, lon: center.lng }, next);
               motionDiag.cameraDeg = Math.abs(yawStep * blend);
+              if (motionDiag.centerM > 30) recoveringCenter = true;
+              if (motionDiag.centerM < 0.6) recoveringCenter = false;
+              const centerTarget: [number, number] = recoveringCenter
+                ? [center.lng + headingDelta(next.lon, center.lng) * blend, center.lat + (next.lat - center.lat) * blend]
+                : [next.lon, next.lat];
               if (motionDiag.centerM > 0.015 || motionDiag.cameraDeg > 0.015 || Math.abs(pitch - map.getPitch()) > 0.015 ||
                 Math.abs(zoom - map.getZoom()) > 0.002 || Math.abs(padding - top) > 0.3) {
-                map.jumpTo({ center: [next.lon, next.lat], bearing, pitch, zoom, padding: { top: padding, bottom: 0, left: 0, right: 0 } });
+                map.jumpTo({ center: centerTarget, bearing, pitch, zoom, padding: { top: padding, bottom: 0, left: 0, right: 0 } });
               }
             }
           }
@@ -478,14 +496,45 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
 
       /* ---------- Камера ---------- */
       let touching = 0;
+      let pointerHeld = false;
       let userZoom = false;
       const box = map.getCanvasContainer();
       const onTouch = (e: TouchEvent) => (touching = e.touches.length);
       box.addEventListener('touchstart', onTouch, { passive: true });
       box.addEventListener('touchend', onTouch, { passive: true });
-      box.addEventListener('touchcancel', () => (touching = 0), { passive: true });
-      for (const ev of ['dragstart', 'rotatestart', 'pitchstart'] as const) map.on(ev, (e) => (e as { originalEvent?: Event }).originalEvent && follow.current && onUserMove.current());
-      map.on('zoomstart', (e) => (e as { originalEvent?: Event }).originalEvent && (userZoom = true));
+      const clearTouch = () => { touching = 0; pointerHeld = false; };
+      const holdPointer = () => { pointerHeld = true; };
+      if (androidDriving) {
+        box.addEventListener('pointerdown', holdPointer);
+        window.addEventListener('pointerup', clearTouch);
+        window.addEventListener('pointercancel', clearTouch);
+      }
+      const interrupt = () => {
+        if (androidDriving) follow.current = false;
+        onUserMove.current();
+      };
+      box.addEventListener('touchcancel', clearTouch, { passive: true });
+      window.addEventListener('orientationchange', clearTouch);
+      window.addEventListener('blur', clearTouch);
+      cleanups.push(() => {
+        box.removeEventListener('touchstart', onTouch);
+        box.removeEventListener('touchend', onTouch);
+        box.removeEventListener('touchcancel', clearTouch);
+        window.removeEventListener('orientationchange', clearTouch);
+        window.removeEventListener('blur', clearTouch);
+        box.removeEventListener('pointerdown', holdPointer);
+        window.removeEventListener('pointerup', clearTouch);
+        window.removeEventListener('pointercancel', clearTouch);
+      });
+      if (androidDriving) map.on('movestart', (e) => { if (e.originalEvent && follow.current) interrupt(); });
+      for (const ev of ['dragstart', 'rotatestart', 'pitchstart'] as const) map.on(ev, (e) => {
+        if ((e as { originalEvent?: Event }).originalEvent && follow.current) interrupt();
+      });
+      map.on('zoomstart', (e) => {
+        if (!(e as { originalEvent?: Event }).originalEvent) return;
+        userZoom = true;
+        if (androidDriving && follow.current) interrupt();
+      });
 
       // Динамическая камера: подъём перед поворотом сглаживается во времени (без рывков при смене манёвра, перестроении, потере GPS).
       const lift = new LiftFilter();
@@ -688,6 +737,18 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           if (pad.top + pad.bottom > box2.height - 120) pad.top = pad.bottom = Math.max(20, (box2.height - 120) / 2);
           map.fitBounds(b, { padding: pad, maxZoom: 16, bearing: 0, pitch: 0, duration: 600 });
         },
+        resumeFollow() {
+          map.stop();
+          userZoom = false;
+          clearTouch();
+          follow.current = true;
+          recoveringCenter = true;
+          camera.current(true);
+        },
+        zoomBy(amount) {
+          interrupt();
+          map.easeTo({ zoom: map.getZoom() + amount, duration: 220 });
+        },
         centerOn(q, zoom) {
           map.easeTo({ center: [q.lon, q.lat], zoom: zoom ?? map.getZoom(), duration: 500 });
           userZoom = false;
@@ -715,11 +776,14 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         },
       };
       p.apiRef.current = api;
-      const ro = new ResizeObserver(() => {
+      const resizeMap = () => {
+        if (androidDriving && hudUiStore.get().active) return;
         map.resize();
         if (isGame() && guiding.current) camera.current(true);
-      });
+      };
+      const ro = new ResizeObserver(resizeMap);
       ro.observe(el.current);
+      if (androidDriving) cleanups.push(watchAndroidViewport(resizeMap));
       cleanups.push(() => ro.disconnect());
 
       // Для автоматических проверок.
@@ -748,6 +812,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             camera: {
               style: guiding.current ? camStyle : effectiveNavCamera(settingsStore.get().navCamera, isGame()),
               lift: +lift.value.toFixed(3),
+              ...cameraSnapshot(),
               fov: map.getVerticalFieldOfView(),
               toStepM: navStore.get().progress?.toStepM ?? null,
               step: (() => {
@@ -787,6 +852,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         delete (window as unknown as { __aceMap?: unknown }).__aceMap;
         mapDiag.remove();
         mapPositionStore.set(null);
+        mapCameraStore.set(null);
         map.remove();
         mapRef.current = null;
       });
@@ -797,7 +863,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       }
       const d = displayStore.get();
       const geo = geoStore.get();
-      const g = p.autonomous ? autonomyMap.get().position : androidDriving && (geo.accuracy ?? Infinity) > 50 ? null :
+      const g = p.autonomous ? autonomyMap.get().position : androidDriving && (geo.accuracy ?? Infinity) > 50 && geo.nativeTrust !== 'network' ? null :
         d.lat != null ? d : geo;
       if (g && g.lat != null && g.lon != null) {
         to = { lat: g.lat, lon: g.lon };
@@ -805,6 +871,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         headingShown = g.heading ?? 0;
         if (androidDriving) animation.receive({ lat: g.lat, lon: g.lon, heading: g.heading, speedMps: null, reliable: true }, performance.now());
         map.jumpTo({ center: [g.lon, g.lat] });
+        camera.current(true);
       }
     })();
     return () => {

@@ -394,6 +394,10 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
     shownStart.current = guidanceStartCount();
     const r = navStore.get().route;
     if (engine === 'maplibre' && r) {
+      if (androidDriving) {
+        setFollow(true);
+        return;
+      }
       setFollow(false);
       setOverview(true);
       const fit = setTimeout(() => {
@@ -504,11 +508,16 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const recenter = () => {
     setOverview(false);
     setFollow(true);
+    if (androidDriving && guiding && mlApi.current?.resumeFollow && (disp.lat != null || geo.lat != null)) {
+      mlApi.current.resumeFollow();
+      setPanelHidden(false);
+      return;
+    }
     const native = usesAndroidNativePosition();
     if (!native) startGeo();
     else void locateOnAndroid().then((message) => {
       const fix = geoStore.get();
-      if (fix.nativeTrust === 'network' && fix.lat != null && fix.lon != null) {
+      if (!guiding && fix.nativeTrust === 'network' && fix.lat != null && fix.lon != null) {
         mlApi.current?.centerOn({ lat: fix.lat, lon: fix.lon }, 15);
       }
       toast(message);
@@ -516,7 +525,8 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
     zoomBand.current = null; // масштаб по скорости — заново
     const target = disp.lat != null && disp.lon != null ? disp : geo;
     if (target.lat != null && target.lon != null) {
-      if (engine === 'maplibre') mlApi.current?.centerOn({ lat: target.lat, lon: target.lon }, guiding ? undefined : 16);
+      if (engine === 'maplibre' && androidDriving && guiding) mlApi.current?.resumeFollow?.();
+      else if (engine === 'maplibre') mlApi.current?.centerOn({ lat: target.lat, lon: target.lon }, guiding ? undefined : 16);
       else map.current?.setView([target.lat, target.lon], guiding ? 17 : 16);
     }
     else if (native) toast('Запрашиваю место у Android…');
@@ -577,7 +587,10 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
     void setDestination(p);
   }
 
-  const zoom = (d: number) => map.current?.setZoom((map.current?.getZoom() ?? 13) + d);
+  const zoom = (d: number) => {
+    if (engine === 'maplibre') mlApi.current?.zoomBy?.(d);
+    else map.current?.setZoom((map.current?.getZoom() ?? 13) + d);
+  };
   const isFav = nav.dest ? favorites.some((f) => f.lat === nav.dest!.lat && f.lon === nav.dest!.lon) : false;
   const step = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
   const next = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex + 1] : null;
@@ -592,7 +605,9 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const straight = nav.dest && geo.lat != null && geo.lon != null ? haversine({ lat: geo.lat, lon: geo.lon }, nav.dest) : null;
 
   return (
-    <div className={`navigation ${guiding ? 'android-guiding' : ''}`} onPointerDownCapture={() => { if (androidDriving && guiding && panelHidden) setPanelHidden(false); }}>
+    <div className={`navigation ${guiding ? 'android-guiding' : ''}`} onPointerDownCapture={(event) => {
+      if (androidDriving && guiding && panelHidden && !(event.target as Element).closest('.recenter-needed')) setPanelHidden(false);
+    }}>
       {engine === 'maplibre' ? (
         <Suspense fallback={<div className="map" />}>
           <MapErrorBoundary>
@@ -756,7 +771,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
         )}
         {androidDriving && (guiding && (!trustedGeo || nav.notice) || !guiding && located && !panelOpen && !androidMenu &&
           geo.nativeTrust != null && geo.nativeTrust !== 'confirmed') && <div className="android-position-tag" role="status">
-          {guiding && nav.notice ? nav.notice : geo.nativeTrust === 'network' ? 'Приблизительная сетевая позиция' : geo.nativeTrust === 'estimated' ? 'Положение оценено по датчикам' : 'Положение не подтверждено'}
+          {guiding && nav.notice ? nav.notice : geo.nativeTrust === 'network' ? `Приблизительная сетевая позиция · ±${Math.round(geo.accuracy ?? 0)} м` : geo.nativeTrust === 'estimated' ? 'Положение оценено по датчикам' : 'Положение не подтверждено'}
           {onAutonomy && !panelHidden && <button className="btn" onClick={() => {
             const active = navStore.get();
             if (active.route && active.dest && active.route.coords.length <= 20_000) {
@@ -793,7 +808,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
           <button className="map-ctl zoom-ctl" onClick={() => zoom(-1)} aria-label="Отдалить">
             <span className="map-minus" />
           </button>
-          <button className={`map-ctl ${follow ? 'is-active' : ''}`} onClick={recenter} aria-label="Моё местоположение">
+          <button className={`map-ctl ${follow ? 'is-active' : 'recenter-needed'}`} onClick={recenter} aria-label={guiding && !follow ? 'Вернуться к автомобилю' : 'Моё местоположение'}>
             <Icon name="locate" size="1.7rem" />
           </button>
         </div>
