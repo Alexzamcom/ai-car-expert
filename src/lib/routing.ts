@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { fetchJson, isAbort, NetError } from './geo/http';
 
 /* Маршруты: запрос к OSRM, текст манёвров, расчёт прогресса по маршруту.
@@ -111,10 +112,22 @@ export function routeUrl(router: Router, pts: LatLon[], alternatives: boolean): 
 export async function fetchRoutes(
   from: LatLon,
   to: LatLon,
-  opts: { signal?: AbortSignal; via?: LatLon; routers?: Router[]; timeoutMs?: number } = {},
+  opts: { signal?: AbortSignal; via?: LatLon; routers?: Router[]; timeoutMs?: number; localOnly?: boolean } = {},
 ): Promise<Route[]> {
   const routers = opts.routers ?? PUBLIC_ROUTERS;
   const pts = [from, ...(opts.via ? [opts.via] : []), to];
+  const canUseLocal = Capacitor.getPlatform() === 'android';
+  const offline = typeof navigator !== 'undefined' && !navigator.onLine;
+  const local = async (only: boolean) => {
+    const engine = await import('./offlineRouter');
+    if (!only && !await engine.routingRegion(pts)) return null;
+    try { return [await engine.localRoute(pts, opts.signal)]; }
+    catch (e) {
+      if (isAbort(e, opts.signal)) throw e;
+      throw new RouteError('offline', (e as Error).message);
+    }
+  };
+  if (opts.localOnly || canUseLocal && offline) return (await local(true))!;
   // Альтернативы OSRM строит только между двумя точками.
   const alternatives = !opts.via;
   let lastErr: Error = new RouteError('unavailable', 'Сервис маршрутов недоступен');
@@ -125,9 +138,16 @@ export async function fetchRoutes(
     } catch (e) {
       if (isAbort(e, opts.signal)) throw e;
       if (e instanceof RouteError && e.kind === 'no-route') throw e;
-      if (e instanceof NetError && e.kind === 'offline') throw new RouteError('offline', 'Нет интернета — маршрут построить нельзя');
+      if (e instanceof NetError && e.kind === 'offline') {
+        if (canUseLocal) return (await local(true))!;
+        throw new RouteError('offline', 'Нет интернета — маршрут построить нельзя');
+      }
       lastErr = e as Error;
     }
+  }
+  if (canUseLocal) {
+    const routes = await local(false);
+    if (routes) return routes;
   }
   throw new RouteError('unavailable', `Не удалось построить маршрут: ${lastErr.message}. Попробуйте позже или откройте внешний навигатор.`);
 }

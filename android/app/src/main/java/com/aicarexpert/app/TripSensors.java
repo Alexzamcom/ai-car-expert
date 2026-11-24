@@ -71,11 +71,21 @@ public class TripSensors extends Plugin implements SensorEventListener, Location
 
     @PluginMethod
     public void startGps(PluginCall call) {
+        gps = true;
         if (getPermissionState("location") != PermissionState.GRANTED) {
             requestPermissionForAlias("location", call, "locationPermission");
             return;
         }
         locationPermission(call);
+    }
+
+    @PluginMethod
+    public void stopGps(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            gps = false;
+            if (location != null) location.removeUpdates(this);
+            call.resolve();
+        });
     }
 
     @PermissionCallback

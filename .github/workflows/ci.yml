@@ -30,22 +30,22 @@ jobs:
           npx vite preview --port 4173 --strictPort &
           npx --yes wait-on@8.0.1 -t 30000 http://localhost:4173/
       - name: Автономная навигация с тестовым мостом датчиков
-        if: contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position","codex/android-confirmed-route","codex/android-navigation-scale","codex/android-location-bootstrap","codex/game-hud","codex/android-road-test","codex/android-location-report","codex/android-position-visibility"]'), github.head_ref)
+        if: contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position","codex/android-confirmed-route","codex/android-navigation-scale","codex/android-location-bootstrap","codex/game-hud","codex/android-road-test","codex/android-location-report","codex/android-position-visibility","codex/android-offline-routing"]'), github.head_ref)
         run: node scripts/autonomy-webview-check.mjs http://localhost:4173/
       - name: Android — главный экран, динамическое ведение и HUD
-        if: (github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-offline-smooth' || (github.head_ref == 'codex/android-hybrid-position' || (github.head_ref == 'codex/android-confirmed-route' || (github.head_ref == 'codex/android-navigation-scale' || (github.head_ref == 'codex/android-location-bootstrap' || (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || github.head_ref == 'codex/android-position-visibility')))))))))
+        if: (github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-offline-smooth' || (github.head_ref == 'codex/android-hybrid-position' || (github.head_ref == 'codex/android-confirmed-route' || (github.head_ref == 'codex/android-navigation-scale' || (github.head_ref == 'codex/android-location-bootstrap' || (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || github.head_ref == 'codex/android-offline-routing'))))))))))
         run: node scripts/android-ux-check.mjs http://localhost:4173/ android-ux-visuals
       - uses: actions/upload-artifact@v4
-        if: always() && (github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-navigation-scale' || (github.head_ref == 'codex/android-location-bootstrap' || (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || github.head_ref == 'codex/android-position-visibility'))))))
+        if: always() && (github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-navigation-scale' || (github.head_ref == 'codex/android-location-bootstrap' || (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || github.head_ref == 'codex/android-offline-routing')))))))
         with:
           name: android-ux-visuals
           path: android-ux-visuals/*.png
           if-no-files-found: ignore
       - name: Android — игровой HUD без сети
-        if: (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || github.head_ref == 'codex/android-position-visibility')))
+        if: (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || github.head_ref == 'codex/android-offline-routing'))))
         run: ACE_GAME_HUD=1 ACE_HUD_VIDEO=1 node scripts/android-ux-check.mjs http://localhost:4173/ game-hud-visuals
       - uses: actions/upload-artifact@v4
-        if: always() && (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || github.head_ref == 'codex/android-position-visibility')))
+        if: always() && (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || github.head_ref == 'codex/android-offline-routing'))))
         with:
           name: game-hud-visuals
           path: |
@@ -53,13 +53,13 @@ jobs:
             game-hud-visuals/game-hud-turn.webm
           if-no-files-found: error
       - name: Android — камера, ориентация и полноэкранный выбор места
-        if: (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || github.head_ref == 'codex/android-position-visibility'))
+        if: (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || github.head_ref == 'codex/android-offline-routing')))
         run: ACE_ROAD_TEST=1 node scripts/android-ux-check.mjs http://localhost:4173/ road-test-visuals
       - name: Запись подъёма и возврата камеры
-        if: (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || github.head_ref == 'codex/android-position-visibility'))
+        if: (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || github.head_ref == 'codex/android-offline-routing')))
         run: ACE_CAMERA_VIDEO=1 ACE_HUD_VIDEO=1 node scripts/android-ux-check.mjs http://localhost:4173/ road-test-visuals
       - uses: actions/upload-artifact@v4
-        if: always() && (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || github.head_ref == 'codex/android-position-visibility'))
+        if: always() && (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || github.head_ref == 'codex/android-offline-routing')))
         with:
           name: road-test-visuals
           path: |
@@ -67,10 +67,13 @@ jobs:
             road-test-visuals/road-test-camera.webm
           if-no-files-found: error
       - name: Android — загрузка области и проверка без сети и GPS
-        if: (github.head_ref == 'codex/android-offline-smooth' || (github.head_ref == 'codex/android-hybrid-position' || (github.head_ref == 'codex/android-confirmed-route' || (github.head_ref == 'codex/android-navigation-scale' || (github.head_ref == 'codex/android-location-bootstrap' || (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || github.head_ref == 'codex/android-position-visibility'))))))))
+        if: (github.head_ref == 'codex/android-offline-smooth' || (github.head_ref == 'codex/android-hybrid-position' || (github.head_ref == 'codex/android-confirmed-route' || (github.head_ref == 'codex/android-navigation-scale' || (github.head_ref == 'codex/android-location-bootstrap' || (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || github.head_ref == 'codex/android-offline-routing')))))))))
         run: node scripts/android-offline-check.mjs http://localhost:4173/
+      - name: Android — новый маршрут через Valhalla без GPS и сети
+        if: github.head_ref == 'codex/android-offline-routing'
+        run: node scripts/android-local-routing-check.mjs http://localhost:4173/
       - name: Android — гибридное определение положения
-        if: (github.head_ref == 'codex/android-hybrid-position' || (github.head_ref == 'codex/android-confirmed-route' || (github.head_ref == 'codex/android-navigation-scale' || (github.head_ref == 'codex/android-location-bootstrap' || (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || github.head_ref == 'codex/android-position-visibility')))))))
+        if: (github.head_ref == 'codex/android-hybrid-position' || (github.head_ref == 'codex/android-confirmed-route' || (github.head_ref == 'codex/android-navigation-scale' || (github.head_ref == 'codex/android-location-bootstrap' || (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || github.head_ref == 'codex/android-offline-routing'))))))))
         run: node scripts/android-hybrid-check.mjs http://localhost:4173/
       - name: Интерфейс ведения, прибытие и прогресс HUD
         run: node scripts/driving-ux-check.mjs http://localhost:4173/ smoke-local/driving-ux

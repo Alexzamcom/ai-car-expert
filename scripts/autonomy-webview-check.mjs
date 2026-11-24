@@ -10,7 +10,7 @@ const [lon, lat] = osrm.routes[0].geometry.coordinates[0];
 const browser = await chromium.launch();
 try {
   for (const [profile, platform, source] of [
-    ['Pixel 7', 'android', 'road'], ['Pixel 7', 'android', 'hybrid'], ['Pixel 7', 'android', 'adaptive'],
+    ['Pixel 7', 'android', 'road'], ['Pixel 7', 'android', 'adaptive'],
     ['iPhone 15', 'ios', 'road'],
   ]) {
     const { defaultBrowserType, ...device } = devices[profile];
@@ -63,7 +63,7 @@ try {
     await page.evaluate(([x, y]) => window.__aceMap.map.jumpTo({ center: [x + 0.003, y], zoom: 17 }), [lon, lat]);
     await click('Построить маршрут сюда');
     await page.getByLabel('Записать поездку локально', { exact: false }).check();
-    await page.getByLabel('Источник').selectOption(source);
+    await page.getByLabel('Режим').selectOption(source);
     await click(source === 'adaptive' ? 'Начать поездку' : 'Начать поездку без GPS');
     await button('HUD').waitFor();
     assert.equal(await page.evaluate(() => window.__startedWith), source !== 'road');

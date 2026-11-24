@@ -16,6 +16,7 @@
     "ios:sync": "npm run build:android && cap sync ios"
   },
   "dependencies": {
+    "@adret-maps/valhalla-wasm": "3.9.0-alpha.2",
     "@capacitor/android": "7.6.10",
     "@capacitor/app": "7.1.2",
     "@capacitor/core": "7.6.10",

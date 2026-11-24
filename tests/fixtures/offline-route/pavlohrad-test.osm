@@ -1,0 +1,12 @@
+<osm version="0.6" generator="AI Car Expert test fixture">
+  <node id="100" lat="48.5250" lon="35.8600"/>
+  <node id="101" lat="48.5250" lon="35.8620"/>
+  <node id="102" lat="48.5250" lon="35.8650"/>
+  <node id="103" lat="48.5270" lon="35.8650"/>
+  <node id="104" lat="48.5290" lon="35.8650"/>
+  <node id="105" lat="48.5270" lon="35.8620"/>
+  <way id="1001"><nd ref="100"/><nd ref="101"/><nd ref="102"/><tag k="highway" v="residential"/><tag k="name" v="Випробувальна"/><tag k="oneway" v="yes"/></way>
+  <way id="1002"><nd ref="102"/><nd ref="103"/><nd ref="104"/><tag k="highway" v="residential"/><tag k="name" v="Тестова"/></way>
+  <way id="1003"><nd ref="101"/><nd ref="105"/><nd ref="103"/><tag k="highway" v="residential"/><tag k="name" v="Об'їзна"/></way>
+  <relation id="2001"><member type="way" ref="1001" role="from"/><member type="node" ref="102" role="via"/><member type="way" ref="1002" role="to"/><tag k="type" v="restriction"/><tag k="restriction" v="no_left_turn"/></relation>
+</osm>
