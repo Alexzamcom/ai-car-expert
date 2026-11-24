@@ -132,14 +132,17 @@ try {
       .some((button) => button.textContent === 'Подтвердить' && !button.disabled));
     const viewport = await page.locator('.place-map-picker-map').evaluate((node) => {
       const { x, y, width, height } = node.getBoundingClientRect();
-      return { x, y, width, height, viewportWidth: innerWidth };
+      return { x, y, width, height, viewportWidth: innerWidth, viewportHeight: innerHeight };
     });
     adb('shell', 'uiautomator', 'dump', '/sdcard/ace-picker.xml');
     const tree = adb('shell', 'cat', '/sdcard/ace-picker.xml');
     const webViewNode = tree.match(/<node\b[^>]*class="android\.webkit\.WebView"[^>]*>/)?.[0];
     const bounds = webViewNode?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/)?.slice(1).map(Number);
-    assert(bounds, 'Native WebView bounds unavailable');
-    const [left, top, right] = bounds;
+    // The instrumentation tree can omit the WebView subtree on some emulator
+    // builds. Use the full-screen viewport and measured Android display there.
+    const [, screenWidth, screenHeight] = [...adb('shell', 'wm', 'size').matchAll(/(\d+)x(\d+)/g)].at(-1);
+    const [left, top, right] = bounds ?? [0, Math.max(0, (Number(screenHeight) -
+      Number(screenWidth) * viewport.viewportHeight / viewport.viewportWidth) / 2), Number(screenWidth)];
     const scale = (right - left) / viewport.viewportWidth;
     const tapX = Math.round(left + (viewport.x + viewport.width * 0.67) * scale);
     const tapY = Math.round(top + (viewport.y + viewport.height * 0.43) * scale);
