@@ -128,6 +128,10 @@ export async function fetchRoutes(
     }
   };
   if (opts.localOnly || canUseLocal && offline) return (await local(true))!;
+  if (canUseLocal) {
+    const routes = await local(false);
+    if (routes) return routes;
+  }
   // Альтернативы OSRM строит только между двумя точками.
   const alternatives = !opts.via;
   let lastErr: Error = new RouteError('unavailable', 'Сервис маршрутов недоступен');
@@ -144,10 +148,6 @@ export async function fetchRoutes(
       }
       lastErr = e as Error;
     }
-  }
-  if (canUseLocal) {
-    const routes = await local(false);
-    if (routes) return routes;
   }
   throw new RouteError('unavailable', `Не удалось построить маршрут: ${lastErr.message}. Попробуйте позже или откройте внешний навигатор.`);
 }

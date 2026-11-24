@@ -1,1 +1,35 @@
-{"settings":{"minzoom":8,"maxzoom":14,"basezoom":14,"include_ids":false,"combine_below":12},"layers":{"transportation":{"minzoom":8,"maxzoom":14},"transportation_name":{"minzoom":12,"maxzoom":14},"building":{"minzoom":13,"maxzoom":14},"place":{"minzoom":8,"maxzoom":14},"water":{"minzoom":9,"maxzoom":14}}}
+{
+  "settings": {
+    "minzoom": 8,
+    "maxzoom": 14,
+    "basezoom": 14,
+    "include_ids": false,
+    "combine_below": 12,
+    "compress": "gzip",
+    "name": "AI Car Expert",
+    "version": "1.0",
+    "description": "Offline vector map from OpenStreetMap"
+  },
+  "layers": {
+    "transportation": {
+      "minzoom": 8,
+      "maxzoom": 14
+    },
+    "transportation_name": {
+      "minzoom": 12,
+      "maxzoom": 14
+    },
+    "building": {
+      "minzoom": 13,
+      "maxzoom": 14
+    },
+    "place": {
+      "minzoom": 8,
+      "maxzoom": 14
+    },
+    "water": {
+      "minzoom": 9,
+      "maxzoom": 14
+    }
+  }
+}

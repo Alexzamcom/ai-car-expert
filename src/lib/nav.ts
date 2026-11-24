@@ -1,4 +1,4 @@
-import { offlineRegions, searchOfflineAddresses } from './offlineMaps';
+import { initializeOfflineMaps, offlineRegions, regionAt, searchOfflineAddresses } from './offlineMaps';
 import { recordMapLocation } from './geo/mapLocation';
 import { androidLocationDiagnostics, recordLocationMarker, recordLocationSample, recordLocationStatus } from './geo/locationDiagnostics';
 import { ConfirmedRoute } from './confirmedRoute';
@@ -709,16 +709,11 @@ export function geoStatusText(g: GeoState, now = Date.now()): { text: string; to
 
 export async function searchPlaces(query: string, near?: LatLon, signal?: AbortSignal): Promise<Place[]> {
   if (!usesAndroidNativePosition()) return geoSearch(query, { near, lang: navLang(), signal });
-  if (!navigator.onLine) return searchOfflineAddresses(query);
-  try {
-    const places = await geoSearch(query, { near, lang: navLang(), signal });
-    return places.length ? places : searchOfflineAddresses(query).catch(() => []);
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    const places = await searchOfflineAddresses(query).catch(() => []);
-    if (places.length) return places;
-    throw error;
-  }
+  const local = await searchOfflineAddresses(query).catch(() => []);
+  signal?.throwIfAborted();
+  await initializeOfflineMaps().catch(() => {});
+  if (local.length || !navigator.onLine || near && regionAt(near)?.graph?.length) return local;
+  return geoSearch(query, { near, lang: navLang(), signal });
 }
 
 export function addRecent(p: Place) {

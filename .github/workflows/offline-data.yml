@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: ace-offline-map-data
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   prepare:
@@ -22,11 +22,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Install data tools
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y osmium-tool
           pip install osmium==4.3.0
+          npm ci
       - name: Download licensed OSM data and glyphs
         run: |
           mkdir -p "$RUNNER_TEMP/ace-input/glyphs"
@@ -43,6 +47,8 @@ jobs:
           python server/offline-maps/build.py --source "$input/ukraine.osm.pbf" --glyphs "$input/glyphs" \
             --date "$(cat "$input/data-date")" --out "$RUNNER_TEMP/ace-data" --radii 25
           du -sh "$RUNNER_TEMP"/ace-data/regions/*/*
+      - name: Verify actual addresses and offline car routes
+        run: node server/offline-maps/check.mjs "$RUNNER_TEMP/ace-data"
       - name: Upload test data
         uses: actions/upload-artifact@v4
         with:
@@ -56,7 +62,8 @@ jobs:
           git -C "$data" init -b offline-map-data
           git -C "$data" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git -C "$data" config user.name "github-actions[bot]"
-          printf '%s\n' '© OpenStreetMap contributors, ODbL 1.0. Source https://download.geofabrik.de/europe/ukraine.html' > "$data/ATTRIBUTION.txt"
+          printf '%s\n' '© OpenStreetMap contributors, ODbL 1.0. Source https://download.geofabrik.de/europe/ukraine.html'             'Noto Sans glyphs under SIL Open Font License 1.1, via https://github.com/protomaps/basemaps-assets' > "$data/ATTRIBUTION.txt"
+          cp server/offline-maps/NotoSans-OFL.txt "$data/"
           if git fetch --no-tags origin offline-map-data; then
             git -C "$data" remote add origin "$origin"
             git -C "$data" -c "http.extraheader=$(git config --get http.https://github.com/.extraheader)" fetch --depth=1 origin offline-map-data

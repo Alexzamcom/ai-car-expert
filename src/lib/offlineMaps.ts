@@ -237,7 +237,7 @@ type Checkpoint = { id: string; fingerprint: string; done: number; bytes: number
 const checkpointKey = (url: string) => `checkpoint:${url}`;
 
 export async function regionalDownloadState(url: string, pkg: OfflinePackage) {
-  const fingerprint = await digest(new TextEncoder().encode(JSON.stringify(pkg.chunks ?? [])));
+  const fingerprint = await digest(new TextEncoder().encode(JSON.stringify(pkg)));
   const checkpoint = await read<Checkpoint | undefined>('resources', checkpointKey(url));
   return { fingerprint, checkpoint, matching: checkpoint?.fingerprint === fingerprint ? checkpoint : undefined };
 }

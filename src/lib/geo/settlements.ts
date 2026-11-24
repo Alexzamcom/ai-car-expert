@@ -60,6 +60,6 @@ export async function searchSettlements(query: string, signal?: AbortSignal) {
 
 export function settlementPackage(place: Settlement, radius: 10 | 25 | 50 | 100) {
   const path = place.packages?.[radius];
-  if (!path || !/^regions\/osm-[NWR]-\d+\/\d+\/manifest\.json$/.test(path)) return null;
+  if (!/^osm-[NWR]-\d+$/.test(place.id) || path !== `regions/${place.id}/${radius}/manifest.json`) return null;
   return new URL(path, OFFLINE_CATALOG).href;
 }
