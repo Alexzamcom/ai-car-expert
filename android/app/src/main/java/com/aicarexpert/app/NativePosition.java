@@ -4,6 +4,10 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
 import android.content.Context;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.net.wifi.WifiManager;
+import android.os.CancellationSignal;
 import android.content.pm.PackageManager;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
@@ -16,6 +20,7 @@ import android.os.Bundle;
 import android.os.Looper;
 import android.os.SystemClock;
 import androidx.core.content.ContextCompat;
+import androidx.core.location.LocationManagerCompat;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.JSObject;
@@ -26,6 +31,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.ApiException;
+import com.google.android.gms.location.LocationSettingsRequest;
 import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationCallback;
@@ -35,6 +42,9 @@ import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
 import com.google.android.gms.location.CurrentLocationRequest;
 import com.google.android.gms.tasks.CancellationTokenSource;
+import org.json.JSONArray;
+import java.util.ArrayDeque;
+import java.util.LinkedHashSet;
 import java.io.OutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -47,6 +57,11 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     private FusedLocationProviderClient fused;
     private SensorManager sensors;
     private CancellationTokenSource currentRequest;
+    private CancellationSignal systemRequest;
+    private final ArrayDeque<JSObject> attempts = new ArrayDeque<>();
+    private int probeId, sent, received;
+    private final LinkedHashSet<String> pending = new LinkedHashSet<>();
+
     private String fusedStatus = "idle";
     private boolean active;
     private boolean requested;
@@ -72,6 +87,10 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
 
     @PluginMethod
     public void start(PluginCall call) {
+        getActivity().runOnUiThread(() -> startOnMain(call));
+    }
+
+    private void startOnMain(PluginCall call) {
         manager = (LocationManager) getContext().getSystemService(Context.LOCATION_SERVICE);
         report();
         final boolean ask = Boolean.TRUE.equals(call.getBoolean("ask", true));
@@ -136,9 +155,10 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         try {
             if (manager == null || !manager.getAllProviders().contains(provider)) return;
             manager.requestLocationUpdates(provider, 1000, 0, this, Looper.getMainLooper());
+            outcome(probeId, provider + "-updates", "subscribed");
 
         } catch (RuntimeException ignored) {
-            // Provider may be disabled or unavailable on this device.
+            outcome(probeId, provider + "-updates", errorCode(ignored));
         }
     }
 
@@ -148,6 +168,50 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
 
     private boolean enabled(String provider) {
         return manager != null && manager.isProviderEnabled(provider);
+    }
+
+    private String errorCode(Exception error) {
+        return error instanceof ApiException ? "gms-" + ((ApiException) error).getStatusCode() : error.getClass().getSimpleName();
+    }
+
+    private void outcome(int id, String source, String result) {
+        if (id == probeId) {
+            if (result.equals("requested")) pending.add(source);
+            else pending.remove(source);
+        }
+        JSObject event = new JSObject();
+        event.put("probe", id);
+        event.put("at", SystemClock.elapsedRealtime());
+        event.put("source", source);
+        event.put("result", result);
+        if (attempts.size() >= 96) attempts.removeFirst();
+        attempts.addLast(event);
+    }
+
+    @PluginMethod
+    public void acknowledge(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            received = Math.max(received, Math.min(sent, call.getInt("sequence", 0)));
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
+    public void copyDiagnostics(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            ClipboardManager clipboard = (ClipboardManager) getContext().getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard == null) {
+                call.reject("Clipboard unavailable");
+                return;
+            }
+            clipboard.setPrimaryClip(ClipData.newPlainText("AI Car Expert location", call.getString("json", "")));
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
+    public void diagnostics(PluginCall call) {
+        getActivity().runOnUiThread(() -> call.resolve(status()));
     }
 
     private JSObject status() {
@@ -164,6 +228,16 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         }
         state.put("gpsEnabled", enabled(LocationManager.GPS_PROVIDER));
         state.put("networkEnabled", enabled(LocationManager.NETWORK_PROVIDER));
+        state.put("enabled", manager != null && LocationManagerCompat.isLocationEnabled(manager));
+        WifiManager wifi = (WifiManager) getContext().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wifi != null) {
+            state.put("wifiEnabled", wifi.isWifiEnabled());
+            state.put("wifiScanAvailable", wifi.isScanAlwaysAvailable());
+        }
+        state.put("sdk", android.os.Build.VERSION.SDK_INT);
+        state.put("sent", sent);
+        state.put("received", received);
+        state.put("attempts", new JSONArray(attempts));
         return state;
     }
 
@@ -203,12 +277,43 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         }
     }
 
-    private void cached(String provider) {
-        if (!enabled(provider)) return;
+    private void cached(int id, String provider) {
+        final String source = provider + "-cache";
+        outcome(id, source, "requested");
+        if (!enabled(provider)) {
+            outcome(id, source, "disabled");
+            return;
+        }
         try {
             Location location = manager.getLastKnownLocation(provider);
+            outcome(id, source, location == null ? "empty" : "fix");
             if (location != null) emit(location, provider, true);
-        } catch (SecurityException ignored) {}
+        } catch (RuntimeException error) {
+            outcome(id, source, errorCode(error));
+        }
+    }
+
+    private void systemCurrent(int id, String provider, CancellationSignal signal) {
+        final String source = provider + "-current";
+        outcome(id, source, "requested");
+        if (!enabled(provider)) {
+            outcome(id, source, "disabled");
+            return;
+        }
+        try {
+            LocationManagerCompat.getCurrentLocation(manager, provider, signal, ContextCompat.getMainExecutor(getContext()), location -> {
+                if (!active || systemRequest != signal) return;
+                outcome(id, source, location == null ? "empty" : "fix");
+                if (location != null) emit(location, provider);
+                report();
+            });
+        } catch (RuntimeException error) {
+            outcome(id, source, errorCode(error));
+        }
+    }
+
+    private void finishPending(String result) {
+        for (String source : new LinkedHashSet<>(pending)) outcome(probeId, source, result);
     }
 
     private void probe(boolean force) {
@@ -216,33 +321,65 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         if (!force && now - requestStartedAt < 2000) return;
         requestStartedAt = now;
         firstMeasurementAt = 0;
-        report();
-        cached(LocationManager.NETWORK_PROVIDER);
-        if (permitted(Manifest.permission.ACCESS_FINE_LOCATION)) cached(LocationManager.GPS_PROVIDER);
-        if (fused == null) return;
+        finishPending("superseded");
+        int id = ++probeId;
+        outcome(id, "probe", "started");
         if (currentRequest != null) currentRequest.cancel();
-        CancellationTokenSource request = new CancellationTokenSource();
-        currentRequest = request;
-        try {
-            fused.getLastLocation().addOnSuccessListener(location -> {
-                if (request == currentRequest && location != null) emit(location, "fused", true);
-            });
-            requestCurrent(request, Priority.PRIORITY_BALANCED_POWER_ACCURACY);
-            if (permitted(Manifest.permission.ACCESS_FINE_LOCATION)) requestCurrent(request, Priority.PRIORITY_HIGH_ACCURACY);
-        } catch (RuntimeException ignored) {
-            // System LocationManager subscriptions still provide network and GNSS updates.
+        if (systemRequest != null) systemRequest.cancel();
+        CancellationSignal signal = new CancellationSignal();
+        systemRequest = signal;
+        boolean precise = permitted(Manifest.permission.ACCESS_FINE_LOCATION);
+        cached(id, LocationManager.NETWORK_PROVIDER);
+        systemCurrent(id, LocationManager.NETWORK_PROVIDER, signal);
+        if (precise) {
+            cached(id, LocationManager.GPS_PROVIDER);
+            systemCurrent(id, LocationManager.GPS_PROVIDER, signal);
         }
+        if (fused != null) {
+            CancellationTokenSource request = new CancellationTokenSource();
+            currentRequest = request;
+            try {
+                outcome(id, "fused-cache", "requested");
+                fused.getLastLocation().addOnSuccessListener(location -> {
+                    if (request != currentRequest) return;
+                    outcome(id, "fused-cache", location == null ? "empty" : "fix");
+                    if (location != null) emit(location, "fused", true);
+                    report();
+                }).addOnFailureListener(error -> failed(id, request, "fused-cache", error));
+                requestCurrent(id, request, Priority.PRIORITY_BALANCED_POWER_ACCURACY);
+                if (precise) requestCurrent(id, request, Priority.PRIORITY_HIGH_ACCURACY);
+                LocationSettingsRequest settings = new LocationSettingsRequest.Builder()
+                    .addLocationRequest(new LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 1000).build()).build();
+                outcome(id, "gms-location-settings", "requested");
+                LocationServices.getSettingsClient(getActivity()).checkLocationSettings(settings)
+                    .addOnSuccessListener(result -> { if (request == currentRequest) { outcome(id, "gms-location-settings", "available"); report(); } })
+                    .addOnFailureListener(error -> failed(id, request, "gms-location-settings", error));
+            } catch (RuntimeException error) {
+                outcome(id, "fused", errorCode(error));
+            }
+        } else outcome(id, "fused", "unavailable");
+        report();
     }
 
-    private void requestCurrent(CancellationTokenSource request, int priority) {
+    private void requestCurrent(int id, CancellationTokenSource request, int priority) {
+        boolean balanced = priority == Priority.PRIORITY_BALANCED_POWER_ACCURACY;
+        String source = balanced ? "fused-balanced" : "fused-precise";
+        outcome(id, source, "requested");
         CurrentLocationRequest options = new CurrentLocationRequest.Builder()
             .setPriority(priority)
-            .setMaxUpdateAgeMillis(0).setDurationMillis(10000).build();
+            .setMaxUpdateAgeMillis(balanced ? 15000 : 0).setDurationMillis(10000).build();
         fused.getCurrentLocation(options, request.getToken()).addOnSuccessListener(location -> {
-            if (request == currentRequest && location != null) {
-                emit(location, "fused", false, priority == Priority.PRIORITY_BALANCED_POWER_ACCURACY);
-            }
-        }).addOnFailureListener(error -> { if (request == currentRequest) report(); });
+            if (request != currentRequest) return;
+            outcome(id, source, location == null ? "empty-or-timeout" : "fix");
+            if (location != null) emit(location, "fused", false, balanced);
+            report();
+        }).addOnFailureListener(error -> failed(id, request, source, error));
+    }
+
+    private void failed(int id, CancellationTokenSource request, String source, Exception error) {
+        if (request != currentRequest) return;
+        outcome(id, source, errorCode(error));
+        report();
     }
 
     private void register(Sensor sensor) {
@@ -267,8 +404,11 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
 
     private void deactivate() {
         active = false;
+        finishPending("stopped");
         if (currentRequest != null) currentRequest.cancel();
         currentRequest = null;
+        if (systemRequest != null) systemRequest.cancel();
+        systemRequest = null;
         requestStartedAt = firstMeasurementAt = 0;
         if (manager != null) manager.removeUpdates(this);
         if (fused != null) fused.removeLocationUpdates(fusedCallback);
@@ -298,6 +438,7 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         JSObject data = new JSObject();
         data.put("at", System.currentTimeMillis() - (SystemClock.elapsedRealtimeNanos() - fix.getElapsedRealtimeNanos()) / 1_000_000L);
         data.put("source", provider);
+        data.put("sequence", ++sent);
         data.put("lat", fix.getLatitude());
         data.put("lon", fix.getLongitude());
         data.put("accuracy", fix.hasAccuracy() ? fix.getAccuracy() : -1);
@@ -312,6 +453,9 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
             firstSource = provider;
             firstAccuracy = fix.hasAccuracy() ? fix.getAccuracy() : -1;
             report();
+        }
+        if (sent == 1 || firstMeasurementAt > 0 && System.currentTimeMillis() - firstMeasurementAt < 20) {
+            outcome(probeId, provider + "-bridge", "sent");
         }
         notifyListeners("position", data);
     }

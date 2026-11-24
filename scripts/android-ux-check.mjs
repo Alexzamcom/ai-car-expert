@@ -74,7 +74,7 @@ try {
     }, position);
   };
   await wait(() => window.__aceMap?.state().styleReady);
-  assert(await page.getByText('Определите местоположение', { exact: true }).isVisible());
+  assert(await page.getByText('Ищем местоположение…', { exact: true }).isVisible());
   assert(await page.evaluate(() => window.__aceMap.map.getZoom() <= 2 && !window.__aceMap.state().car));
   await fix(1185);
   await wait(() => window.__aceMap.state().car3d && window.__aceMap.state().car);
@@ -83,6 +83,9 @@ try {
   await page.screenshot({ path: `${out}/01-home.png` });
   if (roadTest) {
     const saved = [];
+    const originalPosition = await page.evaluate(() => window.__aceMap.state().raw);
+    const touchscreen = await ctx.newCDPSession(page);
+    const touch = (type, points) => touchscreen.send('Input.dispatchTouchEvent', { type, touchPoints: points });
     for (const [type, label] of [['Дом', 'Дом'], ['Работа', 'Работа'], ['Другое', 'Тестовая точка']]) {
       await page.locator('#map-search').focus();
       await click('Добавить место');
@@ -97,11 +100,22 @@ try {
       assert(await page.locator('.app').evaluate((root) => root.inert));
       const confirm = picker.getByRole('button', { name: 'Подтвердить' });
       await wait(() => document.querySelector('.place-map-picker .btn-primary')?.disabled === false);
+      if (type === 'Дом') {
+        await touch('touchStart', [{ x: 274, y: 351, id: 1 }]);
+        await touch('touchEnd', []);
+        await page.waitForTimeout(900);
+        await confirm.click();
+        const savedPlace = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:places'))?.find((p) => p.placeType === 'home'));
+        assert(savedPlace && Math.abs(savedPlace.lon - originalPosition.lon) > 0.0001, 'A real tap must save coordinates under the finger');
+        saved.push(label);
+        await page.getByRole('button', { name: 'Маршрут: Дом' }).waitFor();
+        continue;
+      }
       await page.mouse.move(200, 330);
       await page.mouse.down();
       await page.mouse.move(240, 356, { steps: 8 });
       await page.mouse.up();
-      if (type === 'Дом') {
+      if (type === 'Работа') {
         await page.waitForTimeout(500);
         await page.screenshot({ path: `${out}/06-place-picker.png` });
         await page.setViewportSize({ width: 798, height: 412 });
@@ -114,6 +128,7 @@ try {
       saved.push(label);
       await page.getByRole('button', { name: `Маршрут: ${label}` }).waitFor();
     }
+    await touchscreen.detach();
     await page.getByRole('button', { name: 'Изменить: Дом' }).click();
     await click('Указать на карте');
     await page.getByRole('dialog', { name: 'Выбор места на карте' }).waitFor();

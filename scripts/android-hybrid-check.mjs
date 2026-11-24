@@ -58,13 +58,13 @@ try {
 
   const good = { lat: 48.46, lon: 35.04, accuracy: 4, speed: 0 };
   const send = (data) => page.evaluate((f) => window.sendPosition(f), data);
-  await page.getByRole('button', { name: 'Найти меня' }).click();
+  assert.equal(await page.getByRole('button', { name: 'Найти меня' }).count(), 0);
   await wait(() => window.refreshRequested);
   await send({ ...good, source: 'network', accuracy: 1800 });
   assert.equal(await page.evaluate(() => window.__aceMap.state().raw.lat), null);
   await send({ ...good, lat: good.lat + 0.006, source: 'network', accuracy: 380 });
   await wait(() => window.__aceMap.state().nativePosition.trust === 'network' && document.body.innerText.includes('Приблизительная сетевая позиция'));
-  await wait(() => document.body.innerText.includes('Приблизительная позиция, ±380 м'));
+  await wait(() => document.body.innerText.includes('±380 м') && window.__aceMap.state().accuracyCircle >= 380);
   await page.waitForTimeout(850);
   await send({ ...good, source: 'gps' });
   assert.equal(await page.evaluate(() => window.__aceMap.state().nativePosition.trust), 'network');

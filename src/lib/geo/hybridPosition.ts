@@ -4,7 +4,7 @@ import { haversine, type LatLon } from '../routing';
 
 export type NativeProvider = 'fused' | 'gps' | 'network';
 export type PositionObservation = LatLon & {
-  at: number; source: NativeProvider; accuracy: number; mock?: boolean; cached?: boolean; provisional?: boolean;
+  at: number; source: NativeProvider; accuracy: number; mock?: boolean; cached?: boolean; sequence?: number; provisional?: boolean;
   speed?: number; speedAccuracy?: number; heading?: number;
 };
 export type MotionObservation = { at: number; yawRate: number; east?: number; north?: number };
@@ -155,7 +155,10 @@ export class HybridPosition {
       return null;
     }
     if (previous && now - previous.at < 8000 && (network && previous.source !== 'network' && previous.accuracy <= 30 ||
-      f.accuracy > previous.accuracy * 1.8 + 8)) return null;
+      f.accuracy > previous.accuracy * 1.8 + 8)) {
+      this.reason = 'Точность хуже последней подтверждённой точки';
+      return null;
+    }
     const dt = previous ? (f.at - previous.at) / 1000 : 0;
     const d = previous ? haversine(previous, f) : 0;
     const innovation = this.state ? haversine(this.state, f) : 0;
@@ -186,6 +189,7 @@ export class HybridPosition {
     const c = this.candidate;
     if (c && f.at <= c.at + 350) {
       if (f.accuracy + 4 < c.accuracy) this.candidate = f;
+      this.reason = 'Измерение слишком близко по времени к предыдущему';
       return null;
     }
     if (!c || f.at - c.at > 12_000 || haversine(c, f) > 55 * Math.max(0.4, (f.at - c.at) / 1000) + c.accuracy + f.accuracy) {

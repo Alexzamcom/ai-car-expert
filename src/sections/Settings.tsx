@@ -1,5 +1,5 @@
 import { mapCameraStore } from '../lib/diag';
-import { androidLocationDiagnostics, locationDiagnosticsJson } from '../lib/geo/locationDiagnostics';
+import { androidLocationDiagnostics, locationDiagnosticsJson, recordLocationStatus } from '../lib/geo/locationDiagnostics';
 import { locateOnAndroid } from '../lib/nav';
 import { diagModeStore } from '../lib/diag';
 import { mapRuntimeStore } from '../lib/mapEngine';
@@ -1032,6 +1032,9 @@ function GpsDiagnostics() {
       ['Запрос координат', ago(system?.requestStartedAt ?? null)],
       ['Первое измерение', system?.firstMeasurementAt && system.requestStartedAt
         ? `${system.firstMeasurementAt - system.requestStartedAt} мс · ${system.firstSource ?? '—'} · ${(system.firstAccuracy ?? 0) > 0 ? '±' + Math.round(system.firstAccuracy!) + ' м' : 'точность неизвестна'}` : '—'],
+      ['Wi‑Fi / сканирование', system ? `${system.wifiEnabled ? 'вкл.' : 'выкл.'} / ${system.wifiScanAvailable ? 'доступно постоянно' : 'только при включённом Wi‑Fi'}` : '—'],
+      ['Передача Android → WebView', system ? `${system.sent ?? 0} отправлено / №${system.received ?? 0} подтверждён` : '—'],
+      ['Маркер на карте', diagnostic.marker],
       ['Google Play Services', system ? system.playServices === 0 ? 'доступны' : `недоступны (код ${system.playServices})` : '—'],
       ['Поставщики Android', system ? `Fused: ${system.fusedStatus} · GPS ${system.gpsEnabled ? 'вкл.' : 'выкл.'} · Network ${system.networkEnabled ? 'вкл.' : 'выкл.'}` : '—'],
     ] as [string, string][] : []),
@@ -1065,6 +1068,11 @@ function GpsDiagnostics() {
         <button type="button" className="btn" onClick={() => { if (native) void locateOnAndroid().then((message) => toast(message)); else restartGeo(); toast('Запрашиваю свежую позицию', 'info'); }}>
           <Icon name="locate" /> Обновить позицию
         </button>
+        {native && <button type="button" className="btn" onClick={() => {
+          void nativePosition.diagnostics().then(recordLocationStatus).catch(() => {}).then(() =>
+            nativePosition.copyDiagnostics({ json: locationDiagnosticsJson() }))
+            .then(() => toast('Отчёт скопирован', 'ok'), () => toast('Не удалось скопировать отчёт', 'warn'));
+        }}>Скопировать отчёт без координат</button>}
         {native && <button type="button" className="btn" onClick={() => { void nativePosition.exportDiagnostics({ json: locationDiagnosticsJson() }).catch(() => toast('Не удалось сохранить журнал', 'warn')); }}>Экспорт журнала без координат</button>}
       </div>
     </div>
