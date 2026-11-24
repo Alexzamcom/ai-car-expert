@@ -1003,6 +1003,16 @@ function GpsDiagnostics() {
   const camera = useStore(mapCameraStore);
   const system = diagnostic.status;
   const last = diagnostic.samples.at(-1);
+  const marker = ({
+    'map-not-ready': 'Карта ещё не готова',
+    'waiting-for-display-position': 'Карта ждёт позицию от фильтра',
+    'approximate-position-awaits-route-confirmation': 'Приблизительная точка не применяется к активному маршруту',
+    'display-position-not-accurate-enough': 'Точности недостаточно для маркера',
+    'marker-outside-viewport': 'Маркер за пределами видимой области',
+    '3d-marker-rendered': 'Отрисован',
+    '3d-marker-awaits-render': 'Ожидает отрисовки',
+    'flat-marker-on-map': 'На карте',
+  } as Record<string, string>)[diagnostic.marker] ?? diagnostic.marker;
   const trust = g.nativeTrust && { confirmed: 'подтверждён', network: 'сетевая оценка', recovering: 'плавное уточнение',
     estimated: 'инерциальная оценка', held: 'удержание последней оценки' }[g.nativeTrust];
   const speedInput = g.speedSource && { gnss: 'проверенные GNSS-измерения', motion: 'датчики и последняя подтверждённая скорость',
@@ -1034,7 +1044,7 @@ function GpsDiagnostics() {
         ? `${system.firstMeasurementAt - system.requestStartedAt} мс · ${system.firstSource ?? '—'} · ${(system.firstAccuracy ?? 0) > 0 ? '±' + Math.round(system.firstAccuracy!) + ' м' : 'точность неизвестна'}` : '—'],
       ['Wi‑Fi / сканирование', system ? `${system.wifiEnabled ? 'вкл.' : 'выкл.'} / ${system.wifiScanAvailable ? 'доступно постоянно' : 'только при включённом Wi‑Fi'}` : '—'],
       ['Передача Android → WebView', system ? `${system.sent ?? 0} отправлено / №${system.received ?? 0} подтверждён` : '—'],
-      ['Маркер на карте', diagnostic.marker],
+      ['Маркер на карте', marker],
       ['Google Play Services', system ? system.playServices === 0 ? 'доступны' : `недоступны (код ${system.playServices})` : '—'],
       ['Поставщики Android', system ? `Fused: ${system.fusedStatus} · GPS ${system.gpsEnabled ? 'вкл.' : 'выкл.'} · Network ${system.networkEnabled ? 'вкл.' : 'выкл.'}` : '—'],
     ] as [string, string][] : []),
