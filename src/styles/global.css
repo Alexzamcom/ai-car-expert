@@ -1730,3 +1730,9 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .route-planner-options, .route-planner-status { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .route-planner-summary { margin: 0; font-weight: 700; }
 .route-planner-result { display: grid; justify-items: start; text-align: left; }
+
+.route-planner-panel .btn { min-height: 2.45rem; padding: 0.35rem 0.65rem; white-space: normal; }
+.route-planner-position { flex: 0 0 100%; color: var(--muted); }
+.route-planner-position summary { cursor: pointer; }
+.route-planner-position .route-planner-status { margin-top: 0.35rem; }
+.route-planner-fields .route-planner-field { justify-content: start; }

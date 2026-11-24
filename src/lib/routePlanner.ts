@@ -15,7 +15,7 @@ export function setManualPoint(point: LatLon) {
 
 // During hand-back, a fresh manual anchor provides an independent consistency check.
 export function recoveryNearManual(point: LatLon, anchor: (LatLon & { at: number }) | null, now: number) {
-  if (!anchor) return true;
+  if (!anchor || now - anchor.at > 86_400_000) return true;
   const elapsed = Math.max(0, now - anchor.at) / 1000;
   const reachable = Math.min(100_000, 1500 + elapsed * 45);
   return haversine(point, anchor) <= reachable;

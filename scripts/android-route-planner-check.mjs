@@ -59,8 +59,8 @@ try {
     };
     if (sessionStorage.getItem('offline')) Object.defineProperty(navigator, 'onLine', { get: () => false });
     if (!localStorage.getItem('ace:places')) localStorage.setItem('ace:places', JSON.stringify([
-      { ...origin, id: 'home', name: 'Дом', placeType: 'home', createdAt: 1, updatedAt: 1 },
-      { ...destination, id: 'work', name: 'Работа', placeType: 'work', createdAt: 1, updatedAt: 1 },
+      { ...destination, id: 'home', name: 'Дом', placeType: 'home', createdAt: 1, updatedAt: 1 },
+      { ...origin, id: 'work', name: 'Работа', placeType: 'work', createdAt: 1, updatedAt: 1 },
     ]));
   }, { origin, destination });
   const page = await ctx.newPage();
@@ -71,6 +71,10 @@ try {
   const mapReady = () => page.waitForFunction(() => window.__aceMap?.state().styleReady);
   const center = (point) => page.evaluate(({ lat, lon }) => window.__aceMap.map.jumpTo({ center: [lon, lat], zoom: 17 }), point);
   const screenshot = (name) => page.screenshot({ path: path.join(screenshots, name) });
+  const built = () => button('Начать поездку').waitFor({ timeout: 20_000 }).catch(async (error) => {
+    console.error(await page.locator('.autonomy-panel').innerText());
+    throw error;
+  });
   const menu = () => click('Дополнительные настройки');
   const field = (name) => page.locator('.route-planner-field').filter({ has: page.getByText(name, { exact: true }) });
   const chooseField = async (name) => {
@@ -89,10 +93,10 @@ try {
       return state().routePoints > 2 && map.queryRenderedFeatures({ layers: ['route-line'] }).length > 0;
     });
   };
-  const tapPoint = async () => {
+  const tapPoint = async (offset = { x: 0, y: 0 }) => {
     await page.waitForFunction(() => document.querySelector('.place-map-picker .btn-primary')?.disabled === false);
     const rect = await page.locator('.place-map-picker-map').boundingBox();
-    await page.touchscreen.tap(Math.round(rect.x + rect.width / 2), Math.round(rect.y + rect.height / 2));
+    await page.touchscreen.tap(Math.round(rect.x + rect.width / 2 + offset.x), Math.round(rect.y + rect.height / 2 + offset.y));
     await page.waitForFunction(() => !!document.querySelector('.place-map-picker-pin')?.style.left);
     await click('Подтвердить');
   };
@@ -116,10 +120,15 @@ try {
   await page.waitForFunction(() => window.__aceMap.map.getCenter().lat < 0);
   await menu();
   await click('GPS показывает неверное местоположение');
-  await tapPoint();
+  // The settlement label centre is a plaza with no car path. Touch the
+  // location of the independently verified start address on the actual map.
+  const world = 512 * 2 ** 16;
+  const mercator = (lat) => (1 - Math.asinh(Math.tan(lat * Math.PI / 180)) / Math.PI) / 2;
+  await tapPoint({ x: (origin.lon - city.lon) * world / 360, y: (mercator(origin.lat) - mercator(city.lat)) * world });
   await mapReady();
   assert(await page.evaluate(() => window.__aceMap.map.getCenter().lat > 48));
   const manual = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:position-mode')).point);
+  assert(Math.abs(manual.lat - origin.lat) < .00005 && Math.abs(manual.lon - origin.lon) < .00005);
   await emitFix({ lat: -4, lon: 28 });
   assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('ace:position-mode')).point), manual);
 
@@ -127,32 +136,40 @@ try {
   await chooseAddress('Куда', 'Адрес назначения', destination);
   await screenshot('01-endpoints.png');
   await click('Построить маршрут');
-  await button('Начать поездку').waitFor();
+  await built();
   await paint();
   await page.waitForFunction(() => !window.__aceMap.map.isMoving());
+  assert(await button('Начать поездку').evaluate((node) => {
+    const panel = node.closest('.autonomy-panel').getBoundingClientRect();
+    return node.getBoundingClientRect().bottom <= panel.bottom;
+  }));
   await screenshot('02-offline-route.png');
 
   await click('Поменять точки местами');
   assert.match(await field('Откуда').innerText(), /Незалежності/);
+  await click('Поменять точки местами');
   await chooseField('Откуда');
   await click('Выбрать на карте');
   await tapPoint();
-  assert.match(await field('Куда').innerText(), /Соборна/);
+  assert.match(await field('Куда').innerText(), /Незалежності/);
   await chooseField('Куда');
   await click('Выбрать на карте');
   await tapPoint();
   assert.match(await field('Откуда').innerText(), /Старт на карте/);
-  await click('Построить маршрут'); await button('Начать поездку').waitFor(); await paint();
+  await click('Построить маршрут'); await built(); await paint();
 
-  await chooseField('Откуда'); await click('Моё местоположение');
-  await chooseField('Куда'); await click('Дом');
-  await click('Построить маршрут'); await button('Начать поездку').waitFor(); await paint();
+  await click('Назад');
+  await page.locator('#map-search').focus();
+  await click('Домой');
+  assert.match(await field('Откуда').innerText(), /Моё местоположение/);
+  assert.match(await field('Куда').innerText(), /Дом/);
+  await click('Построить маршрут'); await built(); await paint();
 
   await chooseField('Откуда'); await click('Дом');
   await chooseField('Куда'); await click('Работа');
-  await click('Построить маршрут'); await button('Начать поездку').waitFor(); await paint();
+  await click('Построить маршрут'); await built(); await paint();
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await button('Начать поездку').waitFor(); await paint();
+  await built(); await paint();
   assert.match(await field('Откуда').innerText(), /Дом/);
   await click('Начать поездку');
   await button('Подтвердить фактическую позицию').waitFor();
@@ -168,9 +185,18 @@ try {
   if (await page.getByRole('button', { name: /Понятно/ }).count()) {
     await page.getByRole('button', { name: /Понятно/ }).evaluate((node) => node.click());
   }
-  await page.locator('.hud-speed').waitFor();
+  await page.locator('.hud[data-style="classic"] .hud-speed').waitFor();
+  await click('Выйти из HUD');
+  await page.evaluate(() => localStorage.setItem('ace:hud', JSON.stringify({ style: 'game', warned: true, mirror: true })));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await click('Начать поездку');
+  await click('Подтвердить фактическую позицию');
+  await click('HUD');
+  await page.locator('.hud[data-style="game"] .hud-speed').waitFor();
+  assert(await page.locator('.hud-stage').evaluate((stage) => stage.classList.contains('is-mirrored')));
   await click('Выйти из HUD');
   await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.locator('.route-planner-position summary').click();
   await button('Включить автоматическое местоположение').waitFor();
   await click('Включить автоматическое местоположение');
   for (let i = 0; i < 3; i++) { await emitFix({ lat: -4, lon: 28 }); await page.waitForTimeout(650); }

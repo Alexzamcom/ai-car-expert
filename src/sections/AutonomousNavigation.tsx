@@ -126,7 +126,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
       const selected = await fetchRoute(from, to, request.signal);
       if (request.signal.aborted) return;
       plannedRoute.set({ from, to, route: selected });
-      api.current?.fitPoints(selected.coords, ui.current);
+      requestAnimationFrame(() => api.current?.fitPoints(selected.coords, ui.current));
     } catch (error) {
       if (!request.signal.aborted) setMessage(error instanceof Error ? error.message : 'Маршрут не найден.');
     } finally {
@@ -539,14 +539,16 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
       {pointPicker && <PlaceMapPicker start={api.current?.center?.() ?? null} cancel={() => setPointPicker(false)}
         confirm={(point) => { setPointPicker(false); if (stage === 'destination') void selectDestination(point); else selectOrigin(point); }} />}
       {selecting && <div className="autonomy-crosshair" aria-hidden="true">⌖</div>}
-      <div className={`autonomy-panel ${stage === 'driving' && !showTools ? 'autonomy-compact' : ''}`} ref={ui}>
+      <div className={`autonomy-panel ${launch && (stage === 'plan' || stage === 'confirm') ? 'route-planner-panel' : ''} ${stage === 'driving' && !showTools ? 'autonomy-compact' : ''}`} ref={ui}>
         <strong>{launch && (stage === 'plan' || stage === 'confirm') ? 'Маршрут' : 'Навигация без GPS · эксперимент'}</strong>
         {launch && (stage === 'plan' || stage === 'confirm') && <>
-          {positioning.manual && <div className="route-planner-status">
-            {positioning.point ? `Ручная позиция · ${new Date(positioning.point.at).toLocaleString('ru')}` : 'GPS отключён · укажите положение автомобиля'}
-            <button className="btn" disabled={busy} onClick={() => chooseOnMap('position')}>Указать местоположение</button>
-            <button className="btn" disabled={busy} onClick={() => { setRegionField(null); changePositionMode(false); }}>Включить автоматическое местоположение</button>
-          </div>}
+          {positioning.manual && <details className="route-planner-position">
+            <summary>{positioning.point ? `Ручная позиция · ${new Date(positioning.point.at).toLocaleString('ru')}` : 'GPS отключён · укажите положение автомобиля'}</summary>
+            <div className="route-planner-status">
+              <button className="btn" disabled={busy} onClick={() => chooseOnMap('position')}>Указать местоположение</button>
+              <button className="btn" disabled={busy} onClick={() => { setRegionField(null); changePositionMode(false); }}>Включить автоматическое местоположение</button>
+            </div>
+          </details>}
           {regionField && <label>Скачанная карта <select defaultValue="" onChange={(event) => {
             const region = downloaded.find((item) => item.id === event.target.value);
             if (!region) return;
@@ -610,6 +612,12 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
           <div>Расстояние · GPS {Math.round(estimate.distance.gps)} м · датчики {Math.round(estimate.distance.sensors)} м · итог {Math.round(estimate.distance.fused)} м</div>
           {trip.current?.truncated && <div>Достигнут предел записи.</div>}
           {!follow && <button className="btn" onClick={() => setFollow(true)}>К машине</button>}
+          {launch && !positioning.manual && <button className="btn" onClick={() => {
+            changePositionMode(true);
+            setVariant('road');
+            mode.current = 'road';
+            pause('GPS отключён. После остановки уточните положение.');
+          }}>GPS показывает неверное местоположение</button>}
           <button className="btn" disabled={!stationary} onClick={() => { pause('Подтвердите точку только на остановке.'); setStage('correct'); setHeading(String(Math.round(estimate.heading) % 360)); }}>Уточнить после остановки</button>
           <button className="btn" onClick={() => pause('Для коррекции и возобновления дождитесь полной остановки.')}>Пауза</button>
           <button className="btn" disabled={busy} onClick={() => void finish()}>Завершить поездку</button>

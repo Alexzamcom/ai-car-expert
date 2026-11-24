@@ -170,7 +170,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (!dotAdded) map.triggerRepaint();
         dotAdded = true;
         dotEl.classList.toggle('is-last-known', stale);
-        dotEl.setAttribute('aria-label', stale ? 'Последняя известная позиция' : 'Приблизительное местоположение');
+        dotEl.setAttribute('aria-label', manual.manual ? 'Последняя ручная позиция' : stale ? 'Последняя известная позиция' : 'Приблизительное местоположение');
         if (follow.current && (!centered || !stale && !centeredFresh) && !navStore.get().dest) {
           centered = true;
           centeredFresh ||= !stale;
@@ -795,8 +795,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           points.forEach((q) => b.extend([q.lon, q.lat]));
           const box2 = map.getContainer().getBoundingClientRect();
           const r = (sel: string) => ui?.querySelector<HTMLElement>(sel)?.getBoundingClientRect();
-          const top = r('.map-top');
-          const cards = ui?.matches('.autonomy-panel') ? ui.getBoundingClientRect() : r('.map-cards') ?? r('.guide-wrap');
+          const top = ui?.matches('.autonomy-panel') ? ui.getBoundingClientRect() : r('.map-top');
+          const cards = r('.map-cards') ?? r('.guide-wrap');
           const ctl = r('.map-controls');
           const pad = {
             top: top && top.height ? Math.max(40, top.bottom - box2.top + 16) : 40,
