@@ -8,6 +8,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(TripSensors.class);
         registerPlugin(NativePosition.class);
+        registerPlugin(OfflineStorage.class);
         super.onCreate(savedInstanceState);
     }
 }

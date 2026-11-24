@@ -1,0 +1,100 @@
+name: Build real offline map data
+
+on:
+  pull_request:
+    paths: ['server/offline-maps/**', '.github/workflows/offline-data.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ace-offline-map-data
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    if: github.event_name != 'pull_request' || (github.head_ref == 'codex/android-offline-download' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install data tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y osmium-tool
+          pip install osmium==4.3.0
+          npm ci
+      - name: Choose extract cache key
+        id: extract
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: pbf-cache
+        with:
+          path: ${{ runner.temp }}/ace-input/ukraine.osm.pbf
+          key: geofabrik-ua-${{ steps.extract.outputs.date }}
+      - name: Download the Ukraine extract
+        if: steps.pbf-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/ace-input"
+          cd "$RUNNER_TEMP/ace-input"
+          for host in download.geofabrik.de download-ext2.geofabrik.de; do
+            if curl -4 -fsSL --retry 4 --retry-all-errors --connect-timeout 12 --max-time 720               -o ukraine.download "https://$host/europe/ukraine-latest.osm.pbf" &&
+              osmium fileinfo -F pbf ukraine.download >/dev/null; then
+              mv ukraine.download ukraine.osm.pbf
+              break
+            fi
+          done
+          test -s ukraine.osm.pbf
+      - uses: actions/cache/save@v4
+        if: steps.pbf-cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ runner.temp }}/ace-input/ukraine.osm.pbf
+          key: geofabrik-ua-${{ steps.extract.outputs.date }}
+      - name: Download licensed glyphs and read map date
+        run: |
+          mkdir -p "$RUNNER_TEMP/ace-input/glyphs"
+          cd "$RUNNER_TEMP/ace-input"
+          for range in 0-255 256-511 1024-1279 8192-8447; do
+            curl -fL --retry 2 -o "glyphs/$range.pbf" "https://raw.githubusercontent.com/protomaps/basemaps-assets/028c18f713baecad011301ff7a69acc39bcc2ae7/fonts/Noto%20Sans%20Regular/$range.pbf"
+          done
+          date=$(osmium fileinfo -g header.option.osmosis_replication_timestamp ukraine.osm.pbf || true)
+          printf '%s\n' "${date:-$(date -u +%FT%TZ)}" > data-date
+      - name: Build Pavlohrad and Dnipro (25 km)
+        run: |
+          input="$RUNNER_TEMP/ace-input"
+          python server/offline-maps/build.py --source "$input/ukraine.osm.pbf" --glyphs "$input/glyphs" \
+            --date "$(cat "$input/data-date")" --out "$RUNNER_TEMP/ace-data" --radii 25
+          du -sh "$RUNNER_TEMP"/ace-data/regions/*/*
+      - name: Upload test data
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-offline-maps
+          path: ${{ runner.temp }}/ace-data
+          retention-days: 14
+      - name: Verify actual addresses and offline car routes
+        run: node server/offline-maps/check.mjs "$RUNNER_TEMP/ace-data"
+      - name: Publish licensed data to the data-only branch
+        run: |
+          data="$RUNNER_TEMP/ace-data"
+          origin=$(git config --get remote.origin.url)
+          git -C "$data" init -b offline-map-data
+          git -C "$data" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$data" config user.name "github-actions[bot]"
+          printf '%s\n' '© OpenStreetMap contributors, ODbL 1.0. Source https://download.geofabrik.de/europe/ukraine.html'             'Noto Sans glyphs under SIL Open Font License 1.1, via https://github.com/protomaps/basemaps-assets' > "$data/ATTRIBUTION.txt"
+          cp server/offline-maps/NotoSans-OFL.txt "$data/"
+          if git fetch --no-tags origin offline-map-data; then
+            git -C "$data" remote add origin "$origin"
+            git -C "$data" -c "http.extraheader=$(git config --get http.https://github.com/.extraheader)" fetch --depth=1 origin offline-map-data
+            git -C "$data" reset --mixed FETCH_HEAD
+          fi
+          git -C "$data" add -A
+          git -C "$data" diff --cached --quiet && exit 0
+          git -C "$data" commit -m "Refresh offline road data from Geofabrik"
+          git -C "$data" -c "http.extraheader=$(git config --get http.https://github.com/.extraheader)" push "$origin" HEAD:offline-map-data

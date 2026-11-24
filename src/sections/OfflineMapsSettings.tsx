@@ -1,29 +1,25 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useStore } from '../lib/store';
-import { areaBounds, deleteOfflineRegion, downloadNavigationPackage, downloadOfflineRegion, getOfflinePackage, initializeOfflineMaps, offlineRegions, type OfflineRegion } from '../lib/offlineMaps';
-import { searchSettlements } from '../lib/geo/settlements';
-import type { Place } from '../lib/geo/geocode';
-import type { OfflinePackage } from '../lib/offlinePackageFormat';
+import { areaBounds, deleteOfflineRegion, discardRegionalDownload, downloadNavigationPackage, downloadOfflineRegion, getOfflinePackage, initializeOfflineMaps, offlineRegions, regionalDownloadState, regionalStorageBytes, type OfflineRegion } from '../lib/offlineMaps';
+import { searchSettlements, settlementPackage, type Settlement } from '../lib/geo/settlements';
+import { verifyRegionIdentity, type OfflinePackage } from '../lib/offlinePackageFormat';
 import { OfflineBoundsPreview } from '../components/OfflineBoundsPreview';
 
 const fmtBytes = (n: number) => `${(n / 1_000_000).toLocaleString('ru', { maximumFractionDigits: 2 })} МБ`;
-const RADII = [10, 25, 50, 100];
-const PROVIDER_KEY = 'ace:offline-package-provider';
-const defaultProvider = () => {
-  try { return localStorage.getItem(PROVIDER_KEY) ?? import.meta.env.VITE_OFFLINE_PACKAGE_PROVIDER ?? ''; }
-  catch { return ''; }
-};
+const RADII = [10, 25, 50, 100] as const;
+type Radius = typeof RADII[number];
 
 export function OfflineMapsSettings() {
   const regions = useStore(offlineRegions);
   const [query, setQuery] = useState('');
-  const [choices, setChoices] = useState<Place[]>([]);
-  const [selected, setSelected] = useState<Place>();
-  const [radius, setRadius] = useState(10);
-  const [provider, setProvider] = useState(defaultProvider);
+  const [choices, setChoices] = useState<Settlement[]>([]);
+  const [selected, setSelected] = useState<Settlement>();
+  const [radius, setRadius] = useState<Radius>(25);
   const [active, setActive] = useState(false);
   const [status, setStatus] = useState('');
-  const [info, setInfo] = useState<{ url: string; manifest: OfflinePackage }>();
+  const [info, setInfo] = useState<{ url: string; manifest: OfflinePackage; saved: number }>();
+  const [checking, setChecking] = useState(false);
+  const [previewError, setPreviewError] = useState('');
   const [progress, setProgress] = useState<{ done: number; total: number; bytes: number }>();
   const controller = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -40,7 +36,7 @@ export function OfflineMapsSettings() {
     try { await action(request.signal); }
     catch (error) {
       if (!request.signal.aborted) setStatus(error instanceof Error ? error.message : 'Операция не удалась.');
-      else setStatus('Операция отменена. Сохранённые области доступны.');
+      else setStatus('Операция остановлена. Проверенная часть загрузки сохранена.');
     } finally {
       controller.current = null;
       setActive(false);
@@ -59,25 +55,37 @@ export function OfflineMapsSettings() {
     });
   }
 
-  function inspect() {
-    if (!selected || !provider.trim()) {
-      setStatus('Укажите HTTPS-адрес поставщика пакетов в разделе «Источник пакетов».');
+  useEffect(() => {
+    setInfo(undefined);
+    setPreviewError('');
+    if (!selected) return;
+    const url = settlementPackage(selected, radius);
+    if (!url) {
+      setPreviewError('Карта для этого населённого пункта и радиуса пока недоступна.');
       return;
     }
-    void run(async (signal) => {
-      const base = new URL(provider.trim().replace(/\/?$/, '/'));
-      if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash) throw new Error('Укажите базовый HTTPS-адрес поставщика.');
-      localStorage.setItem(PROVIDER_KEY, base.href);
-      const url = new URL(`${encodeURIComponent(selected.id)}/${radius}/manifest.json`, base).href;
-      const manifest = await getOfflinePackage(url, signal);
-      setInfo({ url, manifest });
-    });
-  }
+    const request = new AbortController();
+    setChecking(true);
+    void getOfflinePackage(url, request.signal).then(async (manifest) => {
+      verifyRegionIdentity(manifest, selected.id, selected, radius);
+      const { matching } = await regionalDownloadState(url, manifest);
+      if (!request.signal.aborted) setInfo({ url, manifest, saved: matching?.bytes ?? 0 });
+    }).catch((error) => {
+      if (!request.signal.aborted) setPreviewError(error instanceof Error ? error.message : 'Не удалось получить параметры карты.');
+    }).finally(() => { if (!request.signal.aborted) setChecking(false); });
+    return () => { request.abort(); setChecking(false); };
+  }, [selected, radius]);
 
   function download() {
     if (!selected || !info) return;
     void run(async (signal) => {
-      await downloadNavigationPackage([selected.name, selected.address].filter(Boolean).join(' · '), selected, radius, info.url, info.manifest, setProgress, signal);
+      try {
+        await downloadNavigationPackage([selected.name, selected.address].filter(Boolean).join(' · '), selected, radius, info.url, info.manifest, setProgress, signal);
+        setInfo({ ...info, saved: 0 });
+      } finally {
+        const { matching } = await regionalDownloadState(info.url, info.manifest).catch(() => ({ matching: undefined }));
+        setInfo({ ...info, saved: matching?.bytes ?? 0 });
+      }
       setStatus('Регион доступен без интернета.');
     });
   }
@@ -86,6 +94,7 @@ export function OfflineMapsSettings() {
     void run(async (signal) => {
       if (region.packageUrl && region.radiusKm) {
         const manifest = await getOfflinePackage(region.packageUrl, signal);
+        if (region.settlementId) verifyRegionIdentity(manifest, region.settlementId, region.center, region.radiusKm);
         const name = region.name.replace(/ · \d+ км$/, '');
         await downloadNavigationPackage(name, region.center, region.radiusKm, region.packageUrl, manifest, setProgress, signal);
       } else {
@@ -105,29 +114,32 @@ export function OfflineMapsSettings() {
     {choices.map((place) => <button className="btn" key={place.id} disabled={active} aria-pressed={selected?.id === place.id}
       onClick={() => { setSelected(place); setInfo(undefined); }}>{[place.name, place.address].filter(Boolean).join(' · ')}</button>)}
     {selected && <>
-      <label className="field">Радиус региона <select disabled={active} value={radius} onChange={(e) => { setRadius(+e.target.value); setInfo(undefined); }}>
+      <label className="field">Радиус региона <select disabled={active} value={radius} onChange={(e) => { setRadius(+e.target.value as Radius); setInfo(undefined); }}>
         {RADII.map((km) => <option key={km} value={km}>{km} км</option>)}
       </select></label>
       <OfflineBoundsPreview bounds={areaBounds(selected, radius)} />
-      <button className="btn" disabled={active} onClick={inspect}>Проверить пакет</button>
-      {info && <>
-        <div>Карта, дорожный граф и адреса · {fmtBytes(info.manifest.assets.reduce((sum, asset) => sum + asset.bytes, 0))}</div>
-        <button className="btn btn-primary" disabled={active} onClick={download}>Скачать регион</button>
-      </>}
+      {checking && <p role="status">Получаем размер карты…</p>}
+      {previewError && <p role="status">{previewError}</p>}
+      {info && (() => {
+        const total = info.manifest.assets.reduce((sum, asset) => sum + asset.bytes, 0);
+        return <>
+          <div>Загрузка · {fmtBytes(total - info.saved)}. Нужно свободного места · {fmtBytes(regionalStorageBytes(total - info.saved))}</div>
+          <button className="btn btn-primary" disabled={active} onClick={download}>{info.saved ? 'Возобновить загрузку' : 'Скачать карту'}</button>
+          {!!info.saved && <button className="btn" disabled={active} onClick={() => void run(async () => {
+            await discardRegionalDownload(info.url);
+            setInfo({ ...info, saved: 0 });
+          })}>Удалить незавершённую загрузку</button>}
+        </>;
+      })()}
     </>}
-    <details>
-      <summary>Источник пакетов</summary>
-      <label className="field">HTTPS-адрес поставщика <input className="input" type="url" value={provider} disabled={active}
-        onChange={(event) => { setProvider(event.target.value); setInfo(undefined); }} /></label>
-    </details>
-    {active && <button className="btn" onClick={() => controller.current?.abort()}>Отменить</button>}
+    {active && <button className="btn" onClick={() => controller.current?.abort()}>Остановить</button>}
     {active && progress && <div>
       <progress aria-label="Загрузка карты" value={progress.done} max={progress.total} />
       <div>{progress.done} / {progress.total} · {fmtBytes(progress.bytes)}</div>
     </div>}
     {status && <div role="status">{status}</div>}
     {regions.map((region) => <div className="setting-row" key={region.id}>
-      <div><strong>{region.name}</strong><small>{fmtBytes(region.bytes)} · {region.graph ? 'карта и маршруты' : 'только карта'} · {new Date(region.updated).toLocaleDateString('ru')}</small></div>
+      <div><strong>{region.name}</strong><small>{fmtBytes(region.bytes)} · {region.graph ? 'карта и маршруты' : 'только карта'} · {new Date(region.dataDate ?? region.updated).toLocaleDateString('ru')}</small></div>
       <div className="seg"><button className="btn" disabled={active} onClick={() => update(region)}>Обновить</button>
         <button className="btn" disabled={active} onClick={() => void run(() => deleteOfflineRegion(region))}>Удалить</button></div>
     </div>)}

@@ -1,6 +1,7 @@
 // Restarts the application offline and runs real Valhalla WASM on a synthetic street network.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { regionalFixture } from './offline-test-catalog.mjs';
 import { createRequire } from 'node:module';
 const { chromium, devices } = createRequire(import.meta.url)('playwright');
 const url = new URL(process.argv[2] ?? 'http://localhost:4173/');
@@ -13,8 +14,8 @@ const start = { lat: 48.525, lon: 35.8603 };
 const finish = { lat: 48.5288, lon: 35.865 };
 const index = Buffer.from(JSON.stringify([{ ...finish, id: 'finish', name: 'Тестова 12', address: 'Павлоград', aliases: ['Тестовая 12'] }]));
 const assets = { [source]: graph, 'addresses.json': index, 't/0/0/0': Buffer.from([26, 0]) };
-const manifest = { version: 1, engine: 'valhalla-3.9', bounds: [35.7, 48.4, 36, 48.7], style: manifestStyle,
-  assets: Object.entries(assets).map(([path, body]) => ({ path, bytes: body.length })) };
+const region = regionalFixture({ version: 1, engine: 'valhalla-3.9', bounds: [35.49, 48.28, 36.23, 48.77], style: manifestStyle },
+  assets, { lat: 48.525, lon: 35.86 }, 'Павлоград');
 const browser = await chromium.launch();
 try {
   const { defaultBrowserType, ...device } = devices['Pixel 7'];
@@ -22,6 +23,8 @@ try {
   let online = true;
   let remoteRoutes = 0;
   let queried = '';
+  let downloadFailures = 0;
+  let firstChunkRequests = 0;
   await ctx.route('**/*', (r) => {
     const request = new URL(r.request().url());
     if (request.origin === url.origin) return r.continue();
@@ -32,11 +35,16 @@ try {
       assert(!request.searchParams.has('lat') && !request.searchParams.has('lon'));
       queried = request.searchParams.get('q');
       return r.fulfill({ headers, json: { features: [{ geometry: { coordinates: [35.86, 48.525] },
-        properties: { osm_id: 57, osm_value: 'city', name: 'Павлоград' } }] } });
+        properties: { osm_id: 57, osm_type: 'N', osm_value: 'city', name: 'Павлоград', country: 'Україна', countrycode: 'UA' } }] } });
     }
-    if (request.hostname === 'package.example') {
-      const key = request.pathname.split('/').slice(3).join('/');
-      return key === 'manifest.json' ? r.fulfill({ json: manifest, headers }) : r.fulfill({ body: assets[key], headers });
+    if (request.hostname === 'raw.githubusercontent.com') {
+      const key = request.pathname.split('/').at(-1);
+      if (key === 'catalog.json') return r.fulfill({ json: region.catalog, headers });
+      if (key === 'manifest.json') return r.fulfill({ json: region.manifest, headers });
+      const index = Number(key.match(/^data-(\d+)\.bin$/)?.[1]);
+      if (index === 0) firstChunkRequests++;
+      if (index === 1 && downloadFailures++ === 0) return r.abort('internetdisconnected');
+      return r.fulfill({ body: region.chunks[index], headers });
     }
     return request.pathname.includes('/styles/') ? r.fulfill({ json: viewStyle, headers }) : r.fulfill({ status: 204, headers });
   });
@@ -71,16 +79,21 @@ try {
   const btn = (name) => page.getByRole('button', { name, exact: true });
   const click = (name) => btn(name).evaluate((button) => button.click());
   await page.goto(url.href, { waitUntil: 'domcontentloaded' });
-  await click('Дополнительные настройки');
-  await click('Настройки навигации и HUD');
-  await page.getByLabel('Город или село').fill('Павлоград');
-  await click('Найти населённый пункт');
-  await btn('Павлоград').evaluate((button) => button.click());
+  const choose = async () => {
+    await click('Дополнительные настройки');
+    await click('Настройки навигации и HUD');
+    await page.getByLabel('Город или село').fill('Павлоград');
+    await click('Найти населённый пункт');
+    await click('Павлоград · Область · Україна');
+  };
+  await choose();
   assert.equal(queried, 'Павлоград');
-  await page.locator('details').filter({ hasText: 'Источник пакетов' }).locator('summary').click();
-  await page.getByLabel('HTTPS-адрес поставщика').fill('https://package.example/');
-  await click('Проверить пакет');
-  await click('Скачать регион');
+  await click('Скачать карту');
+  await btn('Возобновить загрузку').waitFor();
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await choose();
+  await click('Возобновить загрузку');
+  assert.equal(firstChunkRequests, 1);
   await page.getByText('Регион доступен без интернета.').waitFor();
   online = false;
   await page.evaluate(() => {

@@ -1,6 +1,7 @@
 // Android profile, fixture-only provider and real IndexedDB/MapLibre protocol.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { regionalFixture } from './offline-test-catalog.mjs';
 import { createRequire } from 'node:module';
 const { chromium, devices } = createRequire(import.meta.url)('playwright');
 const url = new URL(process.argv[2] ?? 'http://localhost:4173/');
@@ -29,8 +30,7 @@ const tile = Buffer.from(fields(3, layer));
 const tileJson = { tiles: ['https://tiles.openfreemap.org/fixture/{z}/{x}/{y}.pbf'], maxzoom: 14, attribution: 'OpenFreeMap · © OpenStreetMap contributors' };
 const graphPath = 'graph/2/000/798/623.gph';
 const graph = fs.readFileSync(new URL(`../tests/fixtures/offline-route/${graphPath}`, import.meta.url));
-const prefix = '/pack/ph%3A42/10/';
-const coverage = [point.lon - 0.2, point.lat - 0.2, point.lon + 0.2, point.lat + 0.2];
+const coverage = [point.lon - 0.6, point.lat - 0.5, point.lon + 0.6, point.lat + 0.5];
 const addressIndex = Buffer.from(JSON.stringify([{ ...point, id: 'test', name: 'Улица 1', address: 'Тестовый район' }]));
 const tiles = [];
 for (let z = 0; z <= 14; z++) {
@@ -42,8 +42,9 @@ for (let z = 0; z <= 14; z++) {
     }
   }
 }
-const manifest = { version: 1, engine: 'valhalla-3.9', style, bounds: coverage,
-  assets: [{ path: graphPath, bytes: graph.length }, { path: 'addresses.json', bytes: addressIndex.length }, ...tiles] };
+const region = regionalFixture({ version: 1, engine: 'valhalla-3.9', style, bounds: coverage },
+  { [graphPath]: graph, 'addresses.json': addressIndex, ...Object.fromEntries(tiles.map(({ path }) => [path, tile])) },
+  point, 'Тестовый район');
 const browser = await chromium.launch();
 try {
   const { defaultBrowserType, ...device } = devices['Pixel 7'];
@@ -59,10 +60,11 @@ try {
     if (u.hostname === 'photon.komoot.io') return r.fulfill({ json: { features: [
       { geometry: { coordinates: [point.lon, point.lat] }, properties: { osm_id: 42, name: 'Тестовый район', osm_value: 'town' } }
     ] }, headers });
-    if (u.hostname === 'offline.example') {
-      const key = u.pathname.slice(prefix.length);
-      if (key === 'manifest.json') return r.fulfill({ json: manifest, headers });
-      return r.fulfill({ body: key === graphPath ? graph : key === 'addresses.json' ? addressIndex : tile, headers });
+    if (u.hostname === 'raw.githubusercontent.com') {
+      const key = u.pathname.split('/').at(-1);
+      if (key === 'catalog.json') return r.fulfill({ json: region.catalog, headers });
+      if (key === 'manifest.json') return r.fulfill({ json: region.manifest, headers });
+      return r.fulfill({ body: region.chunks[Number(key.match(/^data-(\d+)\.bin$/)?.[1])], headers });
     }
     if (u.pathname.includes('/styles/')) return r.fulfill({ json: style, headers });
     if (u.pathname === '/planet') return r.fulfill({ json: { ...tileJson, tiles: tileJson.tiles }, headers });
@@ -111,10 +113,7 @@ try {
   await page.getByLabel('Город или село').fill('Тестовый район');
   await click('Найти населённый пункт');
   await page.getByRole('button', { name: /Тестовый район/ }).click();
-  await page.locator('details').filter({ hasText: 'Источник пакетов' }).locator('summary').click();
-  await page.getByLabel('HTTPS-адрес поставщика').fill('https://offline.example/pack/');
-  await click('Проверить пакет');
-  await click('Скачать регион');
+  await click('Скачать карту');
   await page.getByText('Регион доступен без интернета.', { exact: true }).waitFor();
   await page.evaluate((r) => localStorage.setItem('ace:nav-session', JSON.stringify({
     dest: { id: 'saved', name: 'Финиш', address: '', ...r.coords.at(-1) }, at: Date.now(), via: null, guiding: true, route: r,
@@ -127,7 +126,7 @@ try {
   await wait(() => {
     const { map, state } = window.__aceMap;
     const s = state();
-    return s.offline.region === 'Тестовый район · 10 км' && s.routePoints > 2 && s.raw.lat != null &&
+    return s.offline.region === 'Тестовый район · Область · Україна · 25 км' && s.routePoints > 2 && s.raw.lat != null &&
       map.getStyle()?.glyphs?.startsWith('aceoffline:') &&
       map.querySourceFeatures('roads', { sourceLayer: 'transportation' }).some((f) => f.properties.name.includes('Улица'));
   });
@@ -135,7 +134,7 @@ try {
   await load();
   await wait(() => {
     const s = window.__aceMap?.state();
-    return s?.offline.region === 'Тестовый район · 10 км' && s.routePoints > 2 && s.raw.lat == null && !s.car;
+    return s?.offline.region === 'Тестовый район · Область · Україна · 25 км' && s.routePoints > 2 && s.raw.lat == null && !s.car;
   });
   assert.match(await page.locator('.android-position-tag').innerText(), /Положение не подтверждено/);
   assert(await page.locator('.android-position-tag').getByRole('button', { name: 'Старт вручную' }).isVisible());
@@ -151,8 +150,8 @@ try {
   const section = page.getByRole('region', { name: 'Офлайн-карты' });
   await section.getByRole('button', { name: 'Обновить', exact: true }).evaluate((el) => el.click());
   await page.getByText('Регион обновлён.', { exact: true }).waitFor();
-  assert.equal(await section.getByText('Тестовый район · 10 км', { exact: true }).count(), 1);
+  assert.equal(await section.getByText('Тестовый район · Область · Україна · 25 км', { exact: true }).count(), 1);
   await section.getByRole('button', { name: 'Удалить', exact: true }).evaluate((el) => el.click());
-  await section.getByText('Тестовый район · 10 км', { exact: true }).waitFor({ state: 'hidden' });
+  await section.getByText('Тестовый район · Область · Україна · 25 км', { exact: true }).waitFor({ state: 'hidden' });
   console.log('✓ 4 режима сети и GPS: загрузка региона, локальные векторы и названия, сохранённый маршрут, холодный офлайн-старт и возврат к онлайн-стилю');
 } finally { await browser.close(); }
