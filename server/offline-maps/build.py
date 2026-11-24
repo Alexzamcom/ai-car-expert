@@ -93,7 +93,7 @@ def build(place, radius, source, out, work, glyphs, date):
         '--mjolnir-traffic-extract "" --mjolnir-admin "" --mjolnir-timezone "" '
         '--additional-data-elevation "" >/data/valhalla.json && '
         'valhalla_build_tiles -c /data/valhalla.json /data/region.osm.pbf')
-    run(*mount, "-v", f"{PROFILE}:/profile:ro", os.environ.get("TILEMAKER_IMAGE", "ghcr.io/systemed/tilemaker:master"),
+    run(*mount, "-v", f"{PROFILE}:/profile:ro", os.environ.get("TILEMAKER_IMAGE", "ghcr.io/systemed/tilemaker@sha256:71f65be841445a69bae9bbb1fd30cd2809686d705d3f47682508f8a33851d51c"),
         "/data/region.osm.pbf", "--output", "/data/region.mbtiles", "--config", "/profile/config.json", "--process", "/profile/process.lua")
     directory = out / "regions" / place["id"] / str(radius)
     run(sys.executable, ROOT / "scripts/prepare-offline-region.py", "--osm", cut,

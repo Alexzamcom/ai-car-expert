@@ -33,7 +33,7 @@ jobs:
           cd "$RUNNER_TEMP/ace-input"
           curl -fL --retry 3 -o ukraine.osm.pbf https://download.geofabrik.de/europe/ukraine-latest.osm.pbf
           for range in 0-255 256-511 1024-1279 8192-8447; do
-            curl -fL --retry 2 -o "glyphs/$range.pbf" "https://raw.githubusercontent.com/openmaptiles/fonts/gh-pages/Noto%20Sans%20Regular/$range.pbf"
+            curl -fL --retry 2 -o "glyphs/$range.pbf" "https://raw.githubusercontent.com/protomaps/basemaps-assets/028c18f713baecad011301ff7a69acc39bcc2ae7/fonts/Noto%20Sans%20Regular/$range.pbf"
           done
           date=$(osmium fileinfo -g header.option.osmosis_replication_timestamp ukraine.osm.pbf)
           printf '%s\n' "${date:-$(date -u +%FT%TZ)}" > data-date
