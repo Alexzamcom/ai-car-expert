@@ -43,3 +43,9 @@ export function recordMapLocation(fix: PositionObservation, now: number, rejecte
   }
   return true;
 }
+
+export function clearMapLocation() {
+  mapLocationStore.set(null);
+  lastSaved = 0;
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* storage unavailable */ }
+}

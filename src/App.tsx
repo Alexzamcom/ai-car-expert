@@ -1,3 +1,4 @@
+import { plannedRoute, positionMode, type PlannerLaunch } from './lib/routePlanner';
 import { watchAndroidViewport } from './lib/androidViewport';
 import { nativePosition, usesAndroidNativePosition } from './lib/geo/nativePosition';
 import { lazy, Suspense, useEffect, useState } from 'react';
@@ -14,7 +15,7 @@ import { Navigation } from './sections/Navigation';
 import { useStore } from './lib/store';
 import { layoutStore, settingsStore, closePage, driveUiStore } from './lib/state';
 import { setKeepAwake, retryWakeLockOnGesture } from './lib/wakeLock';
-import { startGeo, restartGeo, geoStore, setAndroidGeoExperiment } from './lib/nav';
+import { startGeo, restartGeo, geoStore, setAndroidGeoExperiment, changePositionMode, trustedPlannerPosition } from './lib/nav';
 import { restorePlayer } from './lib/player';
 import { chatgptReturnMessage } from './lib/chatgpt';
 import { takeReturn } from './lib/handoff';
@@ -43,11 +44,36 @@ export function App() {
       root.style.removeProperty('--android-viewport-width');
     };
   }, []);
-  const [autonomous, setAutonomous] = useState(false);
+  const [restoredPlanner] = useState(() => {
+    try {
+      return androidDriving && Capacitor.isPluginAvailable('TripSensors') &&
+        localStorage.getItem('ace:planner-open') === '1';
+    } catch { return false; }
+  });
+  const [autonomous, setAutonomous] = useState(restoredPlanner);
+  const [planner, setPlanner] = useState<PlannerLaunch | undefined>(restoredPlanner ? {} : undefined);
   const [androidMenu, setAndroidMenu] = useState(false);
   const openAutonomy = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('TripSensors')
     ? () => { setAndroidMenu(false); setAutonomous(true); } : undefined;
-  useEffect(() => { setAndroidGeoExperiment(autonomous); }, [autonomous]);
+  const openPlanner = androidDriving && openAutonomy ? (launch: PlannerLaunch = {}) => {
+    if (launch.rejectGps) changePositionMode(true);
+    const state = navStore.get();
+    const destination = launch.destination ?? (launch.rejectGps ? state.dest ?? undefined : undefined);
+    if (launch.destination) {
+      const positioning = positionMode.get();
+      const actual = positioning.manual ? positioning.point : trustedPlannerPosition();
+      plannedRoute.set({ from: actual ? { ...actual, name: 'Моё местоположение', address: '', id: 'position' } : null,
+        to: launch.destination, route: null });
+    }
+    setPlanner({ ...launch, destination, route: launch.rejectGps ? state.route ?? undefined : undefined });
+    setAndroidMenu(false);
+    closePage();
+    setAutonomous(true);
+  } : undefined;
+  useEffect(() => { setAndroidGeoExperiment(autonomous && !planner); }, [autonomous, planner]);
+  useEffect(() => {
+    try { localStorage.setItem('ace:planner-open', planner ? '1' : '0'); } catch { /* storage unavailable */ }
+  }, [planner]);
   const layout = useStore(layoutStore);
   const settings = useStore(settingsStore);
   const ui = useStore(driveUiStore);
@@ -121,8 +147,8 @@ export function App() {
         {/* Карта не размонтируется: маршрут и ведение продолжают работать в любом разделе. */}
         <div className="drive-map">
           {autonomous
-            ? <Suspense fallback={null}><AutonomousNavigation close={() => setAutonomous(false)} /></Suspense>
-            : <Navigation onAutonomy={openAutonomy} androidMenu={androidMenu} onAndroidMenu={() => { if (androidMenu) closePage(); setAndroidMenu(!androidMenu); }} />}
+            ? <Suspense fallback={null}><AutonomousNavigation launch={planner} close={() => { setAndroidGeoExperiment(false); setAutonomous(false); setPlanner(undefined); }} /></Suspense>
+            : <Navigation onAutonomy={openAutonomy} onPlanner={openPlanner} androidMenu={androidMenu} onAndroidMenu={() => { if (androidMenu) closePage(); setAndroidMenu(!androidMenu); }} />}
         </div>
         {!autonomous && (!androidDriving || androidMenu) && <Panel />}
         {!autonomous && layout.page && <PageSheet page={layout.page} />}

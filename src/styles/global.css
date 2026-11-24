@@ -1720,3 +1720,13 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
   background: var(--accent); box-shadow: 0 1px 5px var(--shadow); pointer-events: none;
 }
 .ml-user-location.is-last-known { background: var(--muted); }
+
+.route-planner { flex: 0 0 100%; min-width: 0; display: grid; gap: 0.65rem; }
+.route-planner-fields { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem; }
+.route-planner-field { display: grid; grid-column: 1; justify-items: start; min-width: 0; text-align: left; }
+.route-planner-field strong { overflow-wrap: anywhere; }
+.route-planner-swap { grid-column: 2; grid-row: 1 / 3; align-self: center; }
+.route-planner-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.4rem; }
+.route-planner-options, .route-planner-status { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.route-planner-summary { margin: 0; font-weight: 700; }
+.route-planner-result { display: grid; justify-items: start; text-align: left; }

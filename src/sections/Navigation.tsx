@@ -1,3 +1,7 @@
+import { placesStore } from '../lib/places';
+import { trustedPlannerPosition } from '../lib/nav';
+import { positionMode, type PlannerLaunch } from '../lib/routePlanner';
+import { changePositionMode } from '../lib/nav';
 import { mapLocationStore, MAP_LOCATION_STALE_MS } from '../lib/geo/mapLocation';
 import { usesAndroidNativePosition } from '../lib/geo/nativePosition';
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
@@ -104,8 +108,8 @@ function fitVisible(m: L.Map, b: L.LatLngBounds, ui: HTMLElement | null) {
   m.fitBounds(b, { paddingTopLeft: [40, padTop * k], paddingBottomRight: [padRight, padBottom * k], maxZoom: 16 });
 }
 
-export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
-  onAutonomy?: () => void; androidMenu?: boolean; onAndroidMenu?: () => void;
+export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }: {
+  onAutonomy?: () => void; onPlanner?: (launch?: PlannerLaunch) => void; androidMenu?: boolean; onAndroidMenu?: () => void;
 }) {
   const uiEl = useRef<HTMLDivElement>(null);
   const mapEl = useRef<HTMLDivElement>(null);
@@ -116,13 +120,17 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const pick = useStore(pickStore);
   const geo = useStore(geoStore);
   const ordinaryFix = useStore(mapLocationStore);
+  const positioning = useStore(positionMode);
   const offline = useStore(offlineStatus);
   const nav = useStore(navStore);
   const poi = useStore(poiStore);
   const navQuery = useStore(navQueryStore);
   const favorites = useStore(favoritesStore);
   const recents = useStore(recentsStore);
-  const saved = useStore(savedPlacesStore);
+  const legacySaved = useStore(savedPlacesStore);
+  const places = useStore(placesStore);
+  const saved = { home: places.find((p) => p.placeType === 'home') ?? legacySaved.home,
+    work: places.find((p) => p.placeType === 'work') ?? legacySaved.work };
   const theme = useStore(themeStore);
   const settings = useStore(settingsStore);
   const carColor = androidDriving ? 'white' : settings.carColor;
@@ -515,6 +523,10 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
       return;
     }
     const native = usesAndroidNativePosition();
+    if (positioning.manual && positioning.point && engine === 'maplibre') {
+      mlApi.current?.centerOn(positioning.point, 16);
+      return;
+    }
     if (native && !guiding && ordinaryFix && engine === 'maplibre') {
       mlApi.current?.centerOn(ordinaryFix, ordinaryFix.accuracy > 250 ? 14 : 16);
       return;
@@ -579,6 +591,7 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   }
 
   function selectPlace(p: Place) {
+    if (onPlanner && !guiding && !trustedPlannerPosition()) { onPlanner({ destination: p }); return; }
     setPanelOpen(false);
     setShowSteps(false);
     setShowLinks(false);
@@ -718,18 +731,18 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
                   {(saved.home || saved.work) && (
                     <div className="home-work">
                       {saved.home && (
-                        <button className="btn btn-lg btn-primary" onClick={() => selectPlace(saved.home!)}>
+                        <button className="btn btn-lg btn-primary" onClick={() => onPlanner ? onPlanner({ destination: saved.home! }) : selectPlace(saved.home!)}>
                           <Icon name="home" /> Домой
                         </button>
                       )}
                       {saved.work && (
-                        <button className="btn btn-lg" onClick={() => selectPlace(saved.work!)}>
+                        <button className="btn btn-lg" onClick={() => onPlanner ? onPlanner({ destination: saved.work! }) : selectPlace(saved.work!)}>
                           <Icon name="flag" /> На работу
                         </button>
                       )}
                     </div>
                   )}
-                  <MyPlacesSection onRoute={selectPlace} />
+                  <MyPlacesSection onRoute={(place) => onPlanner ? onPlanner({ destination: place }) : selectPlace(place)} />
                   <div className="poi-chips">
                     {(Object.keys(POI_CATEGORIES) as PoiCategory[]).map((c) => (
                       <button
@@ -768,13 +781,17 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
         {androidDriving && offline.local && (
           <div className="android-offline-tag" role="status">{offline.region ? `Офлайн · ${offline.region}` : 'Нет загруженной карты'}</div>
         )}
-        {browsingFix && !panelOpen && !androidMenu && <div className="android-position-tag" role="status">
+        {positioning.manual && !panelOpen && !androidMenu && <div className="android-position-tag" role="status">
+          {positioning.point ? `Последняя ручная позиция · ${new Date(positioning.point.at).toLocaleString('ru')}` : 'GPS отключён · укажите местоположение'}
+        </div>}
+        {browsingFix && !positioning.manual && !panelOpen && !androidMenu && <div className="android-position-tag" role="status">
           {cueClock - browsingFix.at > MAP_LOCATION_STALE_MS ? 'Последняя известная позиция' : 'Приблизительная позиция'} · ±{Math.round(browsingFix.accuracy)} м
         </div>}
-        {androidDriving && !browsingFix && (guiding && (!trustedGeo || nav.notice) || !guiding && located && !panelOpen && !androidMenu &&
+        {androidDriving && !positioning.manual && !browsingFix && (guiding && (!trustedGeo || nav.notice) || !guiding && located && !panelOpen && !androidMenu &&
           geo.nativeTrust != null && geo.nativeTrust !== 'confirmed') && <div className="android-position-tag" role="status">
           {guiding && nav.notice ? nav.notice : geo.nativeTrust === 'network' ? `Приблизительная сетевая позиция · ±${Math.round(geo.accuracy ?? 0)} м` : geo.nativeTrust === 'estimated' ? 'Положение оценено по датчикам' : 'Положение не подтверждено'}
-          {onAutonomy && !panelHidden && <button className="btn" onClick={() => {
+          {onPlanner && !panelHidden && <button className="btn" onClick={() => onPlanner({ rejectGps: true })}>Старт вручную</button>}
+          {!onPlanner && onAutonomy && !panelHidden && <button className="btn" onClick={() => {
             const active = navStore.get();
             if (active.route && active.dest && active.route.coords.length <= 20_000) {
               try { localStorage.setItem('ace:offline-autonomy-route', JSON.stringify({ route: active.route, destination: active.dest, at: Date.now() })); }
@@ -784,21 +801,26 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
             onAutonomy();
           }}>Старт вручную</button>}
         </div>}
-        {androidDriving && !located && !guiding && !nav.dest && !pick && !panelOpen && !androidMenu && (
+        {androidDriving && !positioning.manual && !located && !guiding && !nav.dest && !pick && !panelOpen && !androidMenu && (
           <div className="android-position-tag" role="status">
             <span>{geo.status === 'denied' ? 'Геопозиция недоступна. Проверьте разрешение в настройках Android' : 'Ищем местоположение…'}</span>
-            {onAutonomy && <button className="btn" onClick={onAutonomy}>Старт вручную</button>}
+            {(onPlanner || onAutonomy) && <button className="btn" onClick={() => onPlanner ? onPlanner({ rejectGps: true }) : onAutonomy?.()}>Старт вручную</button>}
           </div>
         )}
         {androidDriving && androidMenu && (
           <div className="android-drive-menu card-float" role="group" aria-label="Дополнительные настройки">
             <button className="btn" onClick={() => openSection('settings')}>Настройки навигации и HUD</button>
             <button className="btn" onClick={() => openSection('diagnostics')}>Диагностика</button>
-            {!guiding && onAutonomy && <button className="btn" onClick={onAutonomy}>GPS показывает неверное местоположение</button>}
+            {onPlanner && <button className="btn" onClick={() => onPlanner()}>Построить маршрут</button>}
+            {onPlanner && !guiding && onAutonomy && <button className="btn" onClick={onAutonomy}>Экспериментальная поездка</button>}
+            {onPlanner && <button className="btn" onClick={() => onPlanner({ rejectGps: true })}>GPS показывает неверное местоположение</button>}
+            {positioning.manual && <button className="btn" onClick={() => changePositionMode(false)}>Включить автоматическое местоположение</button>}
+            {!onPlanner && !guiding && onAutonomy && <button className="btn" onClick={onAutonomy}>GPS показывает неверное местоположение</button>}
             {geoStatus && <div>{geoStatus.text}</div>}
           </div>
         )}
         <div className={`map-controls ${androidDriving ? 'android-map-controls' : ''}`}>
+          {onPlanner && !guiding && <button className="map-ctl" aria-label="Планирование маршрута" onClick={() => onPlanner()}><Icon name="map" /></button>}
           {androidDriving && <button className="map-ctl android-menu-button" onClick={onAndroidMenu} aria-label="Дополнительные настройки" aria-expanded={androidMenu}><Icon name="more" size="1.55rem" /></button>}
           {(!androidDriving || guiding) && <VoiceToggle className="map-ctl voice-ctl" />}
           {guiding && <HudButton className="map-ctl voice-ctl" />}

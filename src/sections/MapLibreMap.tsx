@@ -1,3 +1,4 @@
+import { positionMode } from '../lib/routePlanner';
 import { mapLocationStore, MAP_LOCATION_STALE_MS } from '../lib/geo/mapLocation';
 import { usesAndroidNativePosition } from '../lib/geo/nativePosition';
 import { recordLocationMarker, recordMapVisibility } from '../lib/geo/locationDiagnostics';
@@ -110,8 +111,9 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         await initializeOfflineMaps().catch(() => {});
         if (disposed || !el.current) return;
       }
-      const last = readLastPos();
-      const area = androidDriving && !navigator.onLine ? (last ? regionAt(last) : undefined) ?? offlineRegions.get()[0] : undefined;
+      const manual = positionMode.get();
+      const last = p.autonomous && manual.manual ? manual.point : readLastPos();
+      const area = androidDriving && (!navigator.onLine || manual.manual) ? (last ? regionAt(last) : undefined) ?? offlineRegions.get()[0] : undefined;
       const cachedViewport = last && (!area || regionAt(last)) ? last : undefined;
       const start = cachedViewport ?? area?.center ?? (androidDriving ? ANDROID_OVERVIEW : DEFAULT_CENTER);
       const styleUrl = DEFAULT_STYLE_URL;
@@ -145,7 +147,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         // Нет WebGL или он отключён/исчерпан (на iOS — слишком много контекстов).
         return fail('WebGL недоступен');
       }
-      const ordinaryMap = () => androidDriving && !p.autonomous && usesAndroidNativePosition() && !guiding.current;
+      const ordinaryMap = () => androidDriving && !p.autonomous && usesAndroidNativePosition() && (!guiding.current || positionMode.get().manual);
       const dotEl = document.createElement('div');
       dotEl.className = 'ml-user-location';
       dotEl.setAttribute('aria-label', 'Местоположение на карте');
@@ -154,7 +156,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       let centered = false;
       let centeredFresh = false;
       drawMapPosition.current = () => {
-        const position = ordinaryMap() ? mapLocationStore.get() : null;
+        const manual = positionMode.get();
+        const position = ordinaryMap() ? manual.manual ? manual.point : mapLocationStore.get() : null;
         if (!position) {
           if (dotAdded) dot.remove();
           dotAdded = false;
@@ -171,12 +174,12 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (follow.current && (!centered || !stale && !centeredFresh) && !navStore.get().dest) {
           centered = true;
           centeredFresh ||= !stale;
-          const zoom = Math.max(map.getZoom(), position.accuracy > 250 ? 14 : 16);
+          const zoom = Math.max(map.getZoom(), ('accuracy' in position && Number(position.accuracy) > 250) ? 14 : 16);
           map.jumpTo({ center: [position.lon, position.lat], zoom });
         }
         drawAcc();
       };
-      cleanups.push(() => dot.remove(), mapLocationStore.subscribe(() => drawMapPosition.current()));
+      cleanups.push(() => dot.remove(), mapLocationStore.subscribe(() => drawMapPosition.current()), positionMode.subscribe(() => drawMapPosition.current()));
       /* Диагностика жизненного цикла: создание/удаление, смена и загрузка стиля, ошибки, потеря WebGL, кадры. */
       mapDiag.create();
       if (androidDriving && !p.autonomous) recordLocationMarker('waiting-for-display-position');
@@ -203,7 +206,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             following: follow.current && touching === 0 && !hudUiStore.get().active, motion: androidDriving ? motionPeaks : undefined });
         }
         if (androidDriving && !p.autonomous) {
-          const point = ordinaryMap() ? mapLocationStore.get() : carNow;
+          const point = ordinaryMap() ? positionMode.get().manual ? positionMode.get().point : mapLocationStore.get() : carNow;
           const origin = canvas.getBoundingClientRect();
           const projected = point && map.project([point.lon, point.lat]);
           const x = projected ? origin.left + projected.x : -1;
@@ -214,7 +217,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           const covered = inViewport && (hudUiStore.get().active || !map.getContainer().contains(top));
           const drawable = ordinaryMap() ? dotAdded : !!car3d.renderedBounds || carEl.isConnected;
           const visible = inViewport && !covered && drawable && getComputedStyle(map.getContainer()).visibility !== 'hidden';
-          const at = ordinaryMap() ? mapLocationStore.get()?.at : geoStore.get().fixAt;
+          const at = ordinaryMap() ? point && 'at' in point ? Number(point.at) : null : geoStore.get().fixAt;
           recordMapVisibility({ visible, inViewport, covered, ageMs: at == null ? null : Date.now() - at,
             ...cameraSnapshot().applied, following: follow.current, guiding: guiding.current });
           recordLocationMarker(!point ? 'waiting-for-display-position' : covered ? 'marker-covered' : !inViewport ? 'marker-outside-viewport'
@@ -235,7 +238,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       });
       // Стиль карты не загрузился (нет связи с сервером карты и нет кеша) — резервная карта.
       let styleLoaded = false;
-      let local = androidDriving && !navigator.onLine;
+      let local = androidDriving && (!navigator.onLine || manual.manual && !!area);
       let selectedSource: unknown;
       let selectedPalette: MapPalette | undefined;
       const setBase = () => {
@@ -793,7 +796,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           const box2 = map.getContainer().getBoundingClientRect();
           const r = (sel: string) => ui?.querySelector<HTMLElement>(sel)?.getBoundingClientRect();
           const top = r('.map-top');
-          const cards = r('.map-cards') ?? r('.guide-wrap');
+          const cards = ui?.matches('.autonomy-panel') ? ui.getBoundingClientRect() : r('.map-cards') ?? r('.guide-wrap');
           const ctl = r('.map-controls');
           const pad = {
             top: top && top.height ? Math.max(40, top.bottom - box2.top + 16) : 40,
@@ -843,6 +846,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         },
       };
       p.apiRef.current = api;
+      if (p.autonomous && !guiding.current) {
+        const preview = autonomyMap.get().route;
+        if (preview) api.fitPoints(preview.coords, p.uiEl.current);
+      }
       const resizeMap = () => {
         if (androidDriving && hudUiStore.get().active) return;
         map.resize();
@@ -860,7 +867,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         frameClock: { set: ml.setNow, restore: ml.restoreNow },
         state: () => {
           const r = map.getContainer().getBoundingClientRect();
-          const visiblePoint = ordinaryMap() ? mapLocationStore.get() : carNow;
+          const visiblePoint = ordinaryMap() ? positionMode.get().manual ? positionMode.get().point : mapLocationStore.get() : carNow;
           const c = visiblePoint ? map.project([visiblePoint.lon, visiblePoint.lat]) : null;
           return {
             motion: androidDriving ? motionDiag : undefined,

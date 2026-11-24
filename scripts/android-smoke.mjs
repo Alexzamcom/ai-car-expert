@@ -162,7 +162,7 @@ try {
   if (process.env.EXPECT_AUTONOMY === '1') {
     assert(await page.evaluate(() => window.Capacitor.isPluginAvailable('TripSensors')));
     const button = (name) => page.getByRole('button', { name, exact: true });
-    const open = 'GPS показывает неверное местоположение';
+    const open = modern ? 'Экспериментальная поездка' : 'GPS показывает неверное местоположение';
     if (modern) await click(page.locator('.android-menu-button'));
     await click(button(open));
     await page.waitForFunction(() => window.__aceMap?.state()?.styleReady && document.querySelector('.autonomy-crosshair'));
