@@ -34,18 +34,27 @@ for (const city of settlements) {
     if (!candidates.length) throw new Error('No mapped house numbers in the region');
     const begin = performance.now();
     let pair, route;
-    for (const from of candidates.slice(0, 12)) {
-      for (const to of candidates.filter((entry) => distance(entry, from) > .006 && distance(entry, from) < .025).slice(0, 15)) {
+    const errors = new Map();
+    // The centre can be a pedestrian plaza or an address tagged deep inside a building.
+    // Distribute the sample across streets and neighbourhoods, with the phone's snap radius.
+    const local = candidates.filter((entry) => distance(entry, city) < .055);
+    const sample = local.filter((_, index) => index % Math.max(1, Math.floor(local.length / 64)) === 0).slice(0, 64);
+    for (const from of sample) {
+      const destinations = sample.filter((entry) => distance(entry, from) > .002 && distance(entry, from) < .035);
+      for (const to of destinations.slice(0, 12)) {
         try {
           route = engine.route({ costing: 'auto', locations: [from, to].map(({ lat, lon }) => ({ lat, lon, radius: 75, search_cutoff: 150 })) });
           if (route.trip.summary.length > .2) { pair = [from.name, to.name]; break; }
         } catch (error) {
           if (error?.name !== 'ValhallaError') throw error;
+          errors.set(error.code, (errors.get(error.code) ?? 0) + 1);
         }
       }
       if (pair) break;
     }
-    if (!pair || !route.trip.legs.some((leg) => leg.maneuvers.length >= 2)) throw new Error('No useful route between mapped addresses');
+    if (!pair || !route.trip.legs.some((leg) => leg.maneuvers.length >= 2)) {
+      throw new Error(`No useful route in ${city.name} among ${sample.length} sampled addresses: ${JSON.stringify([...errors])}`);
+    }
     console.log(JSON.stringify({ city: city.name, radiusKm: manifest.radiusKm, addresses: addressIndex.length, vectorCount,
       packageBytes: manifest.chunks.reduce((sum, chunk) => sum + chunk.bytes, 0), graphBytes: tiles.bytes,
       pair, routeKm: route.trip.summary.length, computeMs: Math.round(performance.now() - begin),

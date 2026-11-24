@@ -72,14 +72,14 @@ jobs:
           python server/offline-maps/build.py --source "$input/ukraine.osm.pbf" --glyphs "$input/glyphs" \
             --date "$(cat "$input/data-date")" --out "$RUNNER_TEMP/ace-data" --radii 25
           du -sh "$RUNNER_TEMP"/ace-data/regions/*/*
-      - name: Verify actual addresses and offline car routes
-        run: node server/offline-maps/check.mjs "$RUNNER_TEMP/ace-data"
       - name: Upload test data
         uses: actions/upload-artifact@v4
         with:
           name: real-offline-maps
           path: ${{ runner.temp }}/ace-data
           retention-days: 14
+      - name: Verify actual addresses and offline car routes
+        run: node server/offline-maps/check.mjs "$RUNNER_TEMP/ace-data"
       - name: Publish licensed data to the data-only branch
         run: |
           data="$RUNNER_TEMP/ace-data"
