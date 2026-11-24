@@ -1,0 +1,41 @@
+{
+  "settlements": [
+    {
+      "name": "Павлоград",
+      "aliases": [
+        "Pavlohrad",
+        "Pavlograd"
+      ],
+      "local": "Павлоград",
+      "lat": 48.5316759,
+      "lon": 35.8703695,
+      "region": "Дніпропетровська область",
+      "country": "Україна",
+      "countryCode": "UA",
+      "id": "osm-N-265059962",
+      "address": "Дніпропетровська область · Україна",
+      "packages": {
+        "25": "regions/osm-N-265059962/25/manifest.json"
+      }
+    },
+    {
+      "name": "Дніпро",
+      "aliases": [
+        "Днепр",
+        "Dnipro",
+        "Dnepr"
+      ],
+      "local": "Дніпро",
+      "lat": 48.4680221,
+      "lon": 35.0417711,
+      "region": "Дніпропетровська область",
+      "country": "Україна",
+      "countryCode": "UA",
+      "id": "osm-N-337597818",
+      "address": "Дніпропетровська область · Україна",
+      "packages": {
+        "25": "regions/osm-N-337597818/25/manifest.json"
+      }
+    }
+  ]
+}
