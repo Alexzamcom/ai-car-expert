@@ -31,15 +31,40 @@ jobs:
           sudo apt-get install -y osmium-tool
           pip install osmium==4.3.0
           npm ci
-      - name: Download licensed OSM data and glyphs
+      - name: Choose extract cache key
+        id: extract
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: pbf-cache
+        with:
+          path: ${{ runner.temp }}/ace-input/ukraine.osm.pbf
+          key: geofabrik-ua-${{ steps.extract.outputs.date }}
+      - name: Download the Ukraine extract
+        if: steps.pbf-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/ace-input"
+          cd "$RUNNER_TEMP/ace-input"
+          for host in download.geofabrik.de download-ext2.geofabrik.de; do
+            if curl -4 -fsSL --retry 4 --retry-all-errors --connect-timeout 12 --max-time 720               -o ukraine.download "https://$host/europe/ukraine-latest.osm.pbf" &&
+              osmium fileinfo -F pbf ukraine.download >/dev/null; then
+              mv ukraine.download ukraine.osm.pbf
+              break
+            fi
+          done
+          test -s ukraine.osm.pbf
+      - uses: actions/cache/save@v4
+        if: steps.pbf-cache.outputs.cache-hit != 'true'
+        with:
+          path: ${{ runner.temp }}/ace-input/ukraine.osm.pbf
+          key: geofabrik-ua-${{ steps.extract.outputs.date }}
+      - name: Download licensed glyphs and read map date
         run: |
           mkdir -p "$RUNNER_TEMP/ace-input/glyphs"
           cd "$RUNNER_TEMP/ace-input"
-          curl -fL --retry 3 -o ukraine.osm.pbf https://download.geofabrik.de/europe/ukraine-latest.osm.pbf
           for range in 0-255 256-511 1024-1279 8192-8447; do
             curl -fL --retry 2 -o "glyphs/$range.pbf" "https://raw.githubusercontent.com/protomaps/basemaps-assets/028c18f713baecad011301ff7a69acc39bcc2ae7/fonts/Noto%20Sans%20Regular/$range.pbf"
           done
-          date=$(osmium fileinfo -g header.option.osmosis_replication_timestamp ukraine.osm.pbf)
+          date=$(osmium fileinfo -g header.option.osmosis_replication_timestamp ukraine.osm.pbf || true)
           printf '%s\n' "${date:-$(date -u +%FT%TZ)}" > data-date
       - name: Build Pavlohrad and Dnipro (25 km)
         run: |
