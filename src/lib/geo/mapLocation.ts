@@ -28,7 +28,7 @@ export function selectMapLocation(previous: MapLocation | null, fix: PositionObs
     const elapsed = at - previous.at;
     if (elapsed <= 0) return previous;
     if (now - previous.at < MAP_LOCATION_STALE_MS && accuracy > previous.accuracy * 1.8 + 20) return previous;
-    if (elapsed < 60_000 && haversine(previous, fix) > Math.max(150, 65 * elapsed / 1000 + previous.accuracy + accuracy)) return previous;
+    if (elapsed < 60_000 && haversine(previous, fix) > Math.max(150, 65 * elapsed / 1000 + 2 * previous.accuracy + accuracy)) return previous;
   }
   return { lat, lon, accuracy, at, source };
 }

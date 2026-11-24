@@ -220,7 +220,11 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           recordLocationMarker(!point ? 'waiting-for-display-position' : covered ? 'marker-covered' : !inViewport ? 'marker-outside-viewport'
             : ordinaryMap() ? drawable ? 'ordinary-marker-visible' : 'ordinary-marker-awaits-render'
             : car3d.renderedBounds ? '3d-marker-rendered' : carEl.isConnected ? 'flat-marker-on-map' : '3d-marker-awaits-render');
-          if (ordinaryMap() && dotAdded) dotEl.classList.toggle('is-last-known', at == null || Date.now() - at > MAP_LOCATION_STALE_MS);
+          if (ordinaryMap() && dotAdded && at != null) {
+            const stale = Date.now() - at > MAP_LOCATION_STALE_MS;
+            dotEl.classList.toggle('is-last-known', stale);
+            dotEl.setAttribute('aria-label', stale ? 'Последняя известная позиция' : 'Приблизительное местоположение');
+          }
         }
         motionPeaks = { modelM: 0, modelDeg: 0, centerM: 0, cameraDeg: 0 };
       }, 1000);
