@@ -62,7 +62,7 @@ try {
   const page = await ctx.newPage();
   page.setDefaultTimeout(45_000);
   await page.goto(url, { waitUntil: 'domcontentloaded' });
-  const wait = (fn, arg) => page.waitForFunction(fn, arg, { polling: 150 });
+  const wait = (fn, arg) => page.waitForFunction(fn, arg, { polling: 150, timeout: 30_000 });
   const click = (button) => page.getByRole('button', { name: button, exact: true }).evaluate((el) => el.click());
   const fix = async (metres) => {
     const position = along(metres);

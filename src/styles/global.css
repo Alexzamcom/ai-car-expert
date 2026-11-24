@@ -1705,7 +1705,7 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
   height: var(--android-viewport-height, 100%);
   z-index: 8000; background: var(--bg);
 }
-.place-map-picker-map { position: absolute; inset: 0; }
+.place-map-picker > .place-map-picker-map { position: absolute; inset: 0; width: 100%; height: 100%; }
 .place-map-picker-pin {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   display: grid; place-items: center; width: 54px; height: 54px; pointer-events: none;

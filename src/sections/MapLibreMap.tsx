@@ -133,6 +133,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           // Авторы данных (OpenMapTiles, участники OpenStreetMap) указаны в самом стиле OpenFreeMap.
           attributionControl: { compact: true },
           maxPitch: 70,
+          trackResize: !androidDriving,
           fadeDuration: 150,
           canvasContextAttributes: { antialias: true },
         });
@@ -756,15 +757,14 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         },
       };
       p.apiRef.current = api;
-      const ro = new ResizeObserver(() => {
+      const resizeMap = () => {
+        if (androidDriving && hudUiStore.get().active) return;
         map.resize();
         if (isGame() && guiding.current) camera.current(true);
-      });
+      };
+      const ro = new ResizeObserver(resizeMap);
       ro.observe(el.current);
-      if (androidDriving) cleanups.push(watchAndroidViewport(() => {
-        map.resize();
-        camera.current(true);
-      }));
+      if (androidDriving) cleanups.push(watchAndroidViewport(resizeMap));
       cleanups.push(() => ro.disconnect());
 
       // Для автоматических проверок.
