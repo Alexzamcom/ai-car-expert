@@ -945,7 +945,9 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         headingTarget = g.heading;
         headingShown = g.heading ?? 0;
         if (androidDriving) animation.receive({ lat: g.lat, lon: g.lon, heading: g.heading, speedMps: null, reliable: true }, performance.now());
-        if (!ordinaryMap()) map.jumpTo({ center: [g.lon, g.lat] });
+        if (!ordinaryMap() && (!p.autonomous || guiding.current || !autonomyMap.get().route)) {
+          map.jumpTo({ center: [g.lon, g.lat] });
+        }
         camera.current(true);
       }
       drawMapPosition.current();

@@ -173,6 +173,10 @@ try {
   assert.match(await field('Откуда').innerText(), /Дом/);
   await click('Начать поездку');
   await button('Подтвердить фактическую позицию').waitFor();
+  await page.waitForFunction(() => {
+    const { map } = window.__aceMap;
+    return !map.isMoving() && map.areTilesLoaded();
+  });
   await screenshot('03-confirm-position.png');
   await click('Подтвердить фактическую позицию');
   await button('HUD').waitFor();
