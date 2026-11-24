@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { cameraFixtureStyle } from './game-camera-visual.mjs';
 const { chromium, devices } = createRequire(import.meta.url)('playwright');
 const [url = 'http://localhost:4173/', out = 'android-ux-visuals'] = process.argv.slice(2);
+const cameraVideo = process.env.ACE_CAMERA_VIDEO === '1';
 const roadTest = process.env.ACE_ROAD_TEST === '1';
 const gameHud = process.env.ACE_GAME_HUD === '1';
 const record = process.env.ACE_HUD_VIDEO === '1';
@@ -189,6 +190,21 @@ try {
     return s.styleReady && s.gameLayers.includes('game-buildings') && s.camera.lift >= 0.55 && s.pitch < 59;
   });
   await page.screenshot({ path: `${out}/03-approaching-turn.png` });
+  if (cameraVideo) {
+    for (const d of [1605, 1620, 1635, 1650, 1665, 1690, 1730]) {
+      await fix(d);
+      await page.waitForTimeout(250);
+    }
+    await wait(() => {
+      const { pitch, camera } = window.__aceMap.state();
+      return camera.following && camera.target?.pitch >= 67 && pitch > 64;
+    });
+    await page.screenshot({ path: `${out}/07-camera-return.png` });
+    const video = page.video();
+    await ctx.close();
+    await video.saveAs(`${out}/road-test-camera.webm`);
+  }
+  if (!cameraVideo) {
   await page.locator('.android-map-controls .hud-btn').evaluate((el) => el.click());
   const warning = page.getByRole('button', { name: /Понятно/ });
   if (await warning.count()) await warning.evaluate((el) => el.click());
@@ -249,7 +265,7 @@ try {
     for (const d of [1605, 1620, 1635, 1650, 1665, 1690, 1730]) await fix(d);
     await wait(() => {
       const { pitch, camera } = window.__aceMap.state();
-      return camera.following && camera.lift < 0.13 && pitch > 64;
+      return camera.following && camera.target?.pitch >= 67 && pitch > 64;
     });
     await page.screenshot({ path: `${out}/07-camera-return.png` });
     await page.mouse.move(195, 480);
@@ -275,10 +291,7 @@ try {
   await page.locator('.ml-map canvas').dispatchEvent('pointerdown');
   await page.getByRole('button', { name: 'Завершить маршрут' }).waitFor();
   console.log('✓ Старт без GPS, поиск, маршрут, камера, приближение, HUD, потеря GPS и скрытие управления');
-  if (roadTest && record) {
-    const video = page.video();
-    await ctx.close();
-    await video.saveAs(`${out}/road-test-camera.webm`);
+
   }
   }
 } finally {

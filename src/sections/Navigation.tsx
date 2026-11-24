@@ -508,11 +508,15 @@ export function Navigation({ onAutonomy, androidMenu, onAndroidMenu }: {
   const recenter = () => {
     setOverview(false);
     setFollow(true);
+    if (androidDriving && guiding && mlApi.current?.resumeFollow && (disp.lat != null || geo.lat != null)) {
+      mlApi.current.resumeFollow();
+      return;
+    }
     const native = usesAndroidNativePosition();
     if (!native) startGeo();
     else void locateOnAndroid().then((message) => {
       const fix = geoStore.get();
-      if (fix.nativeTrust === 'network' && fix.lat != null && fix.lon != null) {
+      if (!guiding && fix.nativeTrust === 'network' && fix.lat != null && fix.lon != null) {
         mlApi.current?.centerOn({ lat: fix.lat, lon: fix.lon }, 15);
       }
       toast(message);

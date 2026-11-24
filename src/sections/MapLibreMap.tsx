@@ -431,7 +431,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const frame = (now: number) => {
         const androidPose = androidDriving ? animation.frame(now) : null;
         const pos = androidDriving ? androidPose : carPos(now);
-        const dt = Math.min(100, Math.max(0, now - (cameraTime || now)));
+        const dt = Math.min(350, Math.max(0, now - (cameraTime || now)));
         cameraTime = now;
         // Пока открыт HUD, основная карта скрыта — не тратим на неё кадры.
         if (pos && !hudUiStore.get().active) {
@@ -455,7 +455,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
               const height = lift.update(followTarget.lift, dt / 1000);
               const followPose = androidChasePose(followTarget.speed, height, followTarget.landscape, map.getMaxPitch());
               const blend = 1 - Math.exp(-dt / 290);
-              const pitch = map.getPitch() + (followPose.pitch - map.getPitch()) * blend;
+              const pitchStep = (followPose.pitch - map.getPitch()) * blend;
+              const pitch = map.getPitch() + Math.max(-3, Math.min(3, pitchStep));
               const zoom = map.getZoom() + (followPose.zoom - map.getZoom()) * blend;
               const yawStep = headingDelta(next.heading, yaw);
               const bearing = yaw + yawStep * blend;

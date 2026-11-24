@@ -54,7 +54,10 @@ jobs:
           if-no-files-found: error
       - name: Android — камера, ориентация и полноэкранный выбор места
         if: github.head_ref == 'codex/android-road-test'
-        run: ACE_ROAD_TEST=1 ACE_HUD_VIDEO=1 node scripts/android-ux-check.mjs http://localhost:4173/ road-test-visuals
+        run: ACE_ROAD_TEST=1 node scripts/android-ux-check.mjs http://localhost:4173/ road-test-visuals
+      - name: Запись подъёма и возврата камеры
+        if: github.head_ref == 'codex/android-road-test'
+        run: ACE_CAMERA_VIDEO=1 ACE_HUD_VIDEO=1 node scripts/android-ux-check.mjs http://localhost:4173/ road-test-visuals
       - uses: actions/upload-artifact@v4
         if: always() && github.head_ref == 'codex/android-road-test'
         with:
