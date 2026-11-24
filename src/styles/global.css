@@ -1709,10 +1709,10 @@ input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 36p
 .place-map-picker-pin {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   display: grid; place-items: center; width: 54px; height: 54px; pointer-events: none;
-  border-radius: 50%; background: var(--panel); color: var(--accent); box-shadow: 0 2px 12px #0005;
+  border-radius: 50%; background: var(--panel); color: var(--accent); box-shadow: 0 2px 12px var(--shadow);
 }
 .place-map-picker-actions {
   position: absolute; bottom: max(20px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
   width: max-content; max-width: calc(100% - 24px); display: flex; gap: 10px; align-items: center;
-  padding: 8px; border-radius: 16px; background: var(--panel); box-shadow: 0 2px 16px #0004;
+  padding: 8px; border-radius: 16px; background: var(--panel); box-shadow: 0 2px 16px var(--shadow);
 }

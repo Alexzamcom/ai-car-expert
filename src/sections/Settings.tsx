@@ -1031,7 +1031,7 @@ function GpsDiagnostics() {
       ['Разрешения Android', system ? `FINE ${system.fine ? 'да' : 'нет'} · COARSE ${system.coarse ? 'да' : 'нет'}` : '—'],
       ['Запрос координат', ago(system?.requestStartedAt ?? null)],
       ['Первое измерение', system?.firstMeasurementAt && system.requestStartedAt
-        ? `${system.firstMeasurementAt - system.requestStartedAt} мс после запроса` : '—'],
+        ? `${system.firstMeasurementAt - system.requestStartedAt} мс · ${system.firstSource ?? '—'} · ${(system.firstAccuracy ?? 0) > 0 ? '±' + Math.round(system.firstAccuracy!) + ' м' : 'точность неизвестна'}` : '—'],
       ['Google Play Services', system ? system.playServices === 0 ? 'доступны' : `недоступны (код ${system.playServices})` : '—'],
       ['Поставщики Android', system ? `Fused: ${system.fusedStatus} · GPS ${system.gpsEnabled ? 'вкл.' : 'выкл.'} · Network ${system.networkEnabled ? 'вкл.' : 'выкл.'}` : '—'],
     ] as [string, string][] : []),

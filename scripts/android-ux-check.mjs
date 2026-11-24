@@ -95,12 +95,20 @@ try {
       assert.equal(await page.locator('.place-editor').count(), 0);
       assert(await page.locator('.app').evaluate((root) => root.inert));
       const confirm = picker.getByRole('button', { name: 'Подтвердить' });
-      await wait(() => !document.querySelector('.place-map-picker .btn-primary')?.disabled);
+      await wait(() => document.querySelector('.place-map-picker .btn-primary')?.disabled === false);
       await page.mouse.move(200, 330);
       await page.mouse.down();
       await page.mouse.move(240, 356, { steps: 8 });
       await page.mouse.up();
-      if (type === 'Дом') await page.screenshot({ path: `${out}/06-place-picker.png` });
+      if (type === 'Дом') {
+        await page.waitForTimeout(500);
+        await page.screenshot({ path: `${out}/06-place-picker.png` });
+        await page.setViewportSize({ width: 798, height: 412 });
+        await wait(() => document.querySelector('.place-map-picker canvas')?.clientHeight === 412);
+        await page.screenshot({ path: `${out}/06-place-picker-landscape.png` });
+        await page.setViewportSize({ width: 412, height: 798 });
+        await wait(() => document.querySelector('.place-map-picker canvas')?.clientHeight === 798);
+      }
       await confirm.click();
       saved.push(label);
       await page.getByRole('button', { name: `Маршрут: ${label}` }).waitFor();

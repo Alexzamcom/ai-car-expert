@@ -52,6 +52,8 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     private boolean requested;
     private long requestStartedAt;
     private long firstMeasurementAt;
+    private String firstSource;
+    private double firstAccuracy;
     private boolean oriented;
     private boolean earthFrame;
     private long lastMotion;
@@ -94,7 +96,7 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
                 return;
             }
             requested = true;
-            if (active) probe();
+            if (active) probe(true);
             else activate();
             call.resolve(status());
         });
@@ -120,7 +122,7 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
                 fusedStatus = "updates-failed";
             }
         }
-        probe();
+        probe(true);
         sensors = (SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
         Sensor attitude = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
         if (attitude == null) attitude = sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
@@ -155,7 +157,11 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         state.put("playServices", playServices());
         state.put("fusedStatus", fusedStatus);
         if (requestStartedAt > 0) state.put("requestStartedAt", requestStartedAt);
-        if (firstMeasurementAt > 0) state.put("firstMeasurementAt", firstMeasurementAt);
+        if (firstMeasurementAt > 0) {
+            state.put("firstMeasurementAt", firstMeasurementAt);
+            state.put("firstSource", firstSource);
+            state.put("firstAccuracy", firstAccuracy);
+        }
         state.put("gpsEnabled", enabled(LocationManager.GPS_PROVIDER));
         state.put("networkEnabled", enabled(LocationManager.NETWORK_PROVIDER));
         return state;
@@ -166,7 +172,7 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
     @PluginMethod
     public void refresh(PluginCall call) {
         getActivity().runOnUiThread(() -> {
-            if (active) probe();
+            if (active) probe(false);
             call.resolve(status());
         });
     }
@@ -205,9 +211,9 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         } catch (SecurityException ignored) {}
     }
 
-    private void probe() {
+    private void probe(boolean force) {
         long now = System.currentTimeMillis();
-        if (active && now - requestStartedAt < 2000) return;
+        if (!force && now - requestStartedAt < 2000) return;
         requestStartedAt = now;
         firstMeasurementAt = 0;
         report();
@@ -303,6 +309,8 @@ public class NativePosition extends Plugin implements LocationListener, SensorEv
         if (android.os.Build.VERSION.SDK_INT >= 26 && fix.hasSpeedAccuracy()) data.put("speedAccuracy", fix.getSpeedAccuracyMetersPerSecond());
         if (firstMeasurementAt == 0 && requestStartedAt > 0) {
             firstMeasurementAt = System.currentTimeMillis();
+            firstSource = provider;
+            firstAccuracy = fix.hasAccuracy() ? fix.getAccuracy() : -1;
             report();
         }
         notifyListeners("position", data);

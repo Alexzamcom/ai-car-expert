@@ -34,8 +34,10 @@ export function PlaceMapPicker({ start, cancel, confirm }: { start: LatLon | nul
       });
       view.touchZoomRotate.disableRotation();
       map.current = view;
+      let ready = false;
       const settled = () => {
-        setSelectable(view.getZoom() >= 12);
+        setSelectable(ready && view.getZoom() >= 12);
+
         const { lat, lng } = view.getCenter();
         const nextStyle = styleAt({ lat, lon: lng });
         if (style !== nextStyle) {
@@ -44,7 +46,7 @@ export function PlaceMapPicker({ start, cancel, confirm }: { start: LatLon | nul
         }
       };
       view.on('moveend', settled);
-      view.once('load', settled);
+      view.once('load', () => { ready = true; settled(); });
       const resize = () => view.resize();
       const observer = new ResizeObserver(resize);
       observer.observe(element.current);
