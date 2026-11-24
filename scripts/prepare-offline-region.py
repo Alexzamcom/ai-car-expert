@@ -46,7 +46,9 @@ def assemble(args, output):
     with sqlite3.connect(f"{args.mbtiles.resolve().as_uri()}?mode=ro", uri=True) as database:
         for zoom, x, y, tile in database.execute("SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"):
             xyz_y = (1 << zoom) - 1 - y
-            write(output / "t" / str(zoom) / str(x) / str(xyz_y), gzip.decompress(tile) if tile.startswith(b"\x1f\x8b") else tile)
+            tile_data = gzip.decompress(tile) if tile.startswith(b"\x1f\x8b") else tile
+            if tile_data:
+                write(output / "t" / str(zoom) / str(x) / str(xyz_y), tile_data)
     for glyph in sorted(args.glyphs.glob("*.pbf")):
         write(output / "g" / glyph.stem, glyph.read_bytes())
     addresses = list(extract_addresses(args.osm, args.bounds))
@@ -61,7 +63,11 @@ def assemble(args, output):
     if len(assets) > 75000 or sum(asset["bytes"] for asset in graph) > 160_000_000 or (
         sum(asset["bytes"] for asset in assets) > 450_000_000 or any(not 0 < a["bytes"] <= 36_000_000 for a in assets)
     ):
-        raise ValueError("Package is above the Android size budget")
+        raise ValueError(
+            f"Package is above the Android size budget: {len(assets)} assets, "
+            f"{sum(a['bytes'] for a in graph)} graph bytes, {sum(a['bytes'] for a in assets)} total bytes, "
+            f"{max(a['bytes'] for a in assets)} bytes in the largest asset"
+        )
     manifest = {"version": 1, "engine": "valhalla-3.9", "bounds": args.bounds,
                 "style": json.loads(args.style.read_text()), "assets": assets}
     write(output / "manifest.json", json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode())
