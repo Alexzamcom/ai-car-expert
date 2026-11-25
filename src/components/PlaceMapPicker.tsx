@@ -3,11 +3,11 @@ import { createPortal } from 'react-dom';
 import type { Map as MapLibre } from 'maplibre-gl';
 import type { LatLon } from '../lib/routing';
 import { DEFAULT_STYLE_URL } from '../lib/mapStyle';
-import { EMPTY_OFFLINE_STYLE, initializeOfflineMaps, offlineRegions, offlineStyleFor, regionAt, registerOfflineProtocol } from '../lib/offlineMaps';
+import { EMPTY_OFFLINE_STYLE, initializeOfflineMaps, offlineRegions, offlineStyleFor, regionAt, registerOfflineProtocol, type OfflineRegion } from '../lib/offlineMaps';
 import { watchAndroidViewport } from '../lib/androidViewport';
 import { Icon } from './Icon';
 
-export function PlaceMapPicker({ start, cancel, confirm }: { start: LatLon | null; cancel: () => void; confirm: (point: LatLon) => void }) {
+export function PlaceMapPicker({ start, cancel, confirm, regions, onRegionChange }: { start: LatLon | null; cancel: () => void; confirm: (point: LatLon) => void; regions?: OfflineRegion[]; onRegionChange?: (region: OfflineRegion) => void }) {
   const element = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibre | null>(null);
   const initial = useRef(start);
@@ -161,6 +161,14 @@ export function PlaceMapPicker({ start, cancel, confirm }: { start: LatLon | nul
       <div ref={element} className="place-map-picker-map" />
       <div className="place-map-picker-pin" style={anchor ? { left: anchor.x, top: anchor.y } : undefined} aria-hidden="true"><Icon name="locate" size="2.5rem" /></div>
       <div className="place-map-picker-actions">
+        {!!regions && regions.length > 1 && <select aria-label="Скачанная карта" defaultValue="" onChange={(event) => {
+          const region = regions.find((entry) => entry.id === event.target.value);
+          if (!region) return;
+          selected.current = null;
+          setAnchor(null);
+          map.current?.jumpTo({ center: [region.center.lon, region.center.lat], zoom: 16 });
+          onRegionChange?.(region);
+        }}><option value="" disabled>Сменить регион</option>{regions.map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</select>}
         {failed && <div role="status">Карта недоступна</div>}
         <button type="button" className="btn" onClick={cancel}>Отмена</button>
         <button type="button" className="btn btn-primary" disabled={failed || !selectable} onClick={() => {

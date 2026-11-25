@@ -1,4 +1,4 @@
-import { positionMode } from '../lib/routePlanner';
+import { plannerViewport, positionMode } from '../lib/routePlanner';
 import { mapLocationStore, MAP_LOCATION_STALE_MS } from '../lib/geo/mapLocation';
 import { usesAndroidNativePosition } from '../lib/geo/nativePosition';
 import { recordLocationMarker, recordMapVisibility } from '../lib/geo/locationDiagnostics';
@@ -9,7 +9,7 @@ import { watchAndroidViewport } from '../lib/androidViewport';
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import type { GeoJSONSource, Map as MlMap, Marker } from 'maplibre-gl';
 import { useStore } from '../lib/store';
-import { geoStore, navStore, poiStore, pickStore, pickPoint, selectRoute, addStop, placeFromPoi, readLastPos, navLang, visibleRouteCoords } from '../lib/nav';
+import { geoStore, navStore, poiStore, pickStore, pickPoint, selectRoute, addStop, placeFromPoi, readLastPos, trustedPlannerPosition, navLang, visibleRouteCoords } from '../lib/nav';
 import { settingsStore, toast } from '../lib/state';
 import { themeStore, THEMES } from '../lib/theme';
 import { DEFAULT_STYLE_URL, paletteTransform, gameImage, type MapPalette } from '../lib/mapStyle';
@@ -112,8 +112,9 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (disposed || !el.current) return;
       }
       const manual = positionMode.get();
-      const last = p.autonomous && manual.manual ? manual.point : readLastPos();
-      const area = androidDriving && (!navigator.onLine || manual.manual) ? (last ? regionAt(last) : undefined) ?? offlineRegions.get()[0] : undefined;
+      const anchor = androidDriving && p.autonomous ? plannerViewport(manual, trustedPlannerPosition(), offlineRegions.get()) : undefined;
+      const last = anchor ? anchor.point : readLastPos();
+      const area = androidDriving && (!navigator.onLine || manual.manual) ? (last ? regionAt(last) : undefined) ?? (anchor ? anchor.region : offlineRegions.get()[0]) : undefined;
       const cachedViewport = last && (!area || regionAt(last)) ? last : undefined;
       const start = cachedViewport ?? area?.center ?? (androidDriving ? ANDROID_OVERVIEW : DEFAULT_CENTER);
       const styleUrl = DEFAULT_STYLE_URL;

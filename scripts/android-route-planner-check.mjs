@@ -22,10 +22,14 @@ try {
   const ctx = await browser.newContext({ ...devices['Pixel 7'], defaultBrowserType: undefined, deviceScaleFactor: 1, serviceWorkers: 'block' });
   let offline = false;
   let serverRequests = 0;
+  let localWasmRequests = 0;
   await ctx.route('**/*', (request) => {
     const target = new URL(request.request().url());
-    if (target.origin === new URL(url).origin) return request.continue();
-    if (offline && /route\/v1|nominatim|photon|reverse/.test(target.href)) serverRequests++;
+    if (target.origin === new URL(url).origin) {
+      if (target.pathname.endsWith('.wasm')) localWasmRequests++;
+      return request.continue();
+    }
+    if (/route\/v1|nominatim|photon|reverse|\.wasm/.test(target.href)) serverRequests++;
     if (offline) return request.abort('internetdisconnected');
     const headers = { 'Access-Control-Allow-Origin': '*' };
     if (target.hostname === 'raw.githubusercontent.com') {
@@ -56,6 +60,19 @@ try {
     };
     window.emit = (plugin, event, data) => {
       for (const h of handlers.values()) if (h.plugin === plugin && h.name === event) h.callback({ at: Date.now(), ...data });
+    };
+    const Worker = window.Worker;
+    window.Worker = class extends Worker {
+      constructor(url, options) {
+        super(url, options);
+        if (String(url).includes('offlineRouter.worker')) {
+          window.routeWorkers = (window.routeWorkers ?? 0) + 1;
+          if (window.failNextRouter) {
+            window.failNextRouter = false;
+            this.postMessage = () => queueMicrotask(() => this.onmessage?.({ data: { failure: 'wasm' } }));
+          }
+        }
+      }
     };
     if (sessionStorage.getItem('offline')) Object.defineProperty(navigator, 'onLine', { get: () => false });
     if (!localStorage.getItem('ace:places')) localStorage.setItem('ace:places', JSON.stringify([
@@ -124,14 +141,13 @@ try {
   await click(city.name + ' · ' + city.address);
   await click('Скачать карту');
   await page.getByText('Регион доступен без интернета.').waitFor();
-  offline = true;
-  await page.evaluate(() => sessionStorage.setItem('offline', '1'));
-  await page.reload({ waitUntil: 'domcontentloaded' });
+  await Promise.all([page.waitForEvent('domcontentloaded'), click('Перезапустить приложение')]);
+  serverRequests = 0;
   await mapReady();
   // Establish a believable but false prior position before explicit rejection.
   const emitFix = (point) => page.evaluate((p) => window.emit('NativePosition', 'position', { ...p, source: 'gps', accuracy: 8, speed: 0 }), point);
   await page.waitForFunction(() => window.nativeStarted);
-  for (let i = 0; i < 3; i++) { await emitFix({ lat: -4, lon: 28 }); await page.waitForTimeout(650); }
+  for (let i = 0; i < 3; i++) { await emitFix({ lat: -12.04, lon: -77.04 }); await page.waitForTimeout(650); }
   await page.waitForFunction(() => window.__aceMap.map.getCenter().lat < 0);
   await menu();
   await click('GPS показывает неверное местоположение');
@@ -144,12 +160,33 @@ try {
   assert(await page.evaluate(() => window.__aceMap.map.getCenter().lat > 48));
   const manual = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:position-mode')).point);
   assert(Math.abs(manual.lat - origin.lat) < .00005 && Math.abs(manual.lon - origin.lon) < .00005);
-  await emitFix({ lat: -4, lon: 28 });
+  await emitFix({ lat: -12.04, lon: -77.04 });
   assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('ace:position-mode')).point), manual);
 
   await chooseAddress('Откуда', 'Адрес отправления', origin);
   await chooseAddress('Куда', 'Адрес назначения', destination);
   await screenshot('01-endpoints.png');
+  await page.evaluate(() => { window.failNextRouter = true; });
+  await click('Построить маршрут');
+  await built();
+  await paint();
+  assert.equal(await page.evaluate(() => window.routeWorkers), 2);
+  assert.equal(serverRequests, 0);
+  await click('Начать поездку');
+  await click('Подтвердить фактическую позицию');
+  await button('HUD').waitFor();
+  await click('Завершить поездку');
+  await click('Выйти без записи');
+  offline = true;
+  await page.evaluate(() => {
+    sessionStorage.setItem('offline', '1');
+    Object.defineProperty(navigator, 'onLine', { get: () => false });
+    dispatchEvent(new Event('offline'));
+  });
+  await page.locator('#map-search').focus();
+  await click('Домой');
+  await chooseAddress('Откуда', 'Адрес отправления', origin);
+  await chooseAddress('Куда', 'Адрес назначения', destination);
   await click('Построить маршрут');
   await built();
   await paint();
@@ -211,6 +248,8 @@ try {
   await click('Выйти из HUD');
   await page.evaluate(() => localStorage.setItem('ace:hud', JSON.stringify({ style: 'game', warned: true, mirror: true })));
   await page.reload({ waitUntil: 'domcontentloaded' });
+  await button('Уточнить и продолжить').waitFor();
+  await click('Завершить предыдущую поездку');
   await click('Начать поездку');
   await click('Подтвердить фактическую позицию');
   await click('HUD');
@@ -218,14 +257,72 @@ try {
   assert(await page.locator('.hud-stage').evaluate((stage) => stage.classList.contains('is-mirrored')));
   await click('Выйти из HUD');
   await page.reload({ waitUntil: 'domcontentloaded' });
+  await click('Завершить предыдущую поездку');
   await page.locator('.route-planner-position summary').click();
   await button('Включить автоматическое местоположение').waitFor();
   await click('Включить автоматическое местоположение');
-  for (let i = 0; i < 3; i++) { await emitFix({ lat: -4, lon: 28 }); await page.waitForTimeout(650); }
+  for (let i = 0; i < 3; i++) { await emitFix({ lat: -12.04, lon: -77.04 }); await page.waitForTimeout(650); }
   assert(await page.evaluate(() => JSON.parse(localStorage.getItem('ace:position-mode')).rechecking));
   for (let i = 0; i < 3; i++) { await emitFix(origin); await page.waitForTimeout(650); }
   await page.waitForFunction(() => !JSON.parse(localStorage.getItem('ace:position-mode')).rechecking);
   await paint();
   assert.equal(serverRequests, 0);
+  assert(localWasmRequests > 0);
+  if (process.env.ACE_RECOVERY_REPEAT) {
+    async function completeTrip() {
+      await click('Начать поездку');
+      const confirmation = button('Подтвердить фактическую позицию');
+      await Promise.race([confirmation.waitFor(), button('HUD').waitFor()]);
+      if (await confirmation.isVisible()) await click('Подтвердить фактическую позицию');
+      await button('HUD').waitFor();
+      await click('Завершить поездку');
+      await click('Выйти без записи');
+      await page.locator('#map-search').focus();
+      await click('Домой');
+    }
+    const workers = await page.evaluate(() => window.routeWorkers);
+    for (let run = 0; run < 20; run++) {
+      await chooseField('Откуда'); await click(run % 2 ? 'Дом' : 'Работа');
+      await chooseField('Куда'); await click(run % 2 ? 'Работа' : 'Дом');
+      await click('Построить маршрут');
+      await built();
+      await paint();
+      await completeTrip();
+    }
+    assert.equal(await page.evaluate(() => window.routeWorkers), workers + 20);
+
+    await click('Назад');
+    offline = false;
+    await page.evaluate(() => {
+      sessionStorage.removeItem('offline');
+      delete navigator.onLine;
+      dispatchEvent(new Event('online'));
+    });
+    await menu();
+    await click('Настройки навигации и HUD');
+    const dnipro = JSON.parse(load('catalog.json')).settlements.find((place) => place.name === 'Дніпро');
+    await page.getByLabel('Город или село').fill(dnipro.name);
+    await click('Найти населённый пункт');
+    await click(dnipro.name + ' · ' + dnipro.address);
+    await click('Скачать карту');
+    await page.getByText('Регион доступен без интернета.').waitFor({ timeout: 90_000 });
+    offline = true;
+    await page.evaluate(() => sessionStorage.setItem('offline', '1'));
+    await Promise.all([page.waitForEvent('domcontentloaded'), click('Перезапустить приложение')]);
+    await mapReady();
+    await page.locator('#map-search').focus();
+    await click('Домой');
+    await chooseAddress('Откуда', 'Адрес отправления', { name: 'проспект Дмитра Яворницького 52' });
+    await chooseAddress('Куда', 'Адрес назначения', { name: 'Херсонська вулиця 7' });
+    await click('Построить маршрут');
+    await built();
+    await paint();
+    const dniproRoute = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:planned-route')).route);
+    assert.match(dniproRoute.offlineGraph.region, /Дніпро/);
+    assert(dniproRoute.steps.some((step) => step.type === 'turn'));
+    await screenshot('05-dnipro-offline.png');
+    assert.equal(serverRequests, 0);
+    console.log('✓ Дніпро и 20 повторных офлайн-поездок по реальному пакету Павлограда.');
+  }
   console.log('✓ Реальный Павлоград: два адреса, касания, дом → работа, ложная позиция, офлайн-перезапуск, подтверждение старта и HUD.');
 } finally { await browser.close(); }

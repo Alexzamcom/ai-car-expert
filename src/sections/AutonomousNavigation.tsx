@@ -1,5 +1,5 @@
 import { RoutePlanner } from '../components/RoutePlanner';
-import { plannedRoute, positionMode, setManualPoint, type Endpoint, type PlannerLaunch } from '../lib/routePlanner';
+import { activePlannedTrip, plannerViewport, rememberPlannedRoute, rememberRoutingRegion, plannedRoute, positionMode, setManualPoint, type Endpoint, type PlannerLaunch } from '../lib/routePlanner';
 import { coordsPlace } from '../lib/geo/geocode';
 import { useEffect, useRef, useState } from 'react';
 import type { PluginListenerHandle } from '@capacitor/core';
@@ -7,17 +7,17 @@ import { autonomyMap } from '../lib/autonomy/map';
 import { Estimator, type Estimate, type Fix, type Measurement, type Origin, type Variant } from '../lib/autonomy/estimator';
 import { createTrip, deleteTrip, recentTrips, record, replay, saveTrip, type GpsScenario, type Trip } from '../lib/autonomy/trip';
 import { tripSensors } from '../lib/autonomy/native';
-import { cumulative, fetchRoute, haversine, routeProgress, stepOffsets, stepText, type LatLon, type Route } from '../lib/routing';
+import { cumulative, fetchRoute, fetchRoutes, haversine, routeProgress, stepOffsets, stepText, type LatLon, type Route } from '../lib/routing';
 import { androidDriving, maneuverNotice } from '../lib/androidDriving';
 import { closeHud, openHud } from '../lib/hud';
 import { consistentPair, courseBetween, goodFix, roadAnchor } from '../lib/autonomy/gnss';
 import { PlaceMapPicker } from '../components/PlaceMapPicker';
 import { placesStore } from '../lib/places';
 import { useStore } from '../lib/store';
-import { offlineRegions, searchOfflineAddresses } from '../lib/offlineMaps';
+import { offlineRegions, regionAt, searchOfflineAddresses } from '../lib/offlineMaps';
 import type { Place } from '../lib/geo/geocode';
 import { changePositionMode, geoStore, navLang, setAndroidGeoExperiment, trustedPlannerPosition } from '../lib/nav';
-import { offlineStatus } from '../lib/offlineMaps';
+import { routingEvent } from '../lib/offlineRouter';
 import { openSection } from '../lib/state';
 import { settingsStore } from '../lib/state';
 import { speak } from '../lib/speech';
@@ -33,6 +33,9 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   const api = useRef<MapApi | null>(null);
   const ui = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState<Stage>(launch ? 'plan' : 'origin');
+  const [recovering, setRecovering] = useState(() => !!launch && !!activePlannedTrip.get().position && !!plannedRoute.get().route);
+  const restoringPosition = useRef(false);
+  const [router, setRouter] = useState<'local' | 'online'>();
   const [origin, setOrigin] = useState<Origin | null>(null);
   const [route, setRoute] = useState<Route | null>(null);
   const [heading, setHeading] = useState('0');
@@ -49,7 +52,6 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const plan = useStore(plannedRoute);
   const positioning = useStore(positionMode);
-  const mapping = useStore(offlineStatus);
   useStore(geoStore);
   const actualPosition = positioning.manual ? positioning.point : trustedPlannerPosition();
   const [pointPicker, setPointPicker] = useState(false);
@@ -73,6 +75,8 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   const routeAbort = useRef<AbortController | null>(null);
   const listeners = useRef<PluginListenerHandle[]>([]);
   const foreground = useRef(false);
+  const foregroundResume = useRef<() => void>(() => {});
+  const deferredResume = useRef<Promise<void> | null>(null);
   const accepting = useRef(false);
   const pending = useRef(Promise.resolve());
   const updateAt = useRef(0);
@@ -98,23 +102,41 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   }, [launch, stage, plan, actualPosition?.lat, actualPosition?.lon]);
 
   useEffect(() => {
-    if (regionField !== 'position' || !launch?.rejectGps || downloaded.length > 1) return;
-    // Wait for MapLibre to finish reading the offline catalogue before choosing its sole region.
-    if (!downloaded.length && mapping.region == null) return;
-    setPlannerPicker({ field: 'position', center: downloaded[0]?.center ?? null });
+    if (regionField === 'position' && launch?.rejectGps && downloaded.length) chooseOnMap('position');
+  }, [launch, downloaded]);
+
+  function openRegion(field: Endpoint | 'position', region: (typeof downloaded)[number]) {
+    rememberRoutingRegion(region.name);
+    setPlannerPicker({ field, center: region.center });
     setRegionField(null);
-  }, [regionField, launch, downloaded, mapping.region]);
+    routingEvent({ cameraSource: 'region', region: region.name });
+  }
 
   function chooseOnMap(field: Endpoint | 'position') {
-    const point = field === 'position' ? positioning.point : plan[field] ?? plan[field === 'from' ? 'to' : 'from'] ?? actualPosition;
-    if (downloaded.length > 1 && !point) {
+    const anchor = plannerViewport(positioning, trustedPlannerPosition(), downloaded);
+    if (anchor.source === 'choose' && downloaded.length > 1) {
       setRegionField(field);
       return;
     }
-    setPlannerPicker({ field, center: point ?? downloaded[0]?.center ?? api.current?.center?.() ?? null });
+    if (anchor.region) {
+      const endpoint = field === 'to' ? plan.to ?? plan.from : null;
+      if (!endpoint || regionAt(endpoint)?.id !== anchor.region.id) return openRegion(field, anchor.region);
+      setPlannerPicker({ field, center: endpoint });
+      setRegionField(null);
+      routingEvent({ cameraSource: 'planned-endpoint-in-region', region: anchor.region.name });
+      return;
+    }
+    // Keep an intentionally chosen start in view when setting a destination without a fix/region.
+    const endpoint = field === 'to' ? plan.to : null;
+    const anchorRegion = anchor.point && regionAt(anchor.point);
+    const center = endpoint && anchorRegion && regionAt(endpoint)?.id === anchorRegion.id
+      ? endpoint : anchor.point ?? (field === 'to' ? plan.from : null);
+    setPlannerPicker({ field, center });
+    setRegionField(null);
+    routingEvent({ cameraSource: anchor.point ? anchor.source : center ? 'planned-start' : 'overview' });
   }
 
-  async function buildPlan() {
+  async function buildPlan(onlineOnly = false) {
     const { from, to } = plannedRoute.get();
     if (!from || !to || routeAbort.current) return;
     if (haversine(from, to) < 20) { setMessage('Выберите точки на расстоянии не менее 20 м.'); return; }
@@ -123,15 +145,24 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
     setMessage('');
     setBusy(true);
     try {
-      const selected = await fetchRoute(from, to, request.signal);
+      const [selected] = await fetchRoutes(from, to, { signal: request.signal, onlineOnly, confirmOnline: downloaded.some((region) => region.graph?.length),
+        onRouter: (source) => {
+          setRouter(source);
+          routingEvent({ router: source, online: navigator.onLine, positionMode: positionMode.get().manual ? 'manual' : 'auto' });
+        } });
       if (request.signal.aborted) return;
       plannedRoute.set({ from, to, route: selected });
+      rememberPlannedRoute(from, to, selected);
+      setRecovering(false);
       requestAnimationFrame(() => api.current?.fitPoints(selected.coords, ui.current));
     } catch (error) {
       if (!request.signal.aborted) setMessage(error instanceof Error ? error.message : 'Маршрут не найден.');
     } finally {
-      if (routeAbort.current === request) routeAbort.current = null;
-      if (!request.signal.aborted) setBusy(false);
+      if (routeAbort.current === request) {
+        routeAbort.current = null;
+        setBusy(false);
+        setRouter(undefined);
+      }
     }
   }
 
@@ -223,9 +254,37 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
     void persist();
   }
 
+  foregroundResume.current = () => {
+    if (currentRoute.current && engine.current) void start(origin, currentRoute.current, mode.current);
+  };
+
   useEffect(() => {
     const hide = () => {
-      if (document.visibilityState !== 'visible') pause('Поездка приостановлена. После остановки уточните точку и направление.');
+      if (document.visibilityState !== 'visible') {
+        if (!accepting.current) return;
+        foreground.current = false;
+        accepting.current = false;
+        stillSince.current = null;
+        update({ type: 'pause', at: Date.now() });
+        deferredResume.current = stopNative();
+        void persist();
+        return;
+      }
+      const stopped = deferredResume.current;
+      if (stopped) void stopped.then(() => {
+        if (deferredResume.current !== stopped || document.visibilityState !== 'visible') return;
+        deferredResume.current = null;
+        foregroundResume.current();
+      });
+    };
+    const restart = () => {
+      deferredResume.current = null;
+      foreground.current = false;
+      routeAbort.current?.abort();
+      bootstrap.current();
+      closeHud();
+      void stopNative();
+      void persist();
     };
     const health = window.setInterval(() => {
       if (!accepting.current) return;
@@ -237,8 +296,11 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
     }, 1000);
     const checkpoint = window.setInterval(() => void persist(), 30_000);
     document.addEventListener('visibilitychange', hide);
+    window.addEventListener('ace:restart', restart);
     return () => {
       document.removeEventListener('visibilitychange', hide);
+      window.removeEventListener('ace:restart', restart);
+      deferredResume.current = null;
       clearInterval(health);
       clearInterval(checkpoint);
       bootstrap.current();
@@ -375,6 +437,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   }
 
   async function selectDestination(target = api.current?.center?.()) {
+    if (routeAbort.current) return;
     if (!target || !origin || haversine(origin.position, target) < 20) {
       setMessage('Выберите пункт назначения дальше 20 м');
       return;
@@ -385,6 +448,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
     setMessage('');
     try {
       const selected = await fetchRoute(origin.position, target, request.signal);
+      if (request.signal.aborted) return;
       prepareRoute(selected, target);
       if (androidDriving && selected.coords.length <= 20_000) {
         try { localStorage.setItem('ace:offline-autonomy-route', JSON.stringify({ route: selected, destination: target, at: Date.now() })); } catch { /* Storage can be disabled. */ }
@@ -392,8 +456,11 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
     } catch (error) {
       if (!request.signal.aborted) setMessage(error instanceof Error ? error.message : 'Маршрут недоступен.');
     } finally {
-      if (routeAbort.current === request) routeAbort.current = null;
-      if (!request.signal.aborted) setBusy(false);
+      if (routeAbort.current === request) {
+        routeAbort.current = null;
+        setBusy(false);
+        setRouter(undefined);
+      }
     }
   }
 
@@ -430,6 +497,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
       setEstimate(engine.current?.state ?? null);
       setFollow(true);
       setStage('driving');
+      if (launch && first) activePlannedTrip.set({ position: { ...anchorInput.position, heading: anchorInput.heading } });
       void persist();
       if (gps) void tripSensors.startGps().catch(() => setMessage('Относительные GPS-измерения недоступны. Продолжаем по датчикам.'));
     } catch (error) {
@@ -472,6 +540,9 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   }
 
   async function finish() {
+    deferredResume.current = null;
+    routeAbort.current?.abort();
+    if (launch) activePlannedTrip.set({ position: null });
     setBusy(true);
     closeHud();
     foreground.current = false;
@@ -525,10 +596,30 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   return (
     <div className="navigation">
       <MapLibreMap apiRef={api} uiEl={ui} autonomous follow={stage === 'driving' && follow} guiding={stage === 'driving'} onUserMove={() => setFollow(false)} />
-      {plannerPicker && <PlaceMapPicker start={plannerPicker.center} cancel={() => setPlannerPicker(undefined)} confirm={(point) => {
+      {plannerPicker && <PlaceMapPicker regions={downloaded} onRegionChange={(region) => rememberRoutingRegion(region.name)} start={plannerPicker.center} cancel={() => { restoringPosition.current = false; setPlannerPicker(undefined); }} confirm={(point) => {
         const field = plannerPicker.field;
         setPlannerPicker(undefined);
         if (field === 'position') {
+          if (restoringPosition.current && plan.route && plan.to) {
+            restoringPosition.current = false;
+            const progress = routeProgress(plan.route, point);
+            if (progress.offRouteM > 45) {
+              setMessage('Выбранная точка вне сохранённого маршрута. Выберите точку на маршруте или завершите предыдущую поездку.');
+              return;
+            }
+            const coords = plan.route.coords;
+            const heading = courseBetween(coords[progress.segIndex], coords[progress.segIndex + 1]);
+            const anchor = { position: point, heading, at: Date.now() };
+            changePositionMode(true);
+            setManualPoint(point);
+            setOrigin(anchor);
+            setVariant('road');
+            prepareRoute(plan.route, plan.to);
+            segment.current = progress.segIndex;
+            setRecovering(false);
+            void start(anchor, plan.route, 'road');
+            return;
+          }
           setManualPoint(point);
           api.current?.centerOn(point, 16);
           if (!plannedRoute.get().from) plannedRoute.set((previous) => ({ ...previous, from: { ...coordsPlace(point), name: 'Ручная позиция' } }));
@@ -552,18 +643,26 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
           {regionField && <label>Скачанная карта <select defaultValue="" onChange={(event) => {
             const region = downloaded.find((item) => item.id === event.target.value);
             if (!region) return;
-            setPlannerPicker({ field: regionField, center: region.center });
-            setRegionField(null);
+            openRegion(regionField, region);
           }}><option value="">Выберите регион</option>{downloaded.map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</select></label>}
-          {stage === 'plan' && <RoutePlanner actual={actualPosition} pick={chooseOnMap} build={() => void buildPlan()} busy={busy} ready={!!plan.route} />}
-          {stage === 'plan' && plan.route && <label><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> Записать поездку локально</label>}
-          {stage === 'plan' && plan.route && <button className="btn btn-primary" onClick={() => beginPlannedTrip(false)}>Начать поездку</button>}
+          {recovering && stage === 'plan' && <div role="status">
+            <p>Предыдущая поездка не завершена. Для продолжения подтвердите текущее положение.</p>
+            <button className="btn" onClick={() => { restoringPosition.current = true; chooseOnMap('position'); }}>Уточнить и продолжить</button>
+            <button className="btn" onClick={() => { activePlannedTrip.set({ position: null }); setRecovering(false); }}>Завершить предыдущую поездку</button>
+          </div>}
+          {busy && router && <p role="status">{router === 'local'
+            ? navLang() === 'uk' ? 'Побудова маршруту за офлайн-картою' : 'Построение маршрута по офлайн-карте'
+            : 'Построение маршрута онлайн'} <button className="btn" onClick={() => routeAbort.current?.abort()}>Отмена</button></p>}
+          {!recovering && stage === 'plan' && <RoutePlanner actual={actualPosition} pick={chooseOnMap} build={() => void buildPlan()} busy={busy} ready={!!plan.route} />}
+          {!recovering && stage === 'plan' && plan.route && <label><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> Записать поездку локально</label>}
+          {!recovering && stage === 'plan' && plan.route && <button className="btn btn-primary" onClick={() => beginPlannedTrip(false)}>Начать поездку</button>}
           {awaitingConfirmation && stage === 'confirm' && <>
             <p>Вы сейчас находитесь в точке «{plan.from?.name}»? Подтвердите её только после остановки.</p>
             <button className="btn btn-primary" onClick={() => beginPlannedTrip(true)}>Подтвердить фактическую позицию</button>
             <button className="btn" onClick={() => { setStage('plan'); setAwaitingConfirmation(false); }}>Вернуться к маршруту</button>
           </>}
-          {message.includes('покрытия') && <button className="btn" onClick={() => { close(); openSection('settings'); }}>Офлайн-карты</button>}
+          {message.includes('покрытия') && navigator.onLine && <button className="btn" onClick={() => void buildPlan(true)}>Построить онлайн</button>}
+          {(message.includes('покрытия') || message.includes('Обновите скачанную карту')) && <button className="btn" onClick={() => { close(); openSection('settings'); }}>Офлайн-карты</button>}
           <button className="btn" onClick={close}>Назад</button>
         </>}
         {message && <div role="status">{message}</div>}

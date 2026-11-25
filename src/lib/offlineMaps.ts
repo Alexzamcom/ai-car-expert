@@ -41,25 +41,45 @@ export function areaTiles(bounds: Bounds, maxZoom = 14): Tile[] {
   return result;
 }
 
+function checkAbort(signal?: AbortSignal) {
+  if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+}
+
 function open() {
   return db ??= new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open('ace-offline-maps', 1);
+    let expired = false;
+    const deadline = setTimeout(() => {
+      expired = true;
+      reject(new Error('IndexedDB open timed out'));
+    }, 5000);
     request.onupgradeneeded = () => {
       request.result.createObjectStore('regions', { keyPath: 'name' });
       request.result.createObjectStore('resources');
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      clearTimeout(deadline);
+      const database = request.result;
+      if (expired) { database.close(); return; }
+      database.onversionchange = () => { database.close(); db = undefined; init = undefined; };
+      resolve(database);
+    };
+    request.onerror = () => { clearTimeout(deadline); reject(request.error); };
   }).catch((error) => { db = undefined; throw error; });
 }
 
 async function read<T>(store: string, key?: string) {
   const database = await open();
   return new Promise<T>((resolve, reject) => {
-    const object = database.transaction(store).objectStore(store);
+    const transaction = database.transaction(store);
+    const object = transaction.objectStore(store);
+    const deadline = setTimeout(() => {
+      reject(new Error('IndexedDB read timed out'));
+      try { transaction.abort(); } catch { /* Already closed. */ }
+    }, 2000);
     const request = key == null ? object.getAll() : object.get(key);
-    request.onsuccess = () => resolve(request.result as T);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => { clearTimeout(deadline); resolve(request.result as T); };
+    request.onerror = () => { clearTimeout(deadline); reject(request.error); };
   });
 }
 
@@ -170,10 +190,10 @@ export async function downloadOfflineRegion(name: string, center: LatLon, radius
     progress({ done: 0, total: jobs.length, bytes });
     // Bound concurrency and await all requests in a batch before cleanup.
     for (let i = 0; i < jobs.length; i += 4) {
-      signal?.throwIfAborted();
+      checkAbort(signal);
       const batch = jobs.slice(i, i + 4);
       const results = await Promise.allSettled(batch.map((job) => request(job.url, true) as Promise<ArrayBuffer>));
-      signal?.throwIfAborted();
+      checkAbort(signal);
       const data = results.map((result) => { if (result.status === 'rejected') throw result.reason; return result.value; });
       bytes += data.reduce((sum, resource) => sum + resource.byteLength, 0);
       if (bytes > LIMIT_BYTES) throw new Error('Область превышает 50 МБ. Уменьшите радиус.');
@@ -221,7 +241,7 @@ async function fetchAsset(url: URL, bytes: number, signal?: AbortSignal) {
   signal?.addEventListener('abort', stop, { once: true });
   const deadline = setTimeout(stop, 60_000);
   try {
-    signal?.throwIfAborted();
+    checkAbort(signal);
     const response = await fetch(url, { signal: request.signal, credentials: 'omit', redirect: 'error' });
     if (!response.ok) throw new Error(`Не удалось загрузить ресурс пакета (HTTP ${response.status}).`);
     const buffer = await response.arrayBuffer();
@@ -276,7 +296,7 @@ export async function downloadNavigationPackage(name: string, center: LatLon, ra
     }
     const free = await remainingSpace();
     if (free !== null && free < regionalStorageBytes(totalBytes - bytes)) throw new Error('Недостаточно свободного места для установки карты.');
-    signal?.throwIfAborted();
+    checkAbort(signal);
     const root = `${OFFLINE_PROTOCOL}://${id}`;
     const style: StyleSpecification = JSON.parse(JSON.stringify(pkg.style));
     const vectors = Object.entries(style.sources).filter(([, source]) => source.type === 'vector');
@@ -310,7 +330,7 @@ export async function downloadNavigationPackage(name: string, center: LatLon, ra
           if (asset.path === 'addresses.json') decodeAddresses(data);
           return [asset.path, data] as const;
         }));
-        signal?.throwIfAborted();
+        checkAbort(signal);
         bytes += body.byteLength;
         const checkpoint: Checkpoint = { id, fingerprint: state.fingerprint, done: index + 1, bytes };
         await write('resources', (store) => {
@@ -321,20 +341,20 @@ export async function downloadNavigationPackage(name: string, center: LatLon, ra
       }
     } else {
       for (let i = 0; i < pkg.assets.length; i += 4) {
-        signal?.throwIfAborted();
+        checkAbort(signal);
         const batch = pkg.assets.slice(i, i + 4);
         const data = await Promise.all(batch.map(async ({ path, bytes }) => {
           const buffer = await fetchAsset(new URL(path, url), bytes, signal);
           if (path === 'addresses.json') decodeAddresses(buffer);
           return buffer;
         }));
-        signal?.throwIfAborted();
+        checkAbort(signal);
         await write('resources', (store) => batch.forEach(({ path }, index) => store.put(data[index], `${id}/${path}`)));
         bytes += data.reduce((sum, item) => sum + item.byteLength, 0);
         progress({ done: i + batch.length, total: pkg.assets.length, bytes });
       }
     }
-    signal?.throwIfAborted();
+    checkAbort(signal);
     const region: OfflineRegion = { id, name: key, center, bounds, style, bytes, updated: Date.now(), packageUrl, radiusKm, settlementId: pkg.settlementId, dataDate: pkg.dataDate,
       graph: pkg.assets.filter(({ path }) => path.startsWith('graph/')).map(({ path }) => path) };
     const database = await open();

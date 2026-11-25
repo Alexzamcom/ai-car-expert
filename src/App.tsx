@@ -1,4 +1,4 @@
-import { plannedRoute, positionMode, type PlannerLaunch } from './lib/routePlanner';
+import { activePlannedTrip, plannedRoute, positionMode, type PlannerLaunch } from './lib/routePlanner';
 import { watchAndroidViewport } from './lib/androidViewport';
 import { nativePosition, usesAndroidNativePosition } from './lib/geo/nativePosition';
 import { lazy, Suspense, useEffect, useState } from 'react';
@@ -47,7 +47,7 @@ export function App() {
   const [restoredPlanner] = useState(() => {
     try {
       return androidDriving && Capacitor.isPluginAvailable('TripSensors') &&
-        localStorage.getItem('ace:planner-open') === '1';
+        (!!activePlannedTrip.get().position || localStorage.getItem('ace:planner-open') === '1' && !!plannedRoute.get().route);
     } catch { return false; }
   });
   const [autonomous, setAutonomous] = useState(restoredPlanner);
