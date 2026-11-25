@@ -294,14 +294,9 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             .then((result) => { if (result.ok) switchLocal(false); })
             .catch(() => {}).finally(() => { clearTimeout(wait); probe = null; });
         }, 30_000);
-        let checkRegionAt = 0;
-        map.on('moveend', () => {
-          const now = performance.now();
-          if (local && now - checkRegionAt >= 2000) {
-            checkRegionAt = now;
-            setBase();
-          }
-        });
+        // Route framing can cross into another installed region immediately after
+        // startup. setBase already avoids reloading the same style.
+        map.on('moveend', () => { if (local) setBase(); });
         cleanups.push(offlineRegions.subscribe(() => { if (local) setBase(); }), () => {
           window.removeEventListener('offline', offline);
           window.removeEventListener('online', online);

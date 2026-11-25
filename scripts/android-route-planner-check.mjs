@@ -255,10 +255,9 @@ try {
   await click('Выйти из HUD');
   await page.evaluate(() => localStorage.setItem('ace:hud', JSON.stringify({ style: 'game', warned: true, mirror: true })));
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await button('Уточнить и продолжить').waitFor();
-  await click('Завершить предыдущую поездку');
-  await click('Начать поездку');
-  await click('Подтвердить фактическую позицию');
+  await click('Уточнить и продолжить');
+  await tapPoint();
+  await button('HUD').waitFor();
   await click('HUD');
   await page.locator('.hud[data-style="game"] .hud-speed').waitFor();
   assert(await page.locator('.hud-stage').evaluate((stage) => stage.classList.contains('is-mirrored')));
@@ -320,6 +319,7 @@ try {
       console.log('Павлоград, завершённый цикл ' + (run + 1) + '/20');
     }
     assert.equal(await page.evaluate(() => window.routeWorkers), workers + 20);
+    assert.equal(serverRequests, 0);
 
     await click('Назад');
     await network(true);
@@ -331,6 +331,8 @@ try {
     await click(dnipro.name + ' · ' + dnipro.address);
     await click('Скачать карту');
     await page.getByText('Регион доступен без интернета.').waitFor({ timeout: 90_000 });
+    // Searching for the city to download uses Photon. Route checks start after installation.
+    serverRequests = 0;
     offline = true;
     await page.evaluate(() => sessionStorage.setItem('offline', '1'));
     await Promise.all([page.waitForEvent('domcontentloaded'), click('Перезапустить приложение')]);
@@ -345,6 +347,12 @@ try {
     const dniproRoute = await page.evaluate(() => JSON.parse(localStorage.getItem('ace:planned-route')).route);
     assert.match(dniproRoute.offlineGraph.region, /Дніпро/);
     assert(dniproRoute.steps.some((step) => step.type === 'turn'));
+    await page.waitForFunction(() => {
+      const { map, state } = window.__aceMap;
+      return !map.isMoving() && state().offline?.region?.includes('Дніпро') && map.areTilesLoaded() &&
+        map.queryRenderedFeatures().some((feature) => feature.sourceLayer === 'transportation');
+    });
+    await paint();
     await screenshot('05-dnipro-offline.png');
     assert.equal(serverRequests, 0);
     console.log('✓ Дніпро и 20 повторных офлайн-поездок по реальному пакету Павлограда.');
