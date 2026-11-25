@@ -46,7 +46,7 @@ try {
     const plugin = (name, methods) => ({ name, methods: [...methods.map((name) => ({ name, rtype: 'promise' })),
       { name: 'addListener' }, { name: 'removeListener' }] });
     window.Capacitor = {
-      PluginHeaders: [plugin('NativePosition', ['start', 'stop', 'refresh', 'diagnostics', 'acknowledge']),
+      PluginHeaders: [plugin('NativePosition', ['start', 'stop', 'refresh', 'diagnostics', 'acknowledge', 'copyDiagnostics']),
         plugin('TripSensors', ['start', 'startGps', 'stopGps', 'stop', 'setHudAwake'])],
       nativeCallback: async (plugin, method, payload, callback) => {
         if (method === 'removeListener') { handlers.delete(payload.callbackId); return; }
@@ -56,6 +56,7 @@ try {
       nativePromise: async (plugin, method, payload) => {
         if (plugin === 'TripSensors' && method === 'start') window.tripGps = payload.gps;
         if (plugin === 'NativePosition' && method === 'start') window.nativeStarted = true;
+        if (plugin === 'NativePosition' && method === 'copyDiagnostics') window.routingReport = payload.json;
         return status;
       },
     };
@@ -255,9 +256,18 @@ try {
   await click('Выйти из HUD');
   await page.evaluate(() => localStorage.setItem('ace:hud', JSON.stringify({ style: 'game', warned: true, mirror: true })));
   await page.reload({ waitUntil: 'domcontentloaded' });
+  const resume = await page.evaluate(() => ({
+    start: JSON.parse(localStorage.getItem('ace:planned-route')).route.coords[0],
+    manual: JSON.parse(localStorage.getItem('ace:position-mode')).point,
+  }));
   await click('Уточнить и продолжить');
-  await tapPoint();
-  await button('HUD').waitFor();
+  await page.getByText('Укажите текущее положение на маршруте').waitFor();
+  await tapPoint({ x: (resume.start.lon - resume.manual.lon) * world / 360,
+    y: (mercator(resume.start.lat) - mercator(resume.manual.lat)) * world });
+  await button('HUD').waitFor({ timeout: 20_000 }).catch(async (error) => {
+    console.error(await page.locator('.autonomy-panel').innerText());
+    throw error;
+  });
   await click('HUD');
   await page.locator('.hud[data-style="game"] .hud-speed').waitFor();
   assert(await page.locator('.hud-stage').evaluate((stage) => stage.classList.contains('is-mirrored')));
@@ -355,6 +365,17 @@ try {
     await paint();
     await screenshot('05-dnipro-offline.png');
     assert.equal(serverRequests, 0);
+    await click('Назад');
+    await menu();
+    await click('Настройки навигации и HUD');
+    await click('Скопировать диагностику офлайн-маршрутизации');
+    await page.waitForFunction(() => window.routingReport);
+    const report = await page.evaluate(() => window.routingReport);
+    assert.doesNotMatch(report, /"(?:lat|lon|latitude|longitude|address)"\s*:/i);
+    const diagnostic = JSON.parse(report);
+    assert.equal(diagnostic.online, false);
+    assert(diagnostic.packages.length >= 2);
+    assert(diagnostic.events.some((entry) => entry.router === 'local' && entry.externalRequests === 0));
     console.log('✓ Дніпро и 20 повторных офлайн-поездок по реальному пакету Павлограда.');
   }
   console.log('✓ Реальный Павлоград: два адреса, касания, дом → работа, ложная позиция, офлайн-перезапуск, подтверждение старта и HUD.');

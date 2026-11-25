@@ -7,7 +7,7 @@ import { EMPTY_OFFLINE_STYLE, initializeOfflineMaps, offlineRegions, offlineStyl
 import { watchAndroidViewport } from '../lib/androidViewport';
 import { Icon } from './Icon';
 
-export function PlaceMapPicker({ start, cancel, confirm, regions, onRegionChange }: { start: LatLon | null; cancel: () => void; confirm: (point: LatLon) => void; regions?: OfflineRegion[]; onRegionChange?: (region: OfflineRegion) => void }) {
+export function PlaceMapPicker({ start, cancel, confirm, regions, onRegionChange, route }: { start: LatLon | null; cancel: () => void; confirm: (point: LatLon) => void; regions?: OfflineRegion[]; onRegionChange?: (region: OfflineRegion) => void; route?: LatLon[] }) {
   const element = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibre | null>(null);
   const initial = useRef(start);
@@ -110,6 +110,15 @@ export function PlaceMapPicker({ start, cancel, confirm, regions, onRegionChange
       view.on('click', ({ originalEvent }) => {
         if (performance.now() - lastTouch >= 750 && originalEvent.button === 0) select(originalEvent.clientX, originalEvent.clientY);
       });
+      if (route?.length) view.on('style.load', () => {
+        view.addSource('restored-trip', { type: 'geojson', data: {
+          type: 'Feature', properties: {}, geometry: {
+            type: 'LineString', coordinates: route.map((point) => [point.lon, point.lat]),
+          },
+        } });
+        view.addLayer({ id: 'restored-trip', type: 'line', source: 'restored-trip',
+          paint: { 'line-color': '#1285e0', 'line-width': 6 } });
+      });
       view.on('dblclick', interrupt);
       view.on('movestart', (event) => { if (event.originalEvent) interrupt(); });
       view.on('moveend', settled);
@@ -169,6 +178,7 @@ export function PlaceMapPicker({ start, cancel, confirm, regions, onRegionChange
           map.current?.jumpTo({ center: [region.center.lon, region.center.lat], zoom: 16 });
           onRegionChange?.(region);
         }}><option value="" disabled>Сменить регион</option>{regions.map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</select>}
+        {route && <span>Укажите текущее положение на маршруте</span>}
         {failed && <div role="status">Карта недоступна</div>}
         <button type="button" className="btn" onClick={cancel}>Отмена</button>
         <button type="button" className="btn btn-primary" disabled={failed || !selectable} onClick={() => {

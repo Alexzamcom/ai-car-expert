@@ -602,7 +602,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   return (
     <div className="navigation">
       <MapLibreMap apiRef={api} uiEl={ui} autonomous follow={stage === 'driving' && follow} guiding={stage === 'driving'} onUserMove={() => setFollow(false)} />
-      {plannerPicker && <PlaceMapPicker regions={downloaded} onRegionChange={(region) => rememberRoutingRegion(region.name)} start={plannerPicker.center} cancel={() => { restoringPosition.current = false; setPlannerPicker(undefined); }} confirm={(point) => {
+      {plannerPicker && <PlaceMapPicker route={restoringPosition.current ? plan.route?.coords : undefined} regions={downloaded} onRegionChange={(region) => rememberRoutingRegion(region.name)} start={plannerPicker.center} cancel={() => { restoringPosition.current = false; setPlannerPicker(undefined); }} confirm={(point) => {
         const field = plannerPicker.field;
         setPlannerPicker(undefined);
         if (field === 'position') {
@@ -616,6 +616,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
             const coords = plan.route.coords;
             const heading = courseBetween(coords[progress.segIndex], coords[progress.segIndex + 1]);
             const anchor = { position: point, heading, at: Date.now() };
+            setMessage('');
             const source = positionMode.get().manual ? 'road' : 'adaptive';
             if (source === 'road') setManualPoint(point);
             setOrigin(anchor);
@@ -654,7 +655,13 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
           {recovering && stage === 'plan' && <div role="status">
             <p>Предыдущая поездка не завершена. Для продолжения подтвердите текущее положение.</p>
             <button className="btn" onClick={() => { restoringPosition.current = true; chooseOnMap('position'); }}>Уточнить и продолжить</button>
-            <button className="btn" onClick={() => { activePlannedTrip.set({ position: null }); setRecovering(false); }}>Завершить предыдущую поездку</button>
+            <button className="btn" onClick={() => {
+              activePlannedTrip.set({ position: null });
+              restoringPosition.current = false;
+              setRegionField(null);
+              setMessage('');
+              setRecovering(false);
+            }}>Завершить предыдущую поездку</button>
           </div>}
           {busy && router && <p role="status">{router === 'local'
             ? navLang() === 'uk' ? 'Побудова маршруту за офлайн-картою' : 'Построение маршрута по офлайн-карте'
