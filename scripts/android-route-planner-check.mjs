@@ -39,6 +39,7 @@ try {
   });
   await ctx.addInitScript(({ origin, destination }) => {
     window.CapacitorCustomPlatform = { name: 'android' };
+    delete AbortSignal.prototype.throwIfAborted;
     const handlers = new Map();
     let id = 0;
     const status = { fine: true, coarse: true, playServices: 0, fusedStatus: 'watching', gpsEnabled: true, networkEnabled: true };
@@ -70,11 +71,15 @@ try {
           if (window.failNextRouter) {
             window.failNextRouter = false;
             this.postMessage = () => queueMicrotask(() => this.onmessage?.({ data: { failure: 'wasm' } }));
+          } else if (window.delayNextRouter) {
+            window.delayNextRouter = false;
+            const post = this.postMessage.bind(this);
+            this.postMessage = (...args) => { window.resumeRouter = () => post(...args); };
           }
         }
       }
     };
-    if (sessionStorage.getItem('offline')) Object.defineProperty(navigator, 'onLine', { get: () => false });
+    if (sessionStorage.getItem('offline')) Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
     if (!localStorage.getItem('ace:places')) localStorage.setItem('ace:places', JSON.stringify([
       { ...destination, id: 'home', name: 'Дом', placeType: 'home', createdAt: 1, updatedAt: 1 },
       { ...origin, id: 'work', name: 'Работа', placeType: 'work', createdAt: 1, updatedAt: 1 },
@@ -181,7 +186,7 @@ try {
   offline = true;
   await page.evaluate(() => {
     sessionStorage.setItem('offline', '1');
-    Object.defineProperty(navigator, 'onLine', { get: () => false });
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
     dispatchEvent(new Event('offline'));
   });
   await page.locator('#map-search').focus();
@@ -270,6 +275,27 @@ try {
   assert.equal(serverRequests, 0);
   assert(localWasmRequests > 0);
   if (process.env.ACE_RECOVERY_REPEAT) {
+    const network = async (connected) => {
+      offline = !connected;
+      await page.evaluate((value) => {
+        if (value) sessionStorage.removeItem('offline');
+        else sessionStorage.setItem('offline', '1');
+        Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => value });
+        dispatchEvent(new Event(value ? 'online' : 'offline'));
+      }, connected);
+    };
+    await network(true);
+    const before = await page.evaluate(() => {
+      window.delayNextRouter = true;
+      return window.routeWorkers;
+    });
+    await click('Построить заново');
+    await page.waitForFunction((count) => window.routeWorkers > count && window.resumeRouter, before);
+    await network(false);
+    await page.evaluate(() => { window.resumeRouter(); window.resumeRouter = undefined; });
+    await button('Построить заново').waitFor();
+    await built();
+    await paint();
     async function completeTrip() {
       await click('Начать поездку');
       const confirmation = button('Подтвердить фактическую позицию');
@@ -295,12 +321,7 @@ try {
     assert.equal(await page.evaluate(() => window.routeWorkers), workers + 20);
 
     await click('Назад');
-    offline = false;
-    await page.evaluate(() => {
-      sessionStorage.removeItem('offline');
-      delete navigator.onLine;
-      dispatchEvent(new Event('online'));
-    });
+    await network(true);
     await menu();
     await click('Настройки навигации и HUD');
     const dnipro = JSON.parse(load('catalog.json')).settlements.find((place) => place.name === 'Дніпро');

@@ -61,7 +61,7 @@ describe('offline recovery', () => {
   it('stops after two unresponsive workers', async () => {
     vi.useFakeTimers();
     const close = installWorker(() => {});
-    const result = expect(localRoute([start, end], undefined, region as never)).rejects.toThrow('время ожидания');
+    const result = expect(localRoute([start, end], undefined, region as never)).rejects.toThrow('не ответил вовремя');
     await vi.advanceTimersByTimeAsync(80_000);
     await result;
     expect(close).toHaveBeenCalledTimes(2);
