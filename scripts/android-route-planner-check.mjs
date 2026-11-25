@@ -62,6 +62,7 @@ try {
     window.emit = (plugin, event, data) => {
       for (const h of handlers.values()) if (h.plugin === plugin && h.name === event) h.callback({ at: Date.now(), ...data });
     };
+    window.routeWorkers = 0;
     const Worker = window.Worker;
     window.Worker = class extends Worker {
       constructor(url, options) {

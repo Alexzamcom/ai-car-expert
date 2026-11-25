@@ -112,7 +112,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (disposed || !el.current) return;
       }
       const manual = positionMode.get();
-      const anchor = androidDriving && p.autonomous ? plannerViewport(manual, trustedPlannerPosition(), offlineRegions.get()) : undefined;
+      const anchor = androidDriving && (p.autonomous || manual.manual || manual.rechecking)
+        ? plannerViewport(manual, trustedPlannerPosition(), offlineRegions.get()) : undefined;
       const last = anchor ? anchor.point : readLastPos();
       const area = androidDriving && (!navigator.onLine || manual.manual) ? (last ? regionAt(last) : undefined) ?? (anchor ? anchor.region : offlineRegions.get()[0]) : undefined;
       const cachedViewport = last && (!area || regionAt(last)) ? last : undefined;

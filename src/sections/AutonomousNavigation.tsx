@@ -616,14 +616,14 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
             const coords = plan.route.coords;
             const heading = courseBetween(coords[progress.segIndex], coords[progress.segIndex + 1]);
             const anchor = { position: point, heading, at: Date.now() };
-            changePositionMode(true);
-            setManualPoint(point);
+            const source = positionMode.get().manual ? 'road' : 'adaptive';
+            if (source === 'road') setManualPoint(point);
             setOrigin(anchor);
-            setVariant('road');
+            setVariant(source);
             prepareRoute(plan.route, plan.to);
             segment.current = progress.segIndex;
             setRecovering(false);
-            void start(anchor, plan.route, 'road');
+            void start(anchor, plan.route, source);
             return;
           }
           setManualPoint(point);
