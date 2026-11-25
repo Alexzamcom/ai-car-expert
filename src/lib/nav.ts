@@ -1,5 +1,6 @@
+import { positionMode, recoveryNearManual } from './routePlanner';
 import { initializeOfflineMaps, offlineRegions, regionAt, searchOfflineAddresses } from './offlineMaps';
-import { recordMapLocation } from './geo/mapLocation';
+import { clearMapLocation, recordMapLocation } from './geo/mapLocation';
 import { androidLocationDiagnostics, recordLocationMarker, recordLocationSample, recordLocationStatus } from './geo/locationDiagnostics';
 import { ConfirmedRoute } from './confirmedRoute';
 import { nativePosition, usesAndroidNativePosition } from './geo/nativePosition';
@@ -203,6 +204,8 @@ export function updateHeading(st: HeadingState, fix: RawFix, road: RoadHint | nu
 /* Последняя точная позиция — только чтобы открыть карту в знакомом месте. Машинку по ней не рисуем. */
 const LAST_POS_KEY = 'ace:last-pos';
 export function readLastPos(now = Date.now()): LatLon | null {
+  const mode = positionMode.get();
+  if (mode.manual || mode.rechecking) return mode.manual ? mode.point : null;
   try {
     const v = JSON.parse(localStorage.getItem(LAST_POS_KEY) ?? 'null') as { lat: number; lon: number; at: number } | null;
     return v && now - v.at < 30 * 86400_000 && Number.isFinite(v.lat) && Number.isFinite(v.lon) ? { lat: v.lat, lon: v.lon } : null;
@@ -338,6 +341,7 @@ export function guidanceUse(accuracy: number): 'full' | 'progress' | 'display' {
 
 /** Обработка точки GPS: фильтр, курс, состояние для карты и ведения. Экспортирована для тестов. */
 export function handleFix(fix: RawFix, now = Date.now(), source: FixSource = 'high', native?: PositionEstimate) {
+  if (positionMode.get().manual) return;
   let verdict = native ? 'accept' as const : acceptFix(acceptedFix, fix, now);
   // Две «невозможные» точки подряд согласны между собой — ошибочной была принятая раньше: переходим на новые.
   if (verdict === 'jump' && lastJump && haversine(lastJump, fix) <= 70 * Math.max(1, (fix.timestamp - lastJump.timestamp) / 1000) + lastJump.accuracy + fix.accuracy + 30) verdict = 'accept';
@@ -473,14 +477,23 @@ function publishNative(estimate: PositionEstimate | null, now: number, rawAt?: n
 }
 
 function acceptNative(input: DrivingMeasurement) {
+  const mode = positionMode.get();
+  if (mode.manual) return;
   const now = Date.now();
+  if (mode.rechecking && (input.kind !== 'position' || input.data.cached || input.data.provisional ||
+    input.data.source === 'network' || !recoveryNearManual(input.data, mode.point, now))) return;
   nativeFusion.requireMotionEvidence = !!confirmedRoute && navStore.get().status === 'guiding';
   const rawAt = input.kind === 'position' ? input.data.at : undefined;
   const estimate = nativeFusion.update(input, now, input.kind === 'motion' && nativeFusion.state?.trust !== 'confirmed' ? estimatedRoad() : undefined);
+  const recovering = positionMode.get().rechecking;
   if (input.kind === 'position') {
-    const visible = recordMapLocation(input.data, now, estimate?.trust === 'held');
+    const visible = (!recovering || estimate?.trust === 'confirmed') && recordMapLocation(input.data, now, estimate?.trust === 'held');
     recordLocationSample(input.data, now, nativeFusion.reason, estimate?.trust ?? 'rejected', visible);
     if (input.data.sequence != null) void nativePosition.acknowledge({ sequence: input.data.sequence }).catch(() => {});
+  }
+  if (recovering) {
+    if (estimate?.trust !== 'confirmed') return;
+    positionMode.set({ manual: false, rechecking: false, point: null });
   }
   publishNative(estimate, now, estimate?.trust === 'held' ? undefined : rawAt);
   if (!estimate && input.kind === 'position' && geoStore.get().nativeReason !== nativeFusion.reason) {
@@ -502,7 +515,7 @@ let nativePermissionRequested = false;
 
 async function startNativePosition(ask: boolean) {
   if (ask) nativePermissionRequested = true;
-  if (nativeRunning || experiment || !geoActive) return;
+  if (nativeRunning || experiment || !geoActive || positionMode.get().manual) return;
   nativeRunning = true;
   const generation = ++nativeGeneration;
   const add = async (handle: Promise<PluginListenerHandle>) => {
@@ -541,7 +554,7 @@ async function startNativePosition(ask: boolean) {
         void nativePosition.refresh().then(recordLocationStatus).catch(() => {});
       }
       nativeFusion.requireMotionEvidence = !!confirmedRoute && navStore.get().status === 'guiding';
-      publishNative(nativeFusion.tick(now, estimatedRoad()), now);
+      if (!positionMode.get().rechecking) publishNative(nativeFusion.tick(now, estimatedRoad()), now);
     }, 500);
   } catch (error) {
     if (generation !== nativeGeneration) return;
@@ -654,6 +667,24 @@ export function locateOnAndroid(): Promise<string> {
 
 /** Состояние запросов — для диагностики. */
 export const locatorState = () => usesAndroidNativePosition() ? { running: nativeRunning, high: nativeRunning, low: nativeRunning, retries: 0 } : locator?.state ?? { running: false, high: false, low: false, retries: 0 };
+
+export function changePositionMode(manual: boolean) {
+  positionMode.set((previous) => ({ ...previous, manual, rechecking: !manual }));
+  void stopNativePosition().then(() => { if (!manual && !positionMode.get().manual) startGeo(); });
+  __resetGeo();
+  clearMapLocation();
+  try { localStorage.removeItem(LAST_POS_KEY); } catch { /* storage unavailable */ }
+}
+
+export function trustedPlannerPosition(now = Date.now()) {
+  const mode = positionMode.get();
+  if (mode.manual || mode.rechecking) return null;
+  const fix = geoStore.get();
+  if (fix.lat == null || fix.lon == null || fix.fixAt == null || fix.held ||
+    now - fix.fixAt > 5000 || fix.fixAt > now + 500 || (fix.accuracy ?? Infinity) > 35 ||
+    usesAndroidNativePosition() && fix.nativeTrust !== 'confirmed') return null;
+  return { lat: fix.lat, lon: fix.lon };
+}
 
 export function currentPos(): LatLon | null {
   const g = geoStore.get();

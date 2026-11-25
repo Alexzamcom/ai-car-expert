@@ -101,7 +101,8 @@ try {
     localStorage.setItem('ace:hud', JSON.stringify({ style: 'game', warned: true, mirror: true }));
   });
   await page.reload({ waitUntil: 'domcontentloaded' });
-  await click('Старт вручную');
+  await click('Дополнительные настройки');
+  await click('Экспериментальная поездка');
   await page.waitForFunction(() => window.__aceMap?.state().styleReady);
   await page.evaluate(({ lat, lon }) => window.__aceMap.map.jumpTo({ center: [lon, lat], zoom: 17 }), start);
   await click('Указать старт на карте');

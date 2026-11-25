@@ -1,3 +1,6 @@
+import { RoutePlanner } from '../components/RoutePlanner';
+import { plannedRoute, positionMode, setManualPoint, type Endpoint, type PlannerLaunch } from '../lib/routePlanner';
+import { coordsPlace } from '../lib/geo/geocode';
 import { useEffect, useRef, useState } from 'react';
 import type { PluginListenerHandle } from '@capacitor/core';
 import { autonomyMap } from '../lib/autonomy/map';
@@ -13,21 +16,23 @@ import { placesStore } from '../lib/places';
 import { useStore } from '../lib/store';
 import { offlineRegions, searchOfflineAddresses } from '../lib/offlineMaps';
 import type { Place } from '../lib/geo/geocode';
-import { navLang } from '../lib/nav';
+import { changePositionMode, geoStore, navLang, setAndroidGeoExperiment, trustedPlannerPosition } from '../lib/nav';
+import { offlineStatus } from '../lib/offlineMaps';
+import { openSection } from '../lib/state';
 import { settingsStore } from '../lib/state';
 import { speak } from '../lib/speech';
 import { MapLibreMap, type MapApi } from './MapLibreMap';
 
-type Stage = 'origin' | 'destination' | 'ready' | 'driving' | 'paused' | 'correct' | 'feedback' | 'archive';
+type Stage = 'plan' | 'confirm' | 'origin' | 'destination' | 'ready' | 'driving' | 'paused' | 'correct' | 'feedback' | 'archive';
 const ISSUES = ['Отставание', 'Забегание вперёд', 'Неправильный поворот', 'Съезд с дороги'];
 const VARIANTS: Variant[] = ['inertial', 'road', 'hybrid'];
 const MODES: Record<Variant, string> = { inertial: 'Инерциальный', road: 'С дорожной привязкой', hybrid: 'С относительным GPS', adaptive: 'Гибридный', gps: 'Обычный' };
 const MAX_GUIDANCE_ERROR_M = 45;
 
-export function AutonomousNavigation({ close }: { close(): void }) {
+export function AutonomousNavigation({ close, launch }: { close(): void; launch?: PlannerLaunch }) {
   const api = useRef<MapApi | null>(null);
   const ui = useRef<HTMLDivElement>(null);
-  const [stage, setStage] = useState<Stage>('origin');
+  const [stage, setStage] = useState<Stage>(launch ? 'plan' : 'origin');
   const [origin, setOrigin] = useState<Origin | null>(null);
   const [route, setRoute] = useState<Route | null>(null);
   const [heading, setHeading] = useState('0');
@@ -39,6 +44,14 @@ export function AutonomousNavigation({ close }: { close(): void }) {
   const mode = useRef<Variant>('road');
   const [follow, setFollow] = useState(true);
   const [estimate, setEstimate] = useState<Estimate | null>(null);
+  const [plannerPicker, setPlannerPicker] = useState<{ field: Endpoint | 'position'; center: LatLon | null }>();
+  const [regionField, setRegionField] = useState<Endpoint | 'position' | null>(launch?.rejectGps ? 'position' : null);
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
+  const plan = useStore(plannedRoute);
+  const positioning = useStore(positionMode);
+  const mapping = useStore(offlineStatus);
+  useStore(geoStore);
+  const actualPosition = positioning.manual ? positioning.point : trustedPlannerPosition();
   const [pointPicker, setPointPicker] = useState(false);
   const [address, setAddress] = useState('');
   const [addresses, setAddresses] = useState<Place[]>([]);
@@ -69,6 +82,82 @@ export function AutonomousNavigation({ close }: { close(): void }) {
   const cached = useRef<{ cum: number[]; offsets: number[] } | undefined>(undefined);
   const currentRoute = useRef<Route | null>(null);
   const segment = useRef(0);
+
+  useEffect(() => {
+    if (!launch) return;
+    if (launch.rejectGps && launch.route && launch.destination) {
+      const first = launch.route.coords[0];
+      if (first) plannedRoute.set({ from: coordsPlace(first), to: launch.destination, route: launch.route });
+    }
+  }, [launch]);
+
+  useEffect(() => {
+    if (!launch || stage !== 'plan' && stage !== 'confirm') return;
+    const shown = actualPosition ? new Estimator({ position: actualPosition, heading: 0, at: Date.now() }, [], 'road').state : null;
+    autonomyMap.set({ position: shown, route: plan.route, destination: plan.route ? plan.to : null, progress: null });
+  }, [launch, stage, plan, actualPosition?.lat, actualPosition?.lon]);
+
+  useEffect(() => {
+    if (regionField !== 'position' || !launch?.rejectGps || downloaded.length > 1) return;
+    // Wait for MapLibre to finish reading the offline catalogue before choosing its sole region.
+    if (!downloaded.length && mapping.region == null) return;
+    setPlannerPicker({ field: 'position', center: downloaded[0]?.center ?? null });
+    setRegionField(null);
+  }, [regionField, launch, downloaded, mapping.region]);
+
+  function chooseOnMap(field: Endpoint | 'position') {
+    const point = field === 'position' ? positioning.point : plan[field] ?? plan[field === 'from' ? 'to' : 'from'] ?? actualPosition;
+    if (downloaded.length > 1 && !point) {
+      setRegionField(field);
+      return;
+    }
+    setPlannerPicker({ field, center: point ?? downloaded[0]?.center ?? api.current?.center?.() ?? null });
+  }
+
+  async function buildPlan() {
+    const { from, to } = plannedRoute.get();
+    if (!from || !to || routeAbort.current) return;
+    if (haversine(from, to) < 20) { setMessage('Выберите точки на расстоянии не менее 20 м.'); return; }
+    const request = new AbortController();
+    routeAbort.current = request;
+    setMessage('');
+    setBusy(true);
+    try {
+      const selected = await fetchRoute(from, to, request.signal);
+      if (request.signal.aborted) return;
+      plannedRoute.set({ from, to, route: selected });
+      requestAnimationFrame(() => api.current?.fitPoints(selected.coords, ui.current));
+    } catch (error) {
+      if (!request.signal.aborted) setMessage(error instanceof Error ? error.message : 'Маршрут не найден.');
+    } finally {
+      if (routeAbort.current === request) routeAbort.current = null;
+      if (!request.signal.aborted) setBusy(false);
+    }
+  }
+
+  function beginPlannedTrip(confirm: boolean) {
+    const { from, to, route: selected } = plannedRoute.get();
+    if (!from || !to || !selected) return;
+    const fix = trustedPlannerPosition();
+    if (!confirm && (!fix || haversine(fix, from) > 50)) {
+      setAwaitingConfirmation(true);
+      setStage('confirm');
+      return;
+    }
+    const position = fix && !confirm ? fix : from;
+    if (confirm) {
+      changePositionMode(true);
+      setManualPoint(position);
+    }
+    const direction = selected.coords.length > 1 ? courseBetween(selected.coords[0], selected.coords[1]) : 0;
+    const anchor = { position, heading: direction, at: Date.now() };
+    const source = confirm ? 'road' : 'adaptive';
+    setOrigin(anchor);
+    setVariant(source);
+    prepareRoute(selected, to);
+    setAwaitingConfirmation(false);
+    void start(anchor, selected, source);
+  }
 
   function persist() {
     const entry = trip.current;
@@ -173,6 +262,7 @@ export function AutonomousNavigation({ close }: { close(): void }) {
     setMessage('');
     if (stage === 'correct') {
       segment.current = 0;
+      if (launch && positioning.manual) setManualPoint(position);
       update({ type: 'correction', ...anchor });
       const active = currentRoute.current;
       if (active && routeProgress(active, position).offRouteM > 45) void reroute(position, active);
@@ -276,6 +366,7 @@ export function AutonomousNavigation({ close }: { close(): void }) {
       currentRoute.current = selected;
       engine.current?.setRoute(selected.coords);
       setRoute(selected);
+      if (launch) plannedRoute.set((previous) => ({ ...previous, route: selected }));
       autonomyMap.set({ ...autonomyMap.get(), route: selected, destination: target, progress: null });
       setMessage('Маршрут перестроен');
     } catch (error) {
@@ -306,17 +397,18 @@ export function AutonomousNavigation({ close }: { close(): void }) {
     }
   }
 
-  async function start() {
-    if (!origin || !route || busy) return;
-    const gps = variant === 'adaptive' || variant === 'hybrid' || variant === 'gps';
-    mode.current = variant;
+  async function start(anchorInput = origin, selectedRoute = route, source = variant) {
+    if (!anchorInput || !selectedRoute || busy) return;
+    if (launch) setAndroidGeoExperiment(true);
+    const gps = !positionMode.get().manual && (source === 'adaptive' || source === 'hybrid' || source === 'gps');
+    mode.current = gps ? source : 'road';
     const first = !engine.current;
     if (first) {
-      const anchor = { ...origin, at: Date.now() };
-      engine.current = new Estimator(anchor, route.coords, variant);
-      if (consent) trip.current = createTrip(anchor, route, variant);
+      const anchor = { ...anchorInput, at: Date.now() };
+      engine.current = new Estimator(anchor, selectedRoute.coords, mode.current);
+      if (consent) trip.current = createTrip(anchor, selectedRoute, mode.current);
     }
-    engine.current?.setVariant(variant);
+    engine.current?.setVariant(mode.current);
     setBusy(true);
     setMessage('');
     foreground.current = true;
@@ -328,7 +420,7 @@ export function AutonomousNavigation({ close }: { close(): void }) {
         await stopNative();
         return;
       }
-      await tripSensors.start({ gps, allowGpsOnly: variant === 'adaptive' || variant === 'gps' });
+      await tripSensors.start({ gps, allowGpsOnly: gps && (source === 'adaptive' || source === 'gps') });
       if (!foreground.current || document.visibilityState !== 'visible') {
         await stopNative();
         return;
@@ -352,6 +444,10 @@ export function AutonomousNavigation({ close }: { close(): void }) {
   }
 
   function changeMode(next: Variant) {
+    if (positionMode.get().manual && next !== 'road') {
+      setMessage('Сначала включите автоматическое местоположение в меню карты.');
+      return;
+    }
     const usedGps = mode.current !== 'road' && mode.current !== 'inertial';
     setVariant(next);
     mode.current = next;
@@ -429,11 +525,47 @@ export function AutonomousNavigation({ close }: { close(): void }) {
   return (
     <div className="navigation">
       <MapLibreMap apiRef={api} uiEl={ui} autonomous follow={stage === 'driving' && follow} guiding={stage === 'driving'} onUserMove={() => setFollow(false)} />
+      {plannerPicker && <PlaceMapPicker start={plannerPicker.center} cancel={() => setPlannerPicker(undefined)} confirm={(point) => {
+        const field = plannerPicker.field;
+        setPlannerPicker(undefined);
+        if (field === 'position') {
+          setManualPoint(point);
+          api.current?.centerOn(point, 16);
+          if (!plannedRoute.get().from) plannedRoute.set((previous) => ({ ...previous, from: { ...coordsPlace(point), name: 'Ручная позиция' } }));
+        } else {
+          plannedRoute.set((previous) => ({ ...previous, [field]: { ...coordsPlace(point), name: field === 'from' ? 'Старт на карте' : 'Финиш на карте' }, route: null }));
+        }
+      }} />}
       {pointPicker && <PlaceMapPicker start={api.current?.center?.() ?? null} cancel={() => setPointPicker(false)}
         confirm={(point) => { setPointPicker(false); if (stage === 'destination') void selectDestination(point); else selectOrigin(point); }} />}
       {selecting && <div className="autonomy-crosshair" aria-hidden="true">⌖</div>}
-      <div className={`autonomy-panel ${stage === 'driving' && !showTools ? 'autonomy-compact' : ''}`} ref={ui}>
-        <strong>Навигация без GPS · эксперимент</strong>
+      <div className={`autonomy-panel ${launch && (stage === 'plan' || stage === 'confirm') ? 'route-planner-panel' : ''} ${stage === 'driving' && !showTools ? 'autonomy-compact' : ''}`} ref={ui}>
+        <strong>{launch && (stage === 'plan' || stage === 'confirm') ? 'Маршрут' : 'Навигация без GPS · эксперимент'}</strong>
+        {launch && (stage === 'plan' || stage === 'confirm') && <>
+          {positioning.manual && <details className="route-planner-position">
+            <summary>{positioning.point ? `Ручная позиция · ${new Date(positioning.point.at).toLocaleString('ru')}` : 'GPS отключён · укажите положение автомобиля'}</summary>
+            <div className="route-planner-status">
+              <button className="btn" disabled={busy} onClick={() => chooseOnMap('position')}>Указать местоположение</button>
+              <button className="btn" disabled={busy} onClick={() => { setRegionField(null); changePositionMode(false); }}>Включить автоматическое местоположение</button>
+            </div>
+          </details>}
+          {regionField && <label>Скачанная карта <select defaultValue="" onChange={(event) => {
+            const region = downloaded.find((item) => item.id === event.target.value);
+            if (!region) return;
+            setPlannerPicker({ field: regionField, center: region.center });
+            setRegionField(null);
+          }}><option value="">Выберите регион</option>{downloaded.map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</select></label>}
+          {stage === 'plan' && <RoutePlanner actual={actualPosition} pick={chooseOnMap} build={() => void buildPlan()} busy={busy} ready={!!plan.route} />}
+          {stage === 'plan' && plan.route && <label><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> Записать поездку локально</label>}
+          {stage === 'plan' && plan.route && <button className="btn btn-primary" onClick={() => beginPlannedTrip(false)}>Начать поездку</button>}
+          {awaitingConfirmation && stage === 'confirm' && <>
+            <p>Вы сейчас находитесь в точке «{plan.from?.name}»? Подтвердите её только после остановки.</p>
+            <button className="btn btn-primary" onClick={() => beginPlannedTrip(true)}>Подтвердить фактическую позицию</button>
+            <button className="btn" onClick={() => { setStage('plan'); setAwaitingConfirmation(false); }}>Вернуться к маршруту</button>
+          </>}
+          {message.includes('покрытия') && <button className="btn" onClick={() => { close(); openSection('settings'); }}>Офлайн-карты</button>}
+          <button className="btn" onClick={close}>Назад</button>
+        </>}
         {message && <div role="status">{message}</div>}
         {(stage === 'origin' || stage === 'correct') && <>
           <p>Только после остановки. Переместите карту, чтобы поставить прицел на нужную полосу.</p>
@@ -462,7 +594,7 @@ export function AutonomousNavigation({ close }: { close(): void }) {
         </>}
         {stage === 'ready' && <>
           <p>Начните с полной остановки. Закрепите телефон и первые секунды плавно разгоняйтесь по прямой для калибровки.</p>
-          {modeSelect}
+          {!positioning.manual && modeSelect}
           <label><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> Записать поездку локально, включая координаты GPS при включённом GPS</label>
           <button className="btn btn-primary" disabled={busy} onClick={() => void start()}>{variant === 'road' ? 'Начать поездку без GPS' : 'Начать поездку'}</button>
           <button className="btn" disabled={busy} onClick={close}>Отмена</button>
@@ -480,6 +612,12 @@ export function AutonomousNavigation({ close }: { close(): void }) {
           <div>Расстояние · GPS {Math.round(estimate.distance.gps)} м · датчики {Math.round(estimate.distance.sensors)} м · итог {Math.round(estimate.distance.fused)} м</div>
           {trip.current?.truncated && <div>Достигнут предел записи.</div>}
           {!follow && <button className="btn" onClick={() => setFollow(true)}>К машине</button>}
+          {launch && !positioning.manual && <button className="btn" onClick={() => {
+            changePositionMode(true);
+            setVariant('road');
+            mode.current = 'road';
+            pause('GPS отключён. После остановки уточните положение.');
+          }}>GPS показывает неверное местоположение</button>}
           <button className="btn" disabled={!stationary} onClick={() => { pause('Подтвердите точку только на остановке.'); setStage('correct'); setHeading(String(Math.round(estimate.heading) % 360)); }}>Уточнить после остановки</button>
           <button className="btn" onClick={() => pause('Для коррекции и возобновления дождитесь полной остановки.')}>Пауза</button>
           <button className="btn" disabled={busy} onClick={() => void finish()}>Завершить поездку</button>

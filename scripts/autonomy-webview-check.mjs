@@ -54,7 +54,7 @@ try {
     const openExperiment = async () => {
       const menu = page.locator('.android-menu-button');
       if (platform === 'android') await menu.evaluate((el) => el.click());
-      await click('GPS показывает неверное местоположение');
+      await click(platform === 'android' ? 'Экспериментальная поездка' : 'GPS показывает неверное местоположение');
     };
     await openExperiment();
     await page.waitForFunction(() => window.__aceMap?.state().styleReady, null, { timeout: 45_000 });
