@@ -337,8 +337,8 @@ try {
     await mapReady();
     await page.locator('#map-search').focus();
     await click('Домой');
-    await chooseAddress('Откуда', 'Адрес отправления', { name: 'проспект Дмитра Яворницького 52' });
-    await chooseAddress('Куда', 'Адрес назначения', { name: 'Херсонська вулиця 7' });
+    await chooseAddress('Откуда', 'Адрес отправления', { name: 'Європейська площа 2' });
+    await chooseAddress('Куда', 'Адрес назначения', { name: 'Соборна площа 1' });
     await click('Построить маршрут');
     await built();
     await paint();
