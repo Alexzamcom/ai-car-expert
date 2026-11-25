@@ -95,9 +95,24 @@ try {
   };
   const tapPoint = async (offset = { x: 0, y: 0 }) => {
     await page.waitForFunction(() => document.querySelector('.place-map-picker .btn-primary')?.disabled === false);
-    const rect = await page.locator('.place-map-picker-map').boundingBox();
-    await page.touchscreen.tap(Math.round(rect.x + rect.width / 2 + offset.x), Math.round(rect.y + rect.height / 2 + offset.y));
-    await page.waitForFunction(() => !!document.querySelector('.place-map-picker-pin')?.style.left);
+    const point = await page.locator('.place-map-picker-map').evaluate((map, delta) => {
+      const rect = map.getBoundingClientRect();
+      return { x: Math.round(rect.x + rect.width / 2 + delta.x), y: Math.round(rect.y + rect.height / 2 + delta.y) };
+    }, offset);
+    await page.waitForFunction(({ x, y }) =>
+      !!document.elementFromPoint(x, y)?.closest('.place-map-picker-map .maplibregl-canvas-container'), point);
+    const selected = () => !!document.querySelector('.place-map-picker-pin')?.style.left;
+    await page.touchscreen.tap(point.x, point.y);
+    try {
+      await page.waitForFunction(selected, null, { timeout: 2500 });
+    } catch {
+      // A busy software renderer can miss a tap. Retry once, after the double-tap window.
+      if (!await page.evaluate(selected)) await page.touchscreen.tap(point.x, point.y);
+      await page.waitForFunction(selected, null, { timeout: 5000 }).catch(async (error) => {
+        await screenshot('04-touch-failure.png');
+        throw error;
+      });
+    }
     await click('Подтвердить');
   };
 
