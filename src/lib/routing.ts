@@ -113,7 +113,7 @@ export function routeUrl(router: Router, pts: LatLon[], alternatives: boolean): 
 export async function fetchRoutes(
   from: LatLon,
   to: LatLon,
-  opts: { signal?: AbortSignal; via?: LatLon; routers?: Router[]; timeoutMs?: number; localOnly?: boolean; onlineOnly?: boolean; confirmOnline?: boolean; onRouter?: (source: 'local' | 'online') => void } = {},
+  opts: { signal?: AbortSignal; via?: LatLon; routers?: Router[]; timeoutMs?: number; localOnly?: boolean; onlineOnly?: boolean; confirmOnline?: boolean; onRouter?: (source: 'local' | 'online') => void; onOnlineRequest?: (count: number) => void } = {},
 ): Promise<Route[]> {
   const routers = opts.routers ?? PUBLIC_ROUTERS;
   const pts = [from, ...(opts.via ? [opts.via] : []), to];
@@ -142,8 +142,11 @@ export async function fetchRoutes(
   opts.onRouter?.('online');
   const alternatives = !opts.via;
   let lastErr: Error = new RouteError('unavailable', 'Сервис маршрутов недоступен');
+  let requestCount = 0;
   for (const r of routers) {
     try {
+      if (opts.signal?.aborted) throw new DOMException('Route cancelled', 'AbortError');
+      if (typeof navigator === 'undefined' || navigator.onLine) opts.onOnlineRequest?.(++requestCount);
       const json = await fetchJson<unknown>(routeUrl(r, pts, alternatives), { timeoutMs: opts.timeoutMs ?? 12000, signal: opts.signal, service: r.name });
       return parseOsrmAll(json, r.name);
     } catch (e) {

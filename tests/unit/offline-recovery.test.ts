@@ -58,6 +58,15 @@ describe('offline recovery', () => {
     expect(close).toHaveBeenCalledTimes(2);
   });
 
+  it('stops after two unresponsive workers', async () => {
+    vi.useFakeTimers();
+    const close = installWorker(() => {});
+    const result = expect(localRoute([start, end], undefined, region as never)).rejects.toThrow('время ожидания');
+    await vi.advanceTimersByTimeAsync(80_000);
+    await result;
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
   it('terminates a cancelled worker without retry', async () => {
     const close = installWorker(() => {});
     const request = new AbortController();

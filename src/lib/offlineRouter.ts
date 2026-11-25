@@ -16,10 +16,16 @@ const messages: Record<Failure, string> = {
 class LocalFailure extends Error {
   constructor(readonly code: Failure) { super(messages[code]); }
 }
-const events: Record<string, unknown>[] = [];
+const logKey = 'ace:offline-routing-diagnostics';
+const events: Record<string, unknown>[] = (() => {
+  try { return JSON.parse(localStorage.getItem(logKey) ?? '[]').slice(-80); }
+  catch { return []; }
+})();
+routingEvent({ lifecycle: 'new-session' });
 export function routingEvent(event: Record<string, unknown>) {
   events.push({ at: new Date().toISOString(), ...event });
   if (events.length > 80) events.shift();
+  try { localStorage.setItem(logKey, JSON.stringify(events)); } catch { /* Report remains in memory. */ }
 }
 export function routingDiagnostics() { return events.slice(); }
 const cancelled = () => new DOMException('Route cancelled', 'AbortError');
@@ -89,7 +95,8 @@ export async function localRoute(points: LatLon[], signal?: AbortSignal, install
   const region = installed === undefined ? await routingRegion(points, signal) : installed;
   if (!region) throw new Error('Нет покрытия дорожного графа для всех точек. Скачайте общий регион или выберите точки внутри него.');
   const graph = { region: region.name, version: region.dataDate ?? new Date(region.updated).toISOString(), installedAt: region.updated };
-  routingEvent({ router: 'local', ...graph, graphTiles: region.graph?.length, externalRequests: 0 });
+  routingEvent({ router: 'local', settlement: region.settlementId, radiusKm: region.radiusKm, version: graph.version,
+    installedAt: graph.installedAt, graphTiles: region.graph?.length, externalRequests: 0 });
   for (let run = 1; ; run++) {
     try {
       const route = await attempt(region, points, signal);

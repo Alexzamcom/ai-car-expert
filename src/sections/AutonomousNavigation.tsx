@@ -53,7 +53,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   const plan = useStore(plannedRoute);
   const positioning = useStore(positionMode);
   useStore(geoStore);
-  const actualPosition = positioning.manual ? positioning.point : trustedPlannerPosition();
+  const actualPosition = positioning.manual ? plannerViewport(positioning, null, []).point : trustedPlannerPosition();
   const [pointPicker, setPointPicker] = useState(false);
   const [address, setAddress] = useState('');
   const [addresses, setAddresses] = useState<Place[]>([]);
@@ -109,7 +109,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
     rememberRoutingRegion(region.name);
     setPlannerPicker({ field, center: region.center });
     setRegionField(null);
-    routingEvent({ cameraSource: 'region', region: region.name });
+    routingEvent({ cameraSource: 'region', settlement: region.settlementId, radiusKm: region.radiusKm });
   }
 
   function chooseOnMap(field: Endpoint | 'position') {
@@ -123,17 +123,17 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
       if (!endpoint || regionAt(endpoint)?.id !== anchor.region.id) return openRegion(field, anchor.region);
       setPlannerPicker({ field, center: endpoint });
       setRegionField(null);
-      routingEvent({ cameraSource: 'planned-endpoint-in-region', region: anchor.region.name });
+      routingEvent({ cameraSource: 'planned-endpoint-in-region', settlement: anchor.region.settlementId });
       return;
     }
     // Keep an intentionally chosen start in view when setting a destination without a fix/region.
     const endpoint = field === 'to' ? plan.to : null;
     const anchorRegion = anchor.point && regionAt(anchor.point);
     const center = endpoint && anchorRegion && regionAt(endpoint)?.id === anchorRegion.id
-      ? endpoint : anchor.point ?? (field === 'to' ? plan.from : null);
+      ? endpoint : anchor.point;
     setPlannerPicker({ field, center });
     setRegionField(null);
-    routingEvent({ cameraSource: anchor.point ? anchor.source : center ? 'planned-start' : 'overview' });
+    routingEvent({ cameraSource: anchor.point ? anchor.source : 'overview' });
   }
 
   async function buildPlan(onlineOnly = false) {
@@ -146,6 +146,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
     setBusy(true);
     try {
       const [selected] = await fetchRoutes(from, to, { signal: request.signal, onlineOnly, confirmOnline: downloaded.some((region) => region.graph?.length),
+        onOnlineRequest: (count) => routingEvent({ router: 'online', externalRequests: count }),
         onRouter: (source) => {
           setRouter(source);
           routingEvent({ router: source, online: navigator.onLine, positionMode: positionMode.get().manual ? 'manual' : 'auto' });
@@ -238,7 +239,12 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   async function stopNative() {
     accepting.current = false;
     const handles = listeners.current.splice(0);
-    await Promise.allSettled([tripSensors.stop(), ...handles.map((listener) => listener.remove())]);
+    let timer: number | undefined;
+    await Promise.race([
+      Promise.allSettled([tripSensors.stop(), ...handles.map((listener) => listener.remove())]),
+      new Promise<void>((resolve) => { timer = window.setTimeout(resolve, 2000); }),
+    ]);
+    clearTimeout(timer);
   }
 
   function pause(reason: string) {
@@ -655,13 +661,13 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
             : 'Построение маршрута онлайн'} <button className="btn" onClick={() => routeAbort.current?.abort()}>Отмена</button></p>}
           {!recovering && stage === 'plan' && <RoutePlanner actual={actualPosition} pick={chooseOnMap} build={() => void buildPlan()} busy={busy} ready={!!plan.route} />}
           {!recovering && stage === 'plan' && plan.route && <label><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /> Записать поездку локально</label>}
-          {!recovering && stage === 'plan' && plan.route && <button className="btn btn-primary" onClick={() => beginPlannedTrip(false)}>Начать поездку</button>}
+          {!recovering && stage === 'plan' && plan.route && <button className="btn btn-primary" disabled={busy} onClick={() => beginPlannedTrip(false)}>Начать поездку</button>}
           {awaitingConfirmation && stage === 'confirm' && <>
             <p>Вы сейчас находитесь в точке «{plan.from?.name}»? Подтвердите её только после остановки.</p>
             <button className="btn btn-primary" onClick={() => beginPlannedTrip(true)}>Подтвердить фактическую позицию</button>
             <button className="btn" onClick={() => { setStage('plan'); setAwaitingConfirmation(false); }}>Вернуться к маршруту</button>
           </>}
-          {message.includes('покрытия') && navigator.onLine && <button className="btn" onClick={() => void buildPlan(true)}>Построить онлайн</button>}
+          {(message.includes('покрытия') || message.includes('Valhalla не нашёл проезда')) && navigator.onLine && <button className="btn" onClick={() => void buildPlan(true)}>Построить онлайн</button>}
           {(message.includes('покрытия') || message.includes('Обновите скачанную карту')) && <button className="btn" onClick={() => { close(); openSection('settings'); }}>Офлайн-карты</button>}
           <button className="btn" onClick={close}>Назад</button>
         </>}

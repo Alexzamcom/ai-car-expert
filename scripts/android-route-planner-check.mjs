@@ -175,6 +175,7 @@ try {
   await click('Начать поездку');
   await click('Подтвердить фактическую позицию');
   await button('HUD').waitFor();
+  await click('Меню поездки');
   await click('Завершить поездку');
   await click('Выйти без записи');
   offline = true;
@@ -275,6 +276,7 @@ try {
       await Promise.race([confirmation.waitFor(), button('HUD').waitFor()]);
       if (await confirmation.isVisible()) await click('Подтвердить фактическую позицию');
       await button('HUD').waitFor();
+      await click('Меню поездки');
       await click('Завершить поездку');
       await click('Выйти без записи');
       await page.locator('#map-search').focus();
@@ -288,6 +290,7 @@ try {
       await built();
       await paint();
       await completeTrip();
+      console.log('Павлоград, завершённый цикл ' + (run + 1) + '/20');
     }
     assert.equal(await page.evaluate(() => window.routeWorkers), workers + 20);
 

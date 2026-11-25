@@ -67,17 +67,17 @@ export function RoutePlanner({ actual, pick, build, busy, ready }: {
       </form>
       {status && <small role="status">{status}</small>}
       <div className="route-planner-options">
-        <button className="btn" onClick={() => { edit(null); pick(field); }}>Выбрать на карте</button>
-        {actual && <button className="btn" onClick={() => select({ ...coordsPlace(actual), name: 'Моё местоположение' })}>Моё местоположение</button>}
-        {places.map((place) => <button className="btn" key={place.id} onClick={() => select(place)}>{place.name}</button>)}
+        <button className="btn" disabled={busy} onClick={() => { edit(null); pick(field); }}>Выбрать на карте</button>
+        {actual && <button className="btn" disabled={busy} onClick={() => select({ ...coordsPlace(actual), name: 'Моё местоположение' })}>Моё местоположение</button>}
+        {places.map((place) => <button className="btn" disabled={busy} key={place.id} onClick={() => select(place)}>{place.name}</button>)}
       </div>
-      {matches.map((place) => <button className="btn route-planner-result" key={place.id} onClick={() => select(place)}>
+      {matches.map((place) => <button className="btn route-planner-result" disabled={busy} key={place.id} onClick={() => select(place)}>
         {place.name}{place.address && <small>{place.address}</small>}
       </button>)}
     </>}
     {ready && plan.route && <p className="route-planner-summary">{fmtDistance(plan.route.distance)} · {fmtDuration(plan.route.duration)}</p>}
-    {!ready && <button className="btn btn-primary" disabled={busy || !plan.from || !plan.to} onClick={build}>
-      {busy ? 'Строим маршрут…' : 'Построить маршрут'}
-    </button>}
+    <button className={ready ? 'btn' : 'btn btn-primary'} disabled={busy || !plan.from || !plan.to} onClick={build}>
+      {busy ? 'Строим маршрут…' : ready ? 'Построить заново' : 'Построить маршрут'}
+    </button>
   </section>;
 }
