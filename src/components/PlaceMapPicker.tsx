@@ -76,7 +76,7 @@ export function PlaceMapPicker({ start, cancel, confirm }: { start: LatLon | nul
           return;
         }
         const touch = event.touches[0];
-        finger = { id: touch.identifier, x: touch.clientX, y: touch.clientY, at: lastTouch };
+        finger = { id: touch.identifier, x: touch.clientX, y: touch.clientY, at: event.timeStamp };
       };
       const touchMove = (event: TouchEvent) => {
         if (!finger) return;
@@ -87,7 +87,7 @@ export function PlaceMapPicker({ start, cancel, confirm }: { start: LatLon | nul
         lastTouch = performance.now();
         const start = finger;
         finger = null;
-        if (!start || event.touches.length || lastTouch - start.at > 400) return;
+        if (!start || event.touches.length || event.timeStamp - start.at > 400) return;
         const touch = Array.from(event.changedTouches).find((item) => item.identifier === start.id);
         if (!touch || Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) return;
         if (lastTouch - tapAt < 500 && Math.hypot(touch.clientX - tapX, touch.clientY - tapY) < 30) {
