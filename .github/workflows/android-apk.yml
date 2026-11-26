@@ -128,6 +128,9 @@ jobs:
     needs: android
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -150,6 +153,32 @@ jobs:
             sleep 5
           done
           exit 1
+      - name: Prepare a same-certificate pair for the upgrade test
+        if: github.head_ref == 'codex/android-offline-recovery'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p upgrade/original
+          if ! gh run download 45549983820 --repo "$GITHUB_REPOSITORY" \
+            --name ai-car-expert-android-debug-apk --dir upgrade/original; then
+            echo "::warning::PR #59 APK unavailable. The in-place upgrade test is skipped."
+            exit 0
+          fi
+          baseline=upgrade/original/app-debug.apk
+          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          test -x "$apksigner" || "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'build-tools;35.0.0'
+          export ACE_UPGRADE_PASSWORD="$(openssl rand -hex 24)"
+          keytool -genkeypair -storetype PKCS12 -keyalg RSA -keysize 2048 -validity 2 \
+            -alias upgrade -dname 'CN=Disposable Android Upgrade Test' \
+            -keystore "$RUNNER_TEMP/ace-upgrade.p12" -storepass:env ACE_UPGRADE_PASSWORD
+          trap 'rm -f "$RUNNER_TEMP/ace-upgrade.p12"' EXIT
+          for item in baseline updated; do
+            apk="$baseline"
+            if [ "$item" = updated ]; then apk=apk/app-debug.apk; fi
+            "$apksigner" sign --ks "$RUNNER_TEMP/ace-upgrade.p12" --ks-key-alias upgrade \
+              --ks-pass env:ACE_UPGRADE_PASSWORD --out "upgrade/$item.apk" "$apk"
+            "$apksigner" verify --min-sdk-version 29 "upgrade/$item.apk"
+          done
       - uses: reactivecircus/android-emulator-runner@v2
         env:
           EXPECT_ROUTE_PLANNER: ${{ (github.head_ref == 'codex/android-route-planner' || github.head_ref == 'codex/android-offline-recovery') && '1' || '0' }}
@@ -166,7 +195,11 @@ jobs:
           profile: pixel_6
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
-          script: node scripts/android-smoke.mjs apk/app-debug.apk
+          script: |
+            node scripts/android-smoke.mjs apk/app-debug.apk
+            if [ -f upgrade/updated.apk ]; then
+              node scripts/android-signing-upgrade-check.mjs upgrade/baseline.apk upgrade/updated.apk
+            fi
       - uses: actions/upload-artifact@v4
         if: github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-offline-smooth' || (github.head_ref == 'codex/android-hybrid-position' || (github.head_ref == 'codex/android-confirmed-route' || (github.head_ref == 'codex/android-navigation-scale' || (github.head_ref == 'codex/android-location-bootstrap' || (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || (github.head_ref == 'codex/android-offline-routing' || (github.head_ref == 'codex/android-offline-download' || (github.head_ref == 'codex/android-route-planner' || github.head_ref == 'codex/android-offline-recovery'))))))))))))
         with:
