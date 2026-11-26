@@ -402,12 +402,35 @@ final class NativePosition: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
 final class OfflineFiles: CAPPlugin, CAPBridgedPlugin {
     let identifier = "OfflineFiles"
     let jsName = "OfflineFiles"
-    let pluginMethods: [CAPPluginMethod] = ["capacity", "regions", "publish", "remove", "erase", "writeBatch", "read", "digest", "checkpoint"].compactMap {
+    let pluginMethods: [CAPPluginMethod] = ["capacity", "regions", "publish", "remove", "erase", "writeBatch", "writeChunk", "read", "digest", "checkpoint"].compactMap {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let queue = DispatchQueue(label: "com.aicarexpert.offline-files", qos: .utility)
     private let manager = FileManager.default
     private var dataRoot: URL?
+    private struct PackedResource: Codable {
+        let chunk: Int
+        let offset: Int
+        let bytes: Int
+    }
+    private var indexes: [String: [String: PackedResource]] = [:]
+
+    private func packedIndex(_ id: String, in directory: URL) throws -> [String: PackedResource] {
+        if let cached = indexes[id] { return cached }
+        let file = directory.appendingPathComponent(".packed-index.json")
+        guard manager.fileExists(atPath: file.path) else { return [:] }
+        let index = try JSONDecoder().decode([String: PackedResource].self, from: Data(contentsOf: file))
+        indexes[id] = index
+        return index
+    }
+
+    private func chunkFile(_ index: Int, in directory: URL) -> URL {
+        directory.appendingPathComponent(".part-\(index).bin")
+    }
+
+    private func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
 
     private func root() throws -> URL {
         if let root = dataRoot { return root }
@@ -486,6 +509,7 @@ final class OfflineFiles: CAPPlugin, CAPBridgedPlugin {
             else { throw CocoaError(.fileWriteNoPermission) }
             let path = try self.directory(id, root: root)
             if self.manager.fileExists(atPath: path.path) { try self.manager.removeItem(at: path) }
+            self.indexes.removeValue(forKey: id)
             return [:]
         }
     }
@@ -505,10 +529,45 @@ final class OfflineFiles: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    @objc func writeChunk(_ call: CAPPluginCall) {
+        work(call) { root in
+            guard let id = call.getString("id"), let chunk = call.getInt("index"), chunk >= 0,
+                  let encoded = call.getString("data"), let body = Data(base64Encoded: encoded),
+                  let expected = call.getString("sha256"), self.sha256(body) == expected,
+                  let assets = call.getArray("assets", JSObject.self)
+            else { throw CocoaError(.fileReadCorruptFile) }
+            let directory = try self.directory(id, root: root)
+            var index = try self.packedIndex(id, in: directory)
+            for asset in assets {
+                guard let name = asset["path"] as? String, let offset = asset["offset"] as? Int, let bytes = asset["bytes"] as? Int,
+                      let hash = asset["sha256"] as? String, offset >= 0, bytes >= 0, offset <= body.count, bytes <= body.count - offset,
+                      self.sha256(body.subdata(in: offset..<(offset + bytes))) == hash
+                else { throw CocoaError(.fileReadCorruptFile) }
+                _ = try self.resource(id, name, root: root)
+                index[name] = PackedResource(chunk: chunk, offset: offset, bytes: bytes)
+            }
+            try self.manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            try body.write(to: self.chunkFile(chunk, in: directory), options: .atomic)
+            try JSONEncoder().encode(index).write(to: directory.appendingPathComponent(".packed-index.json"), options: .atomic)
+            self.indexes[id] = index
+            return [:]
+        }
+    }
+
     @objc func read(_ call: CAPPluginCall) {
         work(call) { root in
             guard let id = call.getString("id"), let relative = call.getString("path") else { throw CocoaError(.fileReadInvalidFileName) }
             let path = try self.resource(id, relative, root: root)
+            let directory = try self.directory(id, root: root)
+            if let entry = try self.packedIndex(id, in: directory)[relative] {
+                if entry.bytes == 0 { return ["data": ""] }
+                let file = try FileHandle(forReadingFrom: self.chunkFile(entry.chunk, in: directory))
+                defer { try? file.close() }
+                try file.seek(toOffset: UInt64(entry.offset))
+                guard let bytes = try file.read(upToCount: entry.bytes), bytes.count == entry.bytes
+                else { throw CocoaError(.fileReadCorruptFile) }
+                return ["data": bytes.base64EncodedString()]
+            }
             guard self.manager.fileExists(atPath: path.path) else { return [:] }
             return ["data": try Data(contentsOf: path).base64EncodedString()]
         }
@@ -535,7 +594,7 @@ final class OfflineFiles: CAPPlugin, CAPBridgedPlugin {
     @objc func digest(_ call: CAPPluginCall) {
         work(call) { _ in
             guard let encoded = call.getString("data"), let data = Data(base64Encoded: encoded) else { throw CocoaError(.fileReadCorruptFile) }
-            return ["hash": SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()]
+            return ["hash": self.sha256(data)]
         }
     }
 }

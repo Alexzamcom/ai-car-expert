@@ -342,23 +342,28 @@ export async function downloadNavigationPackage(name: string, center: LatLon, ra
       for (let index = start; index < pkg.chunks.length; index++) {
         const chunk = pkg.chunks[index];
         const body = await fetchAsset(new URL(chunk.path, url), chunk.bytes, signal);
-        if (await digest(body) !== chunk.sha256) throw new Error('Проверка целостности части пакета не пройдена.');
-        const entries = await Promise.all(parts[index].map(async (asset) => {
-          const data = body.slice(asset.offset!, asset.offset! + asset.bytes);
-          if (await digest(data) !== asset.sha256) throw new Error('Целостность ресурса пакета нарушена.');
-          if (asset.path === 'addresses.json') decodeAddresses(data);
-          return [asset.path, data] as const;
-        }));
-        checkAbort(signal);
         bytes += body.byteLength;
         const checkpoint: Checkpoint = { id, fingerprint: state.fingerprint, done: index + 1, bytes };
         if (iosOffline()) {
-          await writeIosAssets(id, entries, signal);
+          const address = parts[index].find(({ path }) => path === 'addresses.json');
+          if (address) decodeAddresses(body.slice(address.offset!, address.offset! + address.bytes));
+          checkAbort(signal);
+          await offlineFiles.writeChunk({ id, index, data: encodeBytes(body), sha256: chunk.sha256, assets: parts[index] });
           await offlineFiles.checkpoint({ key: checkpointKey(url.href), entry: checkpoint });
-        } else await write('resources', (store) => {
-          for (const [path, data] of entries) store.put(data, `${id}/${path}`);
-          store.put(checkpoint, checkpointKey(url.href));
-        });
+        } else {
+          if (await digest(body) !== chunk.sha256) throw new Error('Проверка целостности части пакета не пройдена.');
+          const entries = await Promise.all(parts[index].map(async (asset) => {
+            const data = body.slice(asset.offset!, asset.offset! + asset.bytes);
+            if (await digest(data) !== asset.sha256) throw new Error('Целостность ресурса пакета нарушена.');
+            if (asset.path === 'addresses.json') decodeAddresses(data);
+            return [asset.path, data] as const;
+          }));
+          checkAbort(signal);
+          await write('resources', (store) => {
+            for (const [path, data] of entries) store.put(data, `${id}/${path}`);
+            store.put(checkpoint, checkpointKey(url.href));
+          });
+        }
         progress({ done: index + 1, total: pkg.chunks.length, bytes });
       }
     } else {

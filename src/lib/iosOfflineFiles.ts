@@ -1,5 +1,6 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import type { Checkpoint, OfflineRegion } from './offlineMaps';
+import type { OfflineAsset } from './offlinePackageFormat';
 
 export const iosOffline = () => Capacitor.getPlatform() === 'ios' && Capacitor.isPluginAvailable('OfflineFiles');
 
@@ -9,6 +10,7 @@ export const offlineFiles = registerPlugin<{
   publish(options: { region: OfflineRegion; previous?: string }): Promise<void>;
   remove(options: { id: string }): Promise<void>;
   erase(options: { id: string }): Promise<void>;
+  writeChunk(options: { id: string; index: number; data: string; sha256: string; assets: OfflineAsset[] }): Promise<void>;
   writeBatch(options: { id: string; entries: { path: string; data: string }[] }): Promise<void>;
   checkpoint(options: { key: string; entry?: Checkpoint; remove?: boolean }): Promise<{ entry?: Checkpoint }>;
   read(options: { id: string; path: string }): Promise<{ data?: string }>;
