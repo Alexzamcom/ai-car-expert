@@ -1,3 +1,4 @@
+import wasmUrl from '@adret-maps/valhalla-wasm/valhalla.wasm?url';
 import { iosOffline, readIosAsset } from './iosOfflineFiles';
 import { initializeOfflineMaps, offlineRegions, type OfflineRegion } from './offlineMaps';
 import { pointInBounds } from './offlinePackageFormat';
@@ -80,8 +81,7 @@ function attempt(region: OfflineRegion, points: LatLon[], signal?: AbortSignal):
       let bytes: ArrayBuffer | undefined;
       if (ios) {
         const { default: WasmWorker } = await import('./offlineRouter.worker.ts?worker&inline');
-        const { default: url } = await import('@adret-maps/valhalla-wasm/valhalla.wasm?url');
-        const response = await fetch(url, { signal });
+        const response = await fetch(wasmUrl, { signal });
         if (!response.ok) throw new LocalFailure('wasm');
         bytes = await response.arrayBuffer();
         if (ended) return;
@@ -105,7 +105,7 @@ function attempt(region: OfflineRegion, points: LatLon[], signal?: AbortSignal):
       worker.onerror = () => fail('worker');
       worker.onmessageerror = () => fail('worker');
       if (bytes) worker.postMessage({ region, points, bytes }, [bytes]);
-      else worker.postMessage({ region, points });
+      else worker.postMessage({ region, points, wasmUrl });
     })().catch((error) => { if (!ended) fail(error instanceof LocalFailure ? error.code : 'worker'); });
   });
 }

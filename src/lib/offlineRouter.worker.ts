@@ -1,13 +1,12 @@
 import { loadValhalla, MemoryTileSource, ValhallaError } from '@adret-maps/valhalla-wasm';
-import wasmUrl from '@adret-maps/valhalla-wasm/valhalla.wasm?url';
 import { readOfflineAsset } from './offlineMaps';
 import { fromValhalla } from './valhallaRoute';
 import type { OfflineRegion } from './offlineMaps';
 import type { LatLon } from './routing';
 
-self.onmessage = async ({ data }: MessageEvent<{ region: OfflineRegion; points: LatLon[]; bytes?: ArrayBuffer }>) => {
+self.onmessage = async ({ data }: MessageEvent<{ region: OfflineRegion; points: LatLon[]; bytes?: ArrayBuffer; wasmUrl?: string }>) => {
   self.onmessage = null;
-  const { region, points, bytes } = data;
+  const { region, points, bytes, wasmUrl } = data;
   let blobUrl: string | undefined;
   let failure = 'worker';
   try {
@@ -27,7 +26,9 @@ self.onmessage = async ({ data }: MessageEvent<{ region: OfflineRegion; points: 
     failure = 'wasm';
     self.postMessage({ phase: 'wasm' });
     if (bytes) blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/wasm' }));
-    const engine = await loadValhalla({ tiles, wasmUrl: new URL(blobUrl ?? wasmUrl, self.location.href),
+    const resource = blobUrl ?? wasmUrl;
+    if (!resource) throw new Error('WASM asset is unavailable');
+    const engine = await loadValhalla({ tiles, wasmUrl: new URL(resource, self.location.href),
       config: { mjolnir: { max_cache_size: 16_000_000 } } });
     failure = 'worker';
     self.postMessage({ phase: 'route' });
