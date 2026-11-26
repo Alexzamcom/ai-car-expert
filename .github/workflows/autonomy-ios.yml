@@ -3,8 +3,6 @@ name: iOS IPA and simulator
 on:
   pull_request:
     paths: [ios/**, src/**, capacitor.config.json, package.json, vite.config.ts, .github/workflows/autonomy-ios.yml]
-  push:
-    branches: [codex/ios-capacitor-navigation]
   workflow_dispatch:
 
 permissions:
@@ -89,7 +87,6 @@ jobs:
           xcrun simctl boot "$phone"
           xcrun simctl bootstatus "$phone" -b
           xcrun simctl status_bar "$phone" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState unplugged --batteryLevel 100
-          xcrun simctl privacy "$phone" grant location com.aicarexpert.app || true
           derived="$RUNNER_TEMP/ace-ios-sim"
           app="$derived/Build/Products/Debug-iphonesimulator/App.app"
           mkdir ios-results
@@ -100,6 +97,7 @@ jobs:
               -destination "id=$phone" -configuration Debug -derivedDataPath "$derived" \
               CURRENT_PROJECT_VERSION="$version" CODE_SIGNING_ALLOWED=NO build | tee "ios-results/build-$stage.log"
             xcrun simctl install "$phone" "$app"
+            xcrun simctl privacy "$phone" grant location com.aicarexpert.app
             container="$(xcrun simctl get_app_container "$phone" com.aicarexpert.app data)"
             result="$container/Documents/ace-ios-smoke.json"
             rm -f "$result"

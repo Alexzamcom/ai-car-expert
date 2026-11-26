@@ -128,7 +128,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         return dark ? 'night' : 'day';
       };
       // Слабое устройство (мало ядер) — ночью без пятен света фонарей; окна, свечение дорог и фары остаются.
-      const lite = androidDriving || (navigator.hardwareConcurrency ?? 8) <= 4;
+      const ios = nativeDriving && !androidDriving;
+      const lite = androidDriving || (!ios && (navigator.hardwareConcurrency ?? 8) <= 4);
       const styleOf = (p: MapPalette) => ({ diff: false, transformStyle: paletteTransform(p, { lite }) });
       const LABEL: Record<MapPalette, string> = { day: 'день', night: 'ночная палитра', hud: 'HUD', game: 'игровая 3D', 'game-night': 'игровая 3D, ночь' };
       const isGame = () => nativeDriving || !!p.autonomous || settingsStore.get().mapLook === 'game';
@@ -193,6 +194,9 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       canvas.addEventListener('webglcontextlost', onLost);
       canvas.addEventListener('webglcontextrestored', onRestored);
       let frames = 0;
+      let slowWindows = 0;
+      let fastWindows = 0;
+      const nativePixelRatio = window.devicePixelRatio || 1;
       const cameraSnapshot = () => ({
         target: followTarget ? { ...androidChasePose(followTarget.speed, followTarget.lift, followTarget.landscape, map.getMaxPitch()), bearing: carNow?.heading ?? map.getBearing() } : null,
         applied: { pitch: map.getPitch(), zoom: map.getZoom(), bearing: map.getBearing() },
@@ -202,6 +206,16 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       map.on('render', () => frames++);
       const fpsTimer = setInterval(() => {
         mapDiag.fps(frames);
+        if (ios && guiding.current && map.isMoving() && document.visibilityState === 'visible' && frames > 0) {
+          slowWindows = frames < 24 ? slowWindows + 1 : 0;
+          fastWindows = frames >= 46 ? fastWindows + 1 : 0;
+          if (slowWindows === 4 && map.getPixelRatio() > nativePixelRatio * 0.8) {
+            map.setPixelRatio(Math.max(1, nativePixelRatio * 0.8));
+          }
+          if (fastWindows === 10 && map.getPixelRatio() < nativePixelRatio) map.setPixelRatio(nativePixelRatio);
+        } else {
+          slowWindows = fastWindows = 0;
+        }
         frames = 0;
         if (nativeDriving && diagModeStore.get().on) mapCameraStore.set(cameraSnapshot());
         if (!p.autonomous && diagModeStore.get().on && carNow && to) {
