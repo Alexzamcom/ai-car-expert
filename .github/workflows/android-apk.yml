@@ -4,15 +4,20 @@ on:
   pull_request:
     paths: [android/**, src/lib/autonomy/**, src/sections/AutonomousNavigation.tsx, .github/workflows/android-apk.yml]
   workflow_dispatch:
+    inputs:
+      stable_signature:
+        description: Sign with the protected Android test certificate
+        type: boolean
+        default: false
   push:
-    branches: [feature/android-capacitor-apk]
+    branches: [feature/android-capacitor-apk, codex/android-offline-recovery]
 
 permissions:
   contents: read
 
 jobs:
   android:
-    if: github.event_name != 'pull_request' || (contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position","codex/android-confirmed-route","codex/android-navigation-scale","codex/android-location-bootstrap","codex/game-hud","codex/android-road-test","codex/android-location-report","codex/android-position-visibility","codex/android-offline-routing","codex/android-offline-download","codex/android-route-planner","codex/android-offline-recovery"]'), github.head_ref) && github.event.pull_request.head.repo.full_name == github.repository)
+    if: (github.event_name != 'pull_request' && (github.ref != 'refs/heads/codex/android-offline-recovery' || github.event_name == 'workflow_dispatch' || vars.ANDROID_TEST_STABLE_SIGNING == 'true')) || (github.event_name == 'pull_request' && contains(fromJSON('["codex/gps-denied-navigation","codex/note9-navigation-hud","codex/android-navigation-ux","codex/android-offline-smooth","codex/android-hybrid-position","codex/android-confirmed-route","codex/android-navigation-scale","codex/android-location-bootstrap","codex/game-hud","codex/android-road-test","codex/android-location-report","codex/android-position-visibility","codex/android-offline-routing","codex/android-offline-download","codex/android-route-planner","codex/android-offline-recovery"]'), github.head_ref) && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -66,6 +71,58 @@ jobs:
           retention-days: 30
       - name: Installation link
         run: echo '[Download the Android debug APK artifact](${{ steps.apk.outputs.artifact-url }})' >> "$GITHUB_STEP_SUMMARY"
+
+  stable-signing:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.stable_signature) ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/codex/android-offline-recovery' &&
+      vars.ANDROID_TEST_STABLE_SIGNING == 'true')
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: android-test-signing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-car-expert-android-debug-apk
+          path: input
+      - name: Install Android signing tools
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0"'
+      - name: Sign and verify the pinned certificate
+        shell: bash
+        env:
+          ACE_SIGNING_KEYSTORE: ${{ secrets.ANDROID_TEST_KEYSTORE_BASE64 }}
+          ACE_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_TEST_STORE_PASSWORD }}
+          ACE_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_TEST_KEY_PASSWORD }}
+          ACE_SIGNING_ALIAS: ${{ vars.ANDROID_TEST_KEY_ALIAS }}
+          ACE_SIGNING_SHA256: ${{ vars.ANDROID_TEST_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          : "${ACE_SIGNING_KEYSTORE:?Configure the keystore in the protected environment}"
+          : "${ACE_SIGNING_STORE_PASSWORD:?Missing keystore password}"
+          : "${ACE_SIGNING_KEY_PASSWORD:?Missing key password}"
+          : "${ACE_SIGNING_ALIAS:?Missing key alias}"
+          expected="${ACE_SIGNING_SHA256,,}"
+          [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || { echo "Set the expected certificate SHA-256"; exit 1; }
+          umask 077
+          signing_dir="$(mktemp -d "$RUNNER_TEMP/android-signing.XXXXXX")"
+          trap 'rm -rf "$signing_dir"' EXIT
+          printf '%s' "$ACE_SIGNING_KEYSTORE" | base64 --decode > "$signing_dir/test.keystore"
+          unset ACE_SIGNING_KEYSTORE
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          "$tools/apksigner" sign --ks "$signing_dir/test.keystore" --ks-key-alias "$ACE_SIGNING_ALIAS" \
+            --ks-pass env:ACE_SIGNING_STORE_PASSWORD --key-pass env:ACE_SIGNING_KEY_PASSWORD \
+            --v4-signing-enabled false --out ai-car-expert-test.apk input/app-debug.apk
+          report="$("$tools/apksigner" verify --min-sdk-version 29 --print-certs ai-car-expert-test.apk)"
+          actual="$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ { print $NF }' <<< "$report")"
+          [[ "$actual" == "$expected" ]] || { echo "Unexpected APK signing certificate"; exit 1; }
+          echo "APK signing certificate SHA-256 $actual" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-car-expert-android-stable-test-apk
+          path: ai-car-expert-test.apk
+          if-no-files-found: error
+          retention-days: 30
 
   emulator-smoke:
     needs: android
