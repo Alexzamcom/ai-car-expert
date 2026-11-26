@@ -19,7 +19,7 @@ const open = async () => {
 };
 
 try {
-  assert.match(adb('install', '-g', baseline), /(?:^|\n)Success$/);
+  assert.match(adb('install', '--no-streaming', '-g', baseline), /^Success\s*$/m);
   let page = await open();
   const snapshot = await page.evaluate(async () => {
     const items = {
@@ -52,7 +52,7 @@ try {
     return items;
   });
   adb('shell', 'am', 'force-stop', app);
-  assert.match(adb('install', '-r', update), /(?:^|\n)Success$/);
+  assert.match(adb('install', '--no-streaming', '-r', update), /^Success\s*$/m);
   page = await open();
   const restored = await page.evaluate(async (keys) => {
     const data = Object.fromEntries(keys.map((key) => [key, JSON.parse(localStorage.getItem(key))]));
