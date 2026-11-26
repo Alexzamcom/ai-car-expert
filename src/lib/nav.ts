@@ -3,11 +3,11 @@ import { initializeOfflineMaps, offlineRegions, regionAt, searchOfflineAddresses
 import { clearMapLocation, recordMapLocation } from './geo/mapLocation';
 import { androidLocationDiagnostics, recordLocationMarker, recordLocationSample, recordLocationStatus } from './geo/locationDiagnostics';
 import { ConfirmedRoute } from './confirmedRoute';
-import { nativePosition, usesAndroidNativePosition } from './geo/nativePosition';
+import { nativePosition, usesNativePosition } from './geo/nativePosition';
 import { HybridPosition, type DrivingMeasurement, type PositionEstimate } from './geo/hybridPosition';
 import { courseBetween } from './autonomy/gnss';
 import type { PluginListenerHandle } from '@capacitor/core';
-import { androidDriving } from './androidDriving';
+import { nativeDriving } from './androidDriving';
 import { createStore } from './store';
 import { placesStore, savePlace, removePlace, placeOfType, findSaved } from './places';
 import {
@@ -567,7 +567,7 @@ async function startNativePosition(ask: boolean) {
 }
 
 export function setAndroidGeoExperiment(active: boolean) {
-  if (experiment === active || !usesAndroidNativePosition()) return;
+  if (experiment === active || !usesNativePosition()) return;
   experiment = active;
   if (active) void stopNativePosition();
   else if (geoActive && geoStore.get().status !== 'denied') void startNativePosition(false);
@@ -579,7 +579,7 @@ let geoActive = true;
 export function setAndroidGeoActive(active: boolean) {
   if (geoActive === active) return;
   geoActive = active;
-  if (usesAndroidNativePosition()) {
+  if (usesNativePosition()) {
     if (!active) void stopNativePosition();
     else if (geoStore.get().status !== 'denied') void startNativePosition(false);
     return;
@@ -594,7 +594,7 @@ export function setAndroidGeoActive(active: boolean) {
 
 /** Начать определение позиции: быстрая доступная точка, затем непрерывное уточнение (см. geo/locator.ts). */
 export function startGeo() {
-  if (usesAndroidNativePosition()) {
+  if (usesNativePosition()) {
     void startNativePosition(true);
     return;
   }
@@ -666,7 +666,7 @@ export function locateOnAndroid(): Promise<string> {
 }
 
 /** Состояние запросов — для диагностики. */
-export const locatorState = () => usesAndroidNativePosition() ? { running: nativeRunning, high: nativeRunning, low: nativeRunning, retries: 0 } : locator?.state ?? { running: false, high: false, low: false, retries: 0 };
+export const locatorState = () => usesNativePosition() ? { running: nativeRunning, high: nativeRunning, low: nativeRunning, retries: 0 } : locator?.state ?? { running: false, high: false, low: false, retries: 0 };
 
 export function changePositionMode(manual: boolean) {
   positionMode.set((previous) => ({ ...previous, manual, rechecking: !manual }));
@@ -682,7 +682,7 @@ export function trustedPlannerPosition(now = Date.now()) {
   const fix = geoStore.get();
   if (fix.lat == null || fix.lon == null || fix.fixAt == null || fix.held ||
     now - fix.fixAt > 5000 || fix.fixAt > now + 500 || (fix.accuracy ?? Infinity) > 35 ||
-    usesAndroidNativePosition() && fix.nativeTrust !== 'confirmed') return null;
+    usesNativePosition() && fix.nativeTrust !== 'confirmed') return null;
   return { lat: fix.lat, lon: fix.lon };
 }
 
@@ -697,7 +697,7 @@ export function geoHelp(): string {
   if (/iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) {
     return 'Настройки → Конфиденциальность и безопасность → Службы геолокации → включите их и для «Сайты Safari» выберите «При использовании».';
   }
-  if (usesAndroidNativePosition()) return 'Настройки Android → Приложения → AI Car Expert → Разрешения → Местоположение → При использовании.';
+  if (usesNativePosition()) return 'Настройки Android → Приложения → AI Car Expert → Разрешения → Местоположение → При использовании.';
   if (/Android/.test(ua)) return 'Нажмите на значок слева от адреса → Разрешения → Местоположение → Разрешить.';
   return 'Разрешите доступ к местоположению в настройках браузера для этого сайта.';
 }
@@ -739,7 +739,7 @@ export function geoStatusText(g: GeoState, now = Date.now()): { text: string; to
 /* ---------- Поиск мест ---------- */
 
 export async function searchPlaces(query: string, near?: LatLon, signal?: AbortSignal): Promise<Place[]> {
-  if (!usesAndroidNativePosition()) return geoSearch(query, { near, lang: navLang(), signal });
+  if (!usesNativePosition()) return geoSearch(query, { near, lang: navLang(), signal });
   const local = await searchOfflineAddresses(query).catch(() => []);
   if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
   await initializeOfflineMaps().catch(() => {});
@@ -850,7 +850,7 @@ function setRoute(route: Route) {
   const cum = cumulative(route.coords);
   routeCache = { route, cum, offsets: stepOffsets(route, cum) };
   routeTrimmer.reset();
-  confirmedRoute = usesAndroidNativePosition() && route.coords.length >= 2 ? new ConfirmedRoute(route, routeCache) : null;
+  confirmedRoute = usesNativePosition() && route.coords.length >= 2 ? new ConfirmedRoute(route, routeCache) : null;
   routeId = globalThis.crypto?.randomUUID?.() ?? String(Date.now());
   routeBuiltAt = Date.now();
   visibleRoute = undefined;
@@ -1283,14 +1283,14 @@ navStore.subscribe(() => {
       if (localStorage.getItem(NAV_PROGRESS_KEY) !== progress) localStorage.setItem(NAV_PROGRESS_KEY, progress);
     } else if (s.status !== 'routing') localStorage.removeItem(NAV_PROGRESS_KEY);
   } catch { /* browser storage can be unavailable */ }
-  if (key === lastSaved && (!androidDriving || s.route === lastSavedRoute) || s.status === 'routing') return;
+  if (key === lastSaved && (!nativeDriving || s.route === lastSavedRoute) || s.status === 'routing') return;
   lastSaved = key;
   lastSavedRoute = s.route;
   try {
     if (!s.dest || s.status === 'arrived') localStorage.removeItem(NAV_KEY);
     else localStorage.setItem(NAV_KEY, JSON.stringify({ dest: s.dest, via: s.via, guiding: s.status === 'guiding', at: Date.now(),
-      route: androidDriving && s.route ? s.route : undefined, routeId: androidDriving ? routeId : undefined,
-      builtAt: androidDriving ? routeBuiltAt : undefined, geometry: androidDriving && routeCache ? { cum: routeCache.cum, offsets: routeCache.offsets } : undefined } satisfies NavSession));
+      route: nativeDriving && s.route ? s.route : undefined, routeId: nativeDriving ? routeId : undefined,
+      builtAt: nativeDriving ? routeBuiltAt : undefined, geometry: nativeDriving && routeCache ? { cum: routeCache.cum, offsets: routeCache.offsets } : undefined } satisfies NavSession));
   } catch {
     /* хранилище недоступно */
   }
@@ -1312,7 +1312,7 @@ export function restoreNavSession() {
   const saved = readNavSession();
   if (!saved || navStore.get().dest) return;
   const route = saved.route;
-  if (androidDriving && route && route.coords?.length >= 2 && route.steps?.length) {
+  if (nativeDriving && route && route.coords?.length >= 2 && route.steps?.length) {
     setRoute(route);
     if (saved.routeId) routeId = saved.routeId;
     if (saved.builtAt) routeBuiltAt = saved.builtAt;

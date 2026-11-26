@@ -1,10 +1,12 @@
+import wasmUrl from '@adret-maps/valhalla-wasm/valhalla.wasm?url';
+import { iosOffline, readIosAsset } from './iosOfflineFiles';
 import { initializeOfflineMaps, offlineRegions, type OfflineRegion } from './offlineMaps';
 import { pointInBounds } from './offlinePackageFormat';
 import type { LatLon, Route } from './routing';
 
 type Phase = 'catalogue' | 'worker' | 'graph' | 'wasm' | 'route';
 type Failure = 'timeout' | 'worker' | 'graph' | 'wasm' | 'no-route' | 'catalogue';
-type Reply = { phase: Phase } | { route: Route } | { failure: Failure };
+type Reply = { asset: string } | { phase: Phase } | { route: Route } | { failure: Failure };
 const messages: Record<Failure, string> = {
   timeout: 'Локальный маршрутизатор не ответил вовремя. Повторите попытку.',
   worker: 'Не удалось запустить локальный маршрутизатор. Повторите попытку.',
@@ -59,10 +61,12 @@ function attempt(region: OfflineRegion, points: LatLon[], signal?: AbortSignal):
   if (signal?.aborted) return Promise.reject(cancelled());
   return new Promise((resolve, reject) => {
     let worker: Worker | undefined;
+    let ended = false;
     let phase: Phase = 'worker';
     let started = performance.now();
     const log = () => routingEvent({ phase, ms: Math.round(performance.now() - started) });
     const done = () => {
+      ended = true;
       log();
       clearTimeout(timeout);
       signal?.removeEventListener('abort', abort);
@@ -72,10 +76,24 @@ function attempt(region: OfflineRegion, points: LatLon[], signal?: AbortSignal):
     const abort = () => { done(); reject(cancelled()); };
     const timeout = setTimeout(() => fail('timeout'), 40_000);
     signal?.addEventListener('abort', abort, { once: true });
-    try {
-      worker = new Worker(new URL('./offlineRouter.worker.ts', import.meta.url), { type: 'module' });
+    void (async () => {
+      const ios = iosOffline();
+      let bytes: ArrayBuffer | undefined;
+      if (ios) {
+        const { default: WasmWorker } = await import('./offlineRouter.worker.ts?worker&inline');
+        const response = await fetch(wasmUrl, { signal });
+        if (!response.ok) throw new LocalFailure('wasm');
+        bytes = await response.arrayBuffer();
+        if (ended) return;
+        worker = new WasmWorker();
+      } else worker = new Worker(new URL('./offlineRouter.worker.ts', import.meta.url), { type: 'module' });
       worker.onmessage = ({ data }: MessageEvent<Reply>) => {
-        if ('phase' in data) {
+        if (ended) return;
+        if ('asset' in data) {
+          void readIosAsset(region.id, data.asset).then((buffer) => {
+            if (!ended) worker?.postMessage({ buffer }, buffer ? [buffer] : []);
+          }).catch(() => { if (!ended) fail('graph'); });
+        } else if ('phase' in data) {
           log();
           phase = data.phase;
           started = performance.now();
@@ -86,8 +104,9 @@ function attempt(region: OfflineRegion, points: LatLon[], signal?: AbortSignal):
       };
       worker.onerror = () => fail('worker');
       worker.onmessageerror = () => fail('worker');
-      worker.postMessage({ region, points });
-    } catch { fail('worker'); }
+      if (bytes) worker.postMessage({ region, points, bytes }, [bytes]);
+      else worker.postMessage({ region, points, wasmUrl });
+    })().catch((error) => { if (!ended) fail(error instanceof LocalFailure ? error.code : 'worker'); });
   });
 }
 

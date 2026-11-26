@@ -1,3 +1,4 @@
+import { mapWorkerUrl } from '../lib/mapWorker';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Map as MapLibre } from 'maplibre-gl';
@@ -22,7 +23,7 @@ export function PlaceMapPicker({ start, cancel, confirm, regions, onRegionChange
     void (async () => {
       const ml = await import('maplibre-gl');
       await import('maplibre-gl/dist/maplibre-gl.css');
-      ml.setWorkerUrl((await import('maplibre-gl/dist/maplibre-gl-worker.mjs?url')).default);
+      ml.setWorkerUrl(await mapWorkerUrl());
       registerOfflineProtocol(ml.addProtocol);
       await initializeOfflineMaps().catch(() => {});
       if (disposed || !element.current) return;

@@ -2,6 +2,9 @@ import UIKit
 import Capacitor
 import CoreMotion
 import CoreLocation
+import CryptoKit
+import AVFoundation
+import WebKit
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -51,9 +54,69 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 class TripBridgeViewController: CAPBridgeViewController {
+    override var prefersStatusBarHidden: Bool { true }
+    override var prefersHomeIndicatorAutoHidden: Bool { true }
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(TripSensors())
+        bridge?.registerPluginInstance(NativePosition())
+        bridge?.registerPluginInstance(OfflineFiles())
+        bridge?.registerPluginInstance(NativeSpeech())
+        webView?.scrollView.contentInsetAdjustmentBehavior = .never
+#if DEBUG && targetEnvironment(simulator)
+        let arguments = CommandLine.arguments
+        let requested = arguments.firstIndex(of: "--ace-smoke").flatMap {
+            arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil
+        }
+        if let stage = requested ?? ProcessInfo.processInfo.environment["ACE_IOS_SMOKE"] {
+            let errors = """
+                window.__aceIOSErrors = [];
+                window.addEventListener('error', e => window.__aceIOSErrors.push(e.message || String(e.target?.src || 'resource')));
+                window.addEventListener('unhandledrejection', e => window.__aceIOSErrors.push(String(e.reason)));
+                """
+            webView?.configuration.userContentController.addUserScript(
+                WKUserScript(source: errors, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            )
+            writeSmoke("{\"phase\":\"native-bridge-loaded\"}", name: "ace-ios-smoke-progress.json")
+            probeSmoke(stage: stage, remaining: 350)
+        }
+#endif
     }
+
+#if DEBUG && targetEnvironment(simulator)
+    private func writeSmoke(_ text: String, name: String) {
+        guard let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try text.write(to: directory.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        } catch { NSLog("Failed to write simulator smoke result: %@", error.localizedDescription) }
+    }
+
+    private func probeSmoke(stage: String, remaining: Int) {
+        guard remaining > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+            let script = """
+                window.__aceIOSRun && window.__aceIOSRun('\(stage == "install" ? "install" : "restore")');
+                JSON.stringify({result: window.__aceIOSResult || null, phase: window.__aceIOSPhase || 'web-bootstrap',
+                  document: document.readyState, href: location.href, app: !!document.querySelector('.app'),
+                  entry: typeof window.__aceIOSRun, errors: (window.__aceIOSErrors || []).slice(-8)})
+                """
+            self.webView?.evaluateJavaScript(script) { value, error in
+                if let json = value as? String, let data = json.data(using: .utf8),
+                   let state = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                    if let result = state["result"] as? String {
+                        self.writeSmoke(result, name: "ace-ios-smoke.json")
+                        return
+                    }
+                    self.writeSmoke(json, name: "ace-ios-smoke-progress.json")
+                } else if let error = error {
+                    NSLog("Simulator WebView probe: %@", error.localizedDescription)
+                }
+                self.probeSmoke(stage: stage, remaining: remaining - 1)
+            }
+        }
+    }
+#endif
 }
 
 @objc(TripSensors)
@@ -64,6 +127,8 @@ class TripSensors: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startGps", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopGps", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setHudAwake", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "exportTrip", returnType: CAPPluginReturnPromise)
     ]
 
@@ -71,12 +136,17 @@ class TripSensors: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
     private var location: CLLocationManager?
     private var gpsEnabled = false
     private var idleTimerWasDisabled: Bool?
+    private var active = false
+    private var hudAwake = false
     private var observer: NSObjectProtocol?
 
     override func load() {
         observer = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
-        ) { [weak self] _ in self?.deactivate() }
+        ) { [weak self] _ in
+            self?.hudAwake = false
+            self?.deactivate()
+        }
     }
 
     deinit {
@@ -86,13 +156,14 @@ class TripSensors: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
     @objc func start(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             self.deactivate()
-            guard self.motion.isDeviceMotionAvailable else {
+            guard self.motion.isDeviceMotionAvailable || call.getBool("allowGpsOnly") == true else {
                 call.reject("Датчики движения недоступны")
                 return
             }
             self.gpsEnabled = call.getBool("gps") ?? false
-            self.idleTimerWasDisabled = UIApplication.shared.isIdleTimerDisabled
-            UIApplication.shared.isIdleTimerDisabled = true
+            self.active = true
+            self.updateIdleTimer()
+            guard self.motion.isDeviceMotionAvailable else { call.resolve(); return }
             self.motion.deviceMotionUpdateInterval = 0.05
             self.motion.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] sample, error in
                 guard let self = self else { return }
@@ -117,10 +188,11 @@ class TripSensors: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
 
     @objc func startGps(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
-            guard self.gpsEnabled else {
+            guard self.active else {
                 call.reject("GPS выключен")
                 return
             }
+            self.gpsEnabled = true
             let location = self.location ?? CLLocationManager()
             self.location = location
             location.delegate = self
@@ -161,12 +233,38 @@ class TripSensors: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
         }
     }
 
+    @objc func stopGps(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.gpsEnabled = false
+            self.location?.stopUpdatingLocation()
+            call.resolve()
+        }
+    }
+
+    @objc func setHudAwake(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.hudAwake = call.getBool("enabled") ?? false
+            self.updateIdleTimer()
+            call.resolve()
+        }
+    }
+
+    private func updateIdleTimer() {
+        if active || hudAwake {
+            if idleTimerWasDisabled == nil { idleTimerWasDisabled = UIApplication.shared.isIdleTimerDisabled }
+            UIApplication.shared.isIdleTimerDisabled = true
+        } else if let previous = idleTimerWasDisabled {
+            UIApplication.shared.isIdleTimerDisabled = previous
+            idleTimerWasDisabled = nil
+        }
+    }
+
     private func deactivate() {
         motion.stopDeviceMotionUpdates()
         location?.stopUpdatingLocation()
         gpsEnabled = false
-        if let previous = idleTimerWasDisabled { UIApplication.shared.isIdleTimerDisabled = previous }
-        idleTimerWasDisabled = nil
+        active = false
+        updateIdleTimer()
     }
 
     @objc func exportTrip(_ call: CAPPluginCall) {
@@ -193,5 +291,339 @@ class TripSensors: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
                 call.reject("Не удалось подготовить экспорт", nil, error)
             }
         }
+    }
+}
+
+@objc(NativePosition)
+final class NativePosition: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
+    let identifier = "NativePosition"
+    let jsName = "NativePosition"
+    let pluginMethods: [CAPPluginMethod] = ["start", "stop", "refresh", "diagnostics", "acknowledge", "copyDiagnostics"].compactMap {
+        CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
+    }
+    private lazy var location: CLLocationManager = {
+        let manager = CLLocationManager()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.activityType = .automotiveNavigation
+        return manager
+    }()
+    private let motion = CMMotionManager()
+    private var running = false
+    private var awaitingPermission: CAPPluginCall?
+    private var sequence = 0
+
+    private var status: [String: Any] {
+        let allowed = [.authorizedAlways, .authorizedWhenInUse].contains(location.authorizationStatus)
+        let precise = allowed && location.accuracyAuthorization == .fullAccuracy
+        return ["fine": precise, "coarse": allowed, "gpsEnabled": precise, "networkEnabled": allowed,
+                "fusedStatus": allowed ? "core-location" : "permission", "playServices": -1, "sent": sequence]
+    }
+
+    @objc func start(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.running = true
+            if self.location.authorizationStatus == .notDetermined && call.getBool("ask") == true {
+                self.awaitingPermission = call
+                self.location.requestWhenInUseAuthorization()
+            } else { self.begin(call) }
+        }
+    }
+
+    private func begin(_ call: CAPPluginCall?) {
+        guard running else { call?.reject("Запрос остановлен"); return }
+        switch location.authorizationStatus {
+        case .restricted, .denied:
+            call?.reject("Разрешите геолокацию в настройках iOS", "DENIED")
+        case .authorizedAlways, .authorizedWhenInUse:
+            location.startUpdatingLocation()
+            if motion.isDeviceMotionAvailable && !motion.isDeviceMotionActive {
+                motion.deviceMotionUpdateInterval = 0.1
+                motion.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] sample, _ in
+                    guard let self = self, self.running, let sample = sample else { return }
+                    let r = sample.attitude.rotationMatrix, gyro = sample.rotationRate, a = sample.userAcceleration
+                    self.notifyListeners("motion", data: ["at": Date().timeIntervalSince1970 * 1000,
+                        "yawRate": -(r.m13 * gyro.x + r.m23 * gyro.y + r.m33 * gyro.z) * 180 / Double.pi,
+                        "east": 9.80665 * (r.m11 * a.x + r.m21 * a.y + r.m31 * a.z),
+                        "north": 9.80665 * (r.m12 * a.x + r.m22 * a.y + r.m32 * a.z)])
+                }
+            }
+            call?.resolve(status)
+        default: call?.resolve(status)
+        }
+        notifyListeners("locationStatus", data: status)
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        guard manager.authorizationStatus != .notDetermined, running else { return }
+        let call = awaitingPermission
+        awaitingPermission = nil
+        begin(call)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard running else { return }
+        for fix in locations where fix.horizontalAccuracy >= 0 {
+            sequence += 1
+            let reduced = manager.accuracyAuthorization == .reducedAccuracy
+            var result: [String: Any] = [
+                "at": fix.timestamp.timeIntervalSince1970 * 1000, "lat": fix.coordinate.latitude,
+                "lon": fix.coordinate.longitude, "accuracy": fix.horizontalAccuracy,
+                "source": reduced ? "network" : "fused", "provisional": reduced, "sequence": sequence
+            ]
+            if fix.speed >= 0 { result["speed"] = fix.speed }
+            if fix.speedAccuracy >= 0 { result["speedAccuracy"] = fix.speedAccuracy }
+            if fix.course >= 0 { result["heading"] = fix.course }
+            notifyListeners("position", data: result)
+        }
+    }
+
+    @objc func stop(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            self.running = false
+            self.awaitingPermission?.reject("Запрос остановлен")
+            self.awaitingPermission = nil
+            self.location.stopUpdatingLocation()
+            self.motion.stopDeviceMotionUpdates()
+            call.resolve()
+        }
+    }
+
+    @objc func refresh(_ call: CAPPluginCall) { DispatchQueue.main.async { self.begin(call) } }
+    @objc func diagnostics(_ call: CAPPluginCall) { DispatchQueue.main.async { call.resolve(self.status) } }
+    @objc func acknowledge(_ call: CAPPluginCall) { call.resolve() }
+    @objc func copyDiagnostics(_ call: CAPPluginCall) {
+        guard let json = call.getString("json") else { call.reject("Нет отчёта"); return }
+        DispatchQueue.main.async { UIPasteboard.general.string = json; call.resolve() }
+    }
+}
+
+@objc(OfflineFiles)
+final class OfflineFiles: CAPPlugin, CAPBridgedPlugin {
+    let identifier = "OfflineFiles"
+    let jsName = "OfflineFiles"
+    let pluginMethods: [CAPPluginMethod] = ["capacity", "regions", "publish", "remove", "erase", "writeBatch", "writeChunk", "read", "digest", "checkpoint"].compactMap {
+        CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
+    }
+    private let queue = DispatchQueue(label: "com.aicarexpert.offline-files", qos: .utility)
+    private let manager = FileManager.default
+    private var dataRoot: URL?
+    private struct PackedResource: Codable {
+        let chunk: Int
+        let offset: Int
+        let bytes: Int
+    }
+    private var indexes: [String: [String: PackedResource]] = [:]
+
+    private func packedIndex(_ id: String, in directory: URL) throws -> [String: PackedResource] {
+        if let cached = indexes[id] { return cached }
+        let file = directory.appendingPathComponent(".packed-index.json")
+        guard manager.fileExists(atPath: file.path) else { return [:] }
+        let index = try JSONDecoder().decode([String: PackedResource].self, from: Data(contentsOf: file))
+        indexes[id] = index
+        return index
+    }
+
+    private func chunkFile(_ index: Int, in directory: URL) -> URL {
+        directory.appendingPathComponent(".part-\(index).bin")
+    }
+
+    private func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func root() throws -> URL {
+        if let root = dataRoot { return root }
+        let base = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        var root = base.appendingPathComponent("OfflineMaps", isDirectory: true)
+        try manager.createDirectory(at: root, withIntermediateDirectories: true)
+        var attributes = URLResourceValues()
+        attributes.isExcludedFromBackup = true
+        try root.setResourceValues(attributes)
+        dataRoot = root
+        return root
+    }
+
+    private func directory(_ id: String, root: URL) throws -> URL {
+        guard id.range(of: "^[pr][a-z0-9]{1,64}$", options: .regularExpression) != nil else { throw CocoaError(.fileReadInvalidFileName) }
+        return root.appendingPathComponent(id, isDirectory: true)
+    }
+
+    private func resource(_ id: String, _ path: String, root: URL) throws -> URL {
+        guard path.utf8.count <= 256 else { throw CocoaError(.fileReadInvalidFileName) }
+        let parts = path.components(separatedBy: "/")
+        guard parts.allSatisfy({ $0 != "." && $0 != ".." && $0.range(of: "^[A-Za-z0-9_.-]+$", options: .regularExpression) != nil })
+        else { throw CocoaError(.fileReadInvalidFileName) }
+        return try parts.reduce(directory(id, root: root)) { $0.appendingPathComponent($1) }
+    }
+
+    private func catalogue(_ root: URL) throws -> [[String: Any]] {
+        let path = root.appendingPathComponent("regions.json")
+        guard manager.fileExists(atPath: path.path) else { return [] }
+        guard let result = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [[String: Any]]
+        else { throw CocoaError(.fileReadCorruptFile) }
+        return result
+    }
+
+    private func work(_ call: CAPPluginCall, _ action: @escaping (URL) throws -> [String: Any]) {
+        queue.async {
+            do { call.resolve(try action(self.root())) }
+            catch { call.reject("Локальное хранилище карт недоступно", nil, error) }
+        }
+    }
+
+    @objc func capacity(_ call: CAPPluginCall) {
+        work(call) { root in
+            let bytes = try root.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity ?? 0
+            return ["availableBytes": bytes]
+        }
+    }
+
+    @objc func regions(_ call: CAPPluginCall) { work(call) { root in ["entries": try self.catalogue(root)] } }
+
+    @objc func publish(_ call: CAPPluginCall) {
+        work(call) { root in
+            guard let region = call.getObject("region"), let id = region["id"] as? String,
+                  let name = region["name"] as? String,
+                  self.manager.fileExists(atPath: try self.directory(id, root: root).path)
+            else { throw CocoaError(.fileReadCorruptFile) }
+            let previous = call.getString("previous")
+            let updated = try self.catalogue(root).filter { ($0["id"] as? String) != previous && ($0["name"] as? String) != name } + [region]
+            try JSONSerialization.data(withJSONObject: updated).write(to: root.appendingPathComponent("regions.json"), options: .atomic)
+            return [:]
+        }
+    }
+
+    @objc func remove(_ call: CAPPluginCall) {
+        work(call) { root in
+            guard let id = call.getString("id") else { throw CocoaError(.fileReadInvalidFileName) }
+            let updated = try self.catalogue(root).filter { ($0["id"] as? String) != id }
+            try JSONSerialization.data(withJSONObject: updated).write(to: root.appendingPathComponent("regions.json"), options: .atomic)
+            return [:]
+        }
+    }
+
+    @objc func erase(_ call: CAPPluginCall) {
+        work(call) { root in
+            guard let id = call.getString("id"), try !self.catalogue(root).contains(where: { ($0["id"] as? String) == id })
+            else { throw CocoaError(.fileWriteNoPermission) }
+            let path = try self.directory(id, root: root)
+            if self.manager.fileExists(atPath: path.path) { try self.manager.removeItem(at: path) }
+            self.indexes.removeValue(forKey: id)
+            return [:]
+        }
+    }
+
+    @objc func writeBatch(_ call: CAPPluginCall) {
+        work(call) { root in
+            guard let id = call.getString("id"), let entries = call.getArray("entries", JSObject.self),
+                  entries.count <= 16 else { throw CocoaError(.fileReadCorruptFile) }
+            for entry in entries {
+                guard let relative = entry["path"] as? String, let encoded = entry["data"] as? String,
+                      let data = Data(base64Encoded: encoded) else { throw CocoaError(.fileReadCorruptFile) }
+                let path = try self.resource(id, relative, root: root)
+                try self.manager.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: path, options: .atomic)
+            }
+            return [:]
+        }
+    }
+
+    @objc func writeChunk(_ call: CAPPluginCall) {
+        work(call) { root in
+            guard let id = call.getString("id"), let chunk = call.getInt("index"), chunk >= 0,
+                  let encoded = call.getString("data"), let body = Data(base64Encoded: encoded),
+                  let expected = call.getString("sha256"), self.sha256(body) == expected,
+                  let assets = call.getArray("assets", JSObject.self)
+            else { throw CocoaError(.fileReadCorruptFile) }
+            let directory = try self.directory(id, root: root)
+            var index = try self.packedIndex(id, in: directory)
+            for asset in assets {
+                guard let name = asset["path"] as? String, let offset = asset["offset"] as? Int, let bytes = asset["bytes"] as? Int,
+                      let hash = asset["sha256"] as? String, offset >= 0, bytes >= 0, offset <= body.count, bytes <= body.count - offset,
+                      self.sha256(body.subdata(in: offset..<(offset + bytes))) == hash
+                else { throw CocoaError(.fileReadCorruptFile) }
+                _ = try self.resource(id, name, root: root)
+                index[name] = PackedResource(chunk: chunk, offset: offset, bytes: bytes)
+            }
+            try self.manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            try body.write(to: self.chunkFile(chunk, in: directory), options: .atomic)
+            try JSONEncoder().encode(index).write(to: directory.appendingPathComponent(".packed-index.json"), options: .atomic)
+            self.indexes[id] = index
+            return [:]
+        }
+    }
+
+    @objc func read(_ call: CAPPluginCall) {
+        work(call) { root in
+            guard let id = call.getString("id"), let relative = call.getString("path") else { throw CocoaError(.fileReadInvalidFileName) }
+            let path = try self.resource(id, relative, root: root)
+            let directory = try self.directory(id, root: root)
+            if let entry = try self.packedIndex(id, in: directory)[relative] {
+                if entry.bytes == 0 { return ["data": ""] }
+                let file = try FileHandle(forReadingFrom: self.chunkFile(entry.chunk, in: directory))
+                defer { try? file.close() }
+                try file.seek(toOffset: UInt64(entry.offset))
+                guard let bytes = try file.read(upToCount: entry.bytes), bytes.count == entry.bytes
+                else { throw CocoaError(.fileReadCorruptFile) }
+                return ["data": bytes.base64EncodedString()]
+            }
+            guard self.manager.fileExists(atPath: path.path) else { return [:] }
+            return ["data": try Data(contentsOf: path).base64EncodedString()]
+        }
+    }
+
+    @objc func checkpoint(_ call: CAPPluginCall) {
+        work(call) { root in
+            guard let key = call.getString("key") else { throw CocoaError(.fileReadInvalidFileName) }
+            let name = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+            let file = root.appendingPathComponent("checkpoint-" + name + ".json")
+            if call.getBool("remove") == true {
+                if self.manager.fileExists(atPath: file.path) { try self.manager.removeItem(at: file) }
+                return [:]
+            }
+            if let entry = call.getObject("entry") {
+                try JSONSerialization.data(withJSONObject: entry).write(to: file, options: .atomic)
+                return [:]
+            }
+            guard self.manager.fileExists(atPath: file.path) else { return [:] }
+            return ["entry": try JSONSerialization.jsonObject(with: Data(contentsOf: file))]
+        }
+    }
+
+    @objc func digest(_ call: CAPPluginCall) {
+        work(call) { _ in
+            guard let encoded = call.getString("data"), let data = Data(base64Encoded: encoded) else { throw CocoaError(.fileReadCorruptFile) }
+            return ["hash": self.sha256(data)]
+        }
+    }
+}
+
+@objc(NativeSpeech)
+final class NativeSpeech: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDelegate {
+    let identifier = "NativeSpeech"
+    let jsName = "NativeSpeech"
+    let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "say", returnType: CAPPluginReturnPromise)]
+    private let synth = AVSpeechSynthesizer()
+    private var pending: [ObjectIdentifier: CAPPluginCall] = [:]
+
+    @objc func say(_ call: CAPPluginCall) {
+        guard let text = call.getString("text"), let lang = call.getString("lang") else { call.reject("Нет текста"); return }
+        DispatchQueue.main.async {
+            self.synth.delegate = self
+            self.synth.stopSpeaking(at: .immediate)
+            let utterance = AVSpeechUtterance(string: text)
+            utterance.voice = AVSpeechSynthesisVoice(language: lang)
+            self.pending[ObjectIdentifier(utterance)] = call
+            self.synth.speak(utterance)
+        }
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        pending.removeValue(forKey: ObjectIdentifier(utterance))?.resolve()
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        pending.removeValue(forKey: ObjectIdentifier(utterance))?.resolve()
     }
 }

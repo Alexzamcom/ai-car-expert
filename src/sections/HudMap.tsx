@@ -1,6 +1,7 @@
+import { mapWorkerUrl } from '../lib/mapWorker';
 /* HUD «Полная карта»: отдельная неинтерактивная карта MapLibre — чёрный фон, дороги и перекрёстки,
    яркий маршрут, машинка; всегда по движению, с наклоном. Маршрут и GPS — общие с навигацией. */
-import { androidDriving, ANDROID_OVERVIEW } from '../lib/androidDriving';
+import { nativeDriving, ANDROID_OVERVIEW } from '../lib/androidDriving';
 import { initializeOfflineMaps, offlineStatus, offlineStyleFor, registerOfflineProtocol } from '../lib/offlineMaps';
 import { useEffect, useRef } from 'react';
 import type { GeoJSONSource, Map as MlMap } from 'maplibre-gl';
@@ -27,15 +28,15 @@ export function HudMap({ color }: { color: string }) {
     void (async () => {
       const ml = await import('maplibre-gl');
       await import('maplibre-gl/dist/maplibre-gl.css');
-      const workerUrl = (await import('maplibre-gl/dist/maplibre-gl-worker.mjs?url')).default;
-      if (androidDriving) {
+      const workerUrl = await mapWorkerUrl();
+      if (nativeDriving) {
         registerOfflineProtocol(ml.addProtocol);
         await initializeOfflineMaps().catch(() => {});
       }
       if (disposed || !el.current) return;
       ml.setWorkerUrl(workerUrl);
       const g0 = geoStore.get();
-      const start = g0.lat != null && g0.lon != null ? { lat: g0.lat, lon: g0.lon } : (readLastPos() ?? (androidDriving ? ANDROID_OVERVIEW : { lat: 55.7539, lon: 37.6208 }));
+      const start = g0.lat != null && g0.lon != null ? { lat: g0.lat, lon: g0.lon } : (readLastPos() ?? (nativeDriving ? ANDROID_OVERVIEW : { lat: 55.7539, lon: 37.6208 }));
       const map = new ml.Map({
         container: el.current,
         // Сначала пустой чёрный стиль, затем векторный в палитре HUD — без вспышки светлой карты.
@@ -53,11 +54,11 @@ export function HudMap({ color }: { color: string }) {
       mapDiag.create('HUD-карта');
       const restyle = () => {
         const c = map.getCenter();
-        const source = androidDriving && (!navigator.onLine || offlineStatus.get().local)
+        const source = nativeDriving && (!navigator.onLine || offlineStatus.get().local)
           ? offlineStyleFor({ lat: c.lat, lon: c.lng }).style : DEFAULT_STYLE_URL;
         map.setStyle(source, { diff: false, transformStyle: paletteTransform('hud', { roadColor: '#8d969f' }) });
       };
-      if (androidDriving) {
+      if (nativeDriving) {
         window.addEventListener('online', restyle);
         window.addEventListener('offline', restyle);
         cleanups.push(offlineStatus.subscribe(restyle), () => {
@@ -91,7 +92,7 @@ export function HudMap({ color }: { color: string }) {
       carEl.className = 'hud-map-car';
       carEl.innerHTML = '<svg viewBox="-20 -24 40 44" width="44" height="48"><path d="M0 -22 L15 16 L0 8 L-15 16 Z" fill="currentColor"/></svg>';
       const marker = new ml.Marker({ element: carEl, rotationAlignment: 'map', pitchAlignment: 'map' }).setLngLat([start.lon, start.lat]);
-      let markerVisible = !androidDriving;
+      let markerVisible = !nativeDriving;
       if (markerVisible) marker.addTo(map);
 
       let from: LatLon | null = null;
@@ -124,7 +125,7 @@ export function HudMap({ color }: { color: string }) {
         const g = displayStore.get(); // отображаемая позиция (привязка к дороге)
         if (g.lat == null || g.lon == null) return;
         const fix = geoStore.get();
-        if (androidDriving && !to && (fix.held || (fix.accuracy ?? Infinity) > 50 || Date.now() - (fix.updated ?? 0) > 5000)) return;
+        if (nativeDriving && !to && (fix.held || (fix.accuracy ?? Infinity) > 50 || Date.now() - (fix.updated ?? 0) > 5000)) return;
         if (to && to.lat === g.lat && to.lon === g.lon && heading === g.heading) return;
         const now = performance.now();
         const first = !to;

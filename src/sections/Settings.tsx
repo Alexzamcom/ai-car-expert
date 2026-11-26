@@ -18,7 +18,7 @@ import { CAR_COLORS, carSvg, type CarColor } from '../lib/carMarker';
 import { geoStore, navStore, setNavigationVoice, restartGeo, locatorState, guidanceUse, setDestination } from '../lib/nav';
 import { MyPlacesSection } from '../components/MyPlaces';
 import { OfflineMapsSettings } from './OfflineMapsSettings';
-import { androidDriving } from '../lib/androidDriving';
+import { nativeDriving } from '../lib/androidDriving';
 import { NAV_CAMERAS, effectiveNavCamera } from '../lib/camera';
 import { nativePosition, usesAndroidNativePosition } from '../lib/geo/nativePosition';
 import { FIX_SOURCE_LABEL } from '../lib/geo/locator';
@@ -119,7 +119,7 @@ export function Settings() {
         </button>
       </form>
 
-      {androidDriving && <OfflineMapsSettings />}
+      {nativeDriving && <OfflineMapsSettings />}
       <CarOnMapSettings />
       <MyPlacesCard />
       <HudSettingsCard />
@@ -831,7 +831,7 @@ function CarOnMapSettings() {
       <h3 className="section-title">
         <Icon name="car" /> Машинка на карте
       </h3>
-      {!androidDriving && <div className="car-colors" role="radiogroup" aria-label="Цвет машинки">
+      {!nativeDriving && <div className="car-colors" role="radiogroup" aria-label="Цвет машинки">
         {(Object.keys(CAR_COLORS) as CarColor[]).map((c) => (
           <button
             key={c}
@@ -869,7 +869,7 @@ function CarOnMapSettings() {
           ))}
         </div>
       </div>
-      {!androidDriving && s.mapEngine === 'maplibre' && (
+      {!nativeDriving && s.mapEngine === 'maplibre' && (
         <div className="setting-row">
           <div>
             <strong>Вид карты</strong>
@@ -892,7 +892,7 @@ function CarOnMapSettings() {
           </div>
         </div>
       )}
-      {!androidDriving && s.mapEngine === 'maplibre' && (
+      {!nativeDriving && s.mapEngine === 'maplibre' && (
         <div className="setting-row">
           <div>
             <strong>Карта при ведении</strong>
@@ -912,7 +912,7 @@ function CarOnMapSettings() {
           </div>
         </div>
       )}
-      {!androidDriving && s.mapEngine === 'maplibre' && (
+      {!nativeDriving && s.mapEngine === 'maplibre' && (
         <div className="setting-row">
           <div>
             <strong>Камера по движению</strong>
@@ -933,10 +933,10 @@ function CarOnMapSettings() {
           </div>
         </div>
       )}
-      {androidDriving && s.mapEngine === 'maplibre' && <div className="setting-row">
+      {nativeDriving && s.mapEngine === 'maplibre' && <div className="setting-row">
         <div><strong>Динамическая камера</strong><small>Следует по направлению дороги и поднимается к перекрёстку. Кнопка центрирования возвращает ведение.</small></div>
       </div>}
-      {!androidDriving && <div className="setting-row">
+      {!nativeDriving && <div className="setting-row">
         <div>
           <strong>Вид машинки</strong>
           <small>Объёмная — на карте 3D (MapLibre); облегчённая плоская — для слабых устройств. На карте Leaflet машинка всегда плоская.</small>

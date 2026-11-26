@@ -3,7 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import { usesAndroidNativePosition } from './nativePosition';
 import { setAndroidGeoActive } from '../nav';
 
-if (Capacitor.getPlatform() === 'android' && !usesAndroidNativePosition()) {
+if (Capacitor.getPlatform() === 'ios' || (Capacitor.getPlatform() === 'android' && !usesAndroidNativePosition())) {
   let resumed = true;
   const sync = () => setAndroidGeoActive(resumed && document.visibilityState === 'visible');
   document.addEventListener('visibilitychange', sync);

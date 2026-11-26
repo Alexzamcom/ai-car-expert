@@ -6,7 +6,7 @@ import { mapLocationStore, MAP_LOCATION_STALE_MS } from '../lib/geo/mapLocation'
 import { usesAndroidNativePosition } from '../lib/geo/nativePosition';
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { offlineStatus } from '../lib/offlineMaps';
-import { androidDriving, ANDROID_OVERVIEW, maneuverNotice } from '../lib/androidDriving';
+import { nativeDriving, ANDROID_OVERVIEW, maneuverNotice } from '../lib/androidDriving';
 import { CONTROLS_IDLE_MS, verticalSwipe } from '../lib/drivingControls';
 import type { MapApi } from './MapLibreMap';
 import L from 'leaflet';
@@ -133,7 +133,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
     work: places.find((p) => p.placeType === 'work') ?? legacySaved.work };
   const theme = useStore(themeStore);
   const settings = useStore(settingsStore);
-  const carColor = androidDriving ? 'white' : settings.carColor;
+  const carColor = nativeDriving ? 'white' : settings.carColor;
   const runtime = useStore(mapRuntimeStore);
   const disp = useStore(displayStore);
   const diag = useStore(diagModeStore);
@@ -156,7 +156,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
   const lang = navLang();
   const [cueClock, setCueClock] = useState(Date.now);
   useEffect(() => {
-    if (!androidDriving || !guiding && !usesAndroidNativePosition()) return;
+    if (!nativeDriving || !guiding && !usesAndroidNativePosition()) return;
     const timer = window.setInterval(() => setCueClock(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [guiding]);
@@ -170,7 +170,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
     if (engine !== 'leaflet' || !mapEl.current || map.current) return;
     // Пока нет точки GPS — карта там, где была последняя точная позиция (машинку по ней не рисуем).
     const last = readLastPos();
-    const m = L.map(mapEl.current, { zoomControl: false, attributionControl: true }).setView(last ? [last.lat, last.lon] : androidDriving ? [ANDROID_OVERVIEW.lat, ANDROID_OVERVIEW.lon] : DEFAULT_CENTER, last ? 14 : androidDriving ? 2 : 13);
+    const m = L.map(mapEl.current, { zoomControl: false, attributionControl: true }).setView(last ? [last.lat, last.lon] : nativeDriving ? [ANDROID_OVERVIEW.lat, ANDROID_OVERVIEW.lon] : DEFAULT_CENTER, last ? 14 : nativeDriving ? 2 : 13);
     // Стандартный слой OpenStreetMap: без ключа, по правилам tile.openstreetmap.org
     // (атрибуция со ссылкой, браузер передаёт Referer). Ночью тайлы затемняются CSS-фильтром.
     // Прежний слой CARTO без договора и ключа отдавал тайлы с надписью «API KEY REQUIRED».
@@ -256,7 +256,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
   const zoomBand = useRef<number | null>(null);
   useEffect(() => {
     const m = map.current;
-    if (!m || geo.lat == null || geo.lon == null || (androidDriving && !layers.current.me && (geo.accuracy ?? Infinity) > 50)) return;
+    if (!m || geo.lat == null || geo.lon == null || (nativeDriving && !layers.current.me && (geo.accuracy ?? Infinity) > 50)) return;
     // Машинка и камера — по отображаемой позиции (привязка к дороге); круг точности — вокруг сырой точки GPS.
     const shown = disp.lat != null && disp.lon != null ? { lat: disp.lat, lon: disp.lon, heading: disp.heading } : geo;
     const raw: L.LatLngTuple = [geo.lat, geo.lon];
@@ -403,7 +403,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
     shownStart.current = guidanceStartCount();
     const r = navStore.get().route;
     if (engine === 'maplibre' && r) {
-      if (androidDriving) {
+      if (nativeDriving) {
         setFollow(true);
         return;
       }
@@ -460,7 +460,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
   const [panelHidden, setPanelHidden] = useState(false);
   const hideControls = () => {
     setPanelHidden(true);
-    if (androidDriving && androidMenu) onAndroidMenu?.();
+    if (nativeDriving && androidMenu) onAndroidMenu?.();
     if (driveUiStore.get().sheet) driveUiStore.set((s) => ({ ...s, sheet: false }));
   };
   const showControls = () => {
@@ -512,12 +512,12 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
     };
   }, [guiding, panelHidden, androidMenu]);
 
-  const minimal = !androidDriving && ui.minimal && !!nav.dest && (guiding || nav.status === 'routing');
+  const minimal = !nativeDriving && ui.minimal && !!nav.dest && (guiding || nav.status === 'routing');
 
   const recenter = () => {
     setOverview(false);
     setFollow(true);
-    if (androidDriving && guiding && mlApi.current?.resumeFollow && (disp.lat != null || geo.lat != null)) {
+    if (nativeDriving && guiding && mlApi.current?.resumeFollow && (disp.lat != null || geo.lat != null)) {
       mlApi.current.resumeFollow();
       setPanelHidden(false);
       return;
@@ -535,7 +535,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
     zoomBand.current = null; // масштаб по скорости — заново
     const target = disp.lat != null && disp.lon != null ? disp : geo;
     if (target.lat != null && target.lon != null) {
-      if (engine === 'maplibre' && androidDriving && guiding) mlApi.current?.resumeFollow?.();
+      if (engine === 'maplibre' && nativeDriving && guiding) mlApi.current?.resumeFollow?.();
       else if (engine === 'maplibre') mlApi.current?.centerOn({ lat: target.lat, lon: target.lon }, guiding ? undefined : 16);
       else map.current?.setView([target.lat, target.lon], guiding ? 17 : 16);
     }
@@ -605,11 +605,11 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
   const isFav = nav.dest ? favorites.some((f) => f.lat === nav.dest!.lat && f.lon === nav.dest!.lon) : false;
   const step = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
   const next = nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex + 1] : null;
-  const browsingFix = androidDriving && !guiding && usesAndroidNativePosition() ? ordinaryFix : null;
+  const browsingFix = nativeDriving && !guiding && usesAndroidNativePosition() ? ordinaryFix : null;
   const located = geo.lat != null && geo.lon != null && ((geo.accuracy ?? Infinity) <= 50 || geo.nativeTrust === 'network') || !!browsingFix;
   const trustedGeo = located && !geo.held && cueClock - (geo.updated ?? 0) <= 3500;
   const navReliable = trustedGeo && (nav.progress?.offRouteM ?? Infinity) <= 35;
-  const cue = androidDriving && guiding ? maneuverNotice(nav.route, nav.progress, geo.speedKmh, navReliable) : null;
+  const cue = nativeDriving && guiding ? maneuverNotice(nav.route, nav.progress, geo.speedKmh, navReliable) : null;
   const lastCue = useRef(cue);
   if (cue) lastCue.current = cue;
   const paintedCue = cue ?? lastCue.current;
@@ -618,7 +618,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
 
   return (
     <div className={`navigation ${guiding ? 'android-guiding' : ''}`} onPointerDownCapture={(event) => {
-      if (androidDriving && guiding && panelHidden && !(event.target as Element).closest('.recenter-needed')) setPanelHidden(false);
+      if (nativeDriving && guiding && panelHidden && !(event.target as Element).closest('.recenter-needed')) setPanelHidden(false);
     }}>
       {engine === 'maplibre' ? (
         <Suspense fallback={<div className="map" />}>
@@ -636,8 +636,8 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
       >
         {/* Верх: поиск или манёвр */}
         <div className="map-top">
-          {!androidDriving && onAutonomy && !guiding && !nav.dest && <button className="btn autonomy-entry" onClick={onAutonomy}>GPS показывает неверное местоположение</button>}
-          {androidDriving && guiding ? (
+          {!nativeDriving && onAutonomy && !guiding && !nav.dest && <button className="btn autonomy-entry" onClick={onAutonomy}>GPS показывает неверное местоположение</button>}
+          {nativeDriving && guiding ? (
             <div className={`android-cue ${cue ? 'is-visible' : ''} ${cue?.urgent ? 'is-urgent' : ''}`} aria-hidden={!cue}>
               {paintedCue && <>
                 <Icon name={stepIcon(paintedCue.step)} size="1.65rem" stroke={2.4} />
@@ -777,8 +777,8 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
         </div>
 
         {/* Справа: управление картой */}
-        {(!androidDriving || androidMenu) && <DiagOverlay engine={engine} />}
-        {androidDriving && offline.local && (
+        {(!nativeDriving || androidMenu) && <DiagOverlay engine={engine} />}
+        {nativeDriving && offline.local && (
           <div className="android-offline-tag" role="status">{offline.region ? `Офлайн · ${offline.region}` : 'Нет загруженной карты'}</div>
         )}
         {positioning.manual && !panelOpen && !androidMenu && <div className="android-position-tag" role="status">
@@ -787,7 +787,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
         {browsingFix && !positioning.manual && !panelOpen && !androidMenu && <div className="android-position-tag" role="status">
           {cueClock - browsingFix.at > MAP_LOCATION_STALE_MS ? 'Последняя известная позиция' : 'Приблизительная позиция'} · ±{Math.round(browsingFix.accuracy)} м
         </div>}
-        {androidDriving && !positioning.manual && !browsingFix && (guiding && (!trustedGeo || nav.notice) || !guiding && located && !panelOpen && !androidMenu &&
+        {nativeDriving && !positioning.manual && !browsingFix && (guiding && (!trustedGeo || nav.notice) || !guiding && located && !panelOpen && !androidMenu &&
           geo.nativeTrust != null && geo.nativeTrust !== 'confirmed') && <div className="android-position-tag" role="status">
           {guiding && nav.notice ? nav.notice : geo.nativeTrust === 'network' ? `Приблизительная сетевая позиция · ±${Math.round(geo.accuracy ?? 0)} м` : geo.nativeTrust === 'estimated' ? 'Положение оценено по датчикам' : 'Положение не подтверждено'}
           {onPlanner && !panelHidden && <button className="btn" onClick={() => onPlanner({ rejectGps: true })}>Старт вручную</button>}
@@ -801,13 +801,13 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
             onAutonomy();
           }}>Старт вручную</button>}
         </div>}
-        {androidDriving && !positioning.manual && !located && !guiding && !nav.dest && !pick && !panelOpen && !androidMenu && (
+        {nativeDriving && !positioning.manual && !located && !guiding && !nav.dest && !pick && !panelOpen && !androidMenu && (
           <div className="android-position-tag" role="status">
             <span>{geo.status === 'denied' ? 'Геопозиция недоступна. Проверьте разрешение в настройках Android' : 'Ищем местоположение…'}</span>
             {(onPlanner || onAutonomy) && <button className="btn" onClick={() => onPlanner ? onPlanner({ rejectGps: true }) : onAutonomy?.()}>Старт вручную</button>}
           </div>
         )}
-        {androidDriving && androidMenu && (
+        {nativeDriving && androidMenu && (
           <div className="android-drive-menu card-float" role="group" aria-label="Дополнительные настройки">
             <button className="btn" onClick={() => openSection('settings')}>Настройки навигации и HUD</button>
             <button className="btn" onClick={() => openSection('diagnostics')}>Диагностика</button>
@@ -819,12 +819,12 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
             {geoStatus && <div>{geoStatus.text}</div>}
           </div>
         )}
-        <div className={`map-controls ${androidDriving ? 'android-map-controls' : ''}`}>
+        <div className={`map-controls ${nativeDriving ? 'android-map-controls' : ''}`}>
           {onPlanner && !guiding && <button className="map-ctl" aria-label="Планирование маршрута" onClick={() => onPlanner()}><Icon name="map" /></button>}
-          {androidDriving && <button className="map-ctl android-menu-button" onClick={onAndroidMenu} aria-label="Дополнительные настройки" aria-expanded={androidMenu}><Icon name="more" size="1.55rem" /></button>}
-          {(!androidDriving || guiding) && <VoiceToggle className="map-ctl voice-ctl" />}
+          {nativeDriving && <button className="map-ctl android-menu-button" onClick={onAndroidMenu} aria-label="Дополнительные настройки" aria-expanded={androidMenu}><Icon name="more" size="1.55rem" /></button>}
+          {(!nativeDriving || guiding) && <VoiceToggle className="map-ctl voice-ctl" />}
           {guiding && <HudButton className="map-ctl voice-ctl" />}
-          {!androidDriving && engine === 'maplibre' && guiding && <CameraModeToggle className="map-ctl voice-ctl" />}
+          {!nativeDriving && engine === 'maplibre' && guiding && <CameraModeToggle className="map-ctl voice-ctl" />}
           <button className="map-ctl zoom-ctl" onClick={() => zoom(1)} aria-label="Приблизить">
             <Icon name="plus" size="1.7rem" />
           </button>
@@ -837,7 +837,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
         </div>
 
         {/* Полноэкранное ведение: только время прибытия, остаток и голос; свайп вверх — панель управления. */}
-        {!androidDriving && guiding && panelHidden && (
+        {!nativeDriving && guiding && panelHidden && (
           <div className="driving-controls-compact">
             <button className="driving-reveal" aria-label="Показать панель управления" aria-expanded={false} onClick={showControls} {...revealSwipe.handlers}>
               <Icon name="chevronUp" size="1.4rem" />
@@ -859,7 +859,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
           />
         )}
 
-        {androidDriving && guiding && !panelHidden && (
+        {nativeDriving && guiding && !panelHidden && (
           <div className="android-drive-shortcuts">
             <button className="btn" onClick={stopNavigation}>Завершить маршрут</button>
           </div>
@@ -872,7 +872,7 @@ export function Navigation({ onAutonomy, onPlanner, androidMenu, onAndroidMenu }
           </div>
 
           <div className="map-cards">
-            {!androidDriving && geoStatus && (
+            {!nativeDriving && geoStatus && (
               <button className={`geo-chip is-${geoStatus.tone}`} onClick={() => toast(geoStatus.help(), geoStatus.tone)} aria-live="polite">
                 <Icon name={geoStatus.tone === 'warn' ? 'alert' : 'gps'} size="1.3em" />
                 {geoStatus.text}

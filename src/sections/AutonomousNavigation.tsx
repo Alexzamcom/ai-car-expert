@@ -8,7 +8,7 @@ import { Estimator, type Estimate, type Fix, type Measurement, type Origin, type
 import { createTrip, deleteTrip, recentTrips, record, replay, saveTrip, type GpsScenario, type Trip } from '../lib/autonomy/trip';
 import { tripSensors } from '../lib/autonomy/native';
 import { cumulative, fetchRoute, fetchRoutes, haversine, routeProgress, stepOffsets, stepText, type LatLon, type Route } from '../lib/routing';
-import { androidDriving, maneuverNotice } from '../lib/androidDriving';
+import { nativeDriving, maneuverNotice } from '../lib/androidDriving';
 import { closeHud, openHud } from '../lib/hud';
 import { consistentPair, courseBetween, goodFix, roadAnchor } from '../lib/autonomy/gnss';
 import { PlaceMapPicker } from '../components/PlaceMapPicker';
@@ -456,7 +456,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
       const selected = await fetchRoute(origin.position, target, request.signal);
       if (request.signal.aborted) return;
       prepareRoute(selected, target);
-      if (androidDriving && selected.coords.length <= 20_000) {
+      if (nativeDriving && selected.coords.length <= 20_000) {
         try { localStorage.setItem('ace:offline-autonomy-route', JSON.stringify({ route: selected, destination: target, at: Date.now() })); } catch { /* Storage can be disabled. */ }
       }
     } catch (error) {
@@ -591,11 +591,11 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
   const selecting = stage === 'origin' || stage === 'destination' || stage === 'correct' || stage === 'feedback';
   const progress = stage === 'driving' && estimate && estimate.uncertainty <= MAX_GUIDANCE_ERROR_M
     ? autonomyMap.get().progress : null;
-  const cue = androidDriving ? maneuverNotice(route, progress, (estimate?.speed ?? 0) * 3.6, !!progress) : null;
-  const step = androidDriving ? cue?.step : progress && route?.steps[progress.stepIndex];
+  const cue = nativeDriving ? maneuverNotice(route, progress, (estimate?.speed ?? 0) * 3.6, !!progress) : null;
+  const step = nativeDriving ? cue?.step : progress && route?.steps[progress.stepIndex];
   const modeSelect = <label>Режим <select value={variant} onChange={(event) => changeMode(event.target.value as Variant)}>
-    {androidDriving && <option value="gps">Обычный · подтверждённый GPS</option>}
-    {!androidDriving && <option value="hybrid">Только относительная GPS-помощь</option>}
+    {nativeDriving && <option value="gps">Обычный · подтверждённый GPS</option>}
+    {!nativeDriving && <option value="hybrid">Только относительная GPS-помощь</option>}
     <option value="adaptive">Гибридный · GPS и датчики</option>
     <option value="road">Автономный · без GPS</option>
   </select></label>;
@@ -685,7 +685,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
           <button className="btn" disabled={busy} onClick={() => setPointPicker(true)}>Указать старт на карте</button>
           <button className="btn btn-primary" disabled={busy} onClick={() => selectOrigin()}>{stage === 'correct' ? 'Подтвердить коррекцию' : 'Установить автомобиль'}</button>
         </>}
-        {stage === 'origin' && <>{androidDriving && downloaded.length > 0 && <label>Открыть скачанную карту <select defaultValue=""
+        {stage === 'origin' && <>{nativeDriving && downloaded.length > 0 && <label>Открыть скачанную карту <select defaultValue=""
           onChange={(event) => { const area = downloaded.find((item) => item.id === event.target.value); if (area) api.current?.centerOn(area.center, 15); }}>
           <option value="">Выберите регион</option>{downloaded.map((area) => <option key={area.id} value={area.id}>{area.name}</option>)}
         </select></label>}{savedPlaces.length > 0 && <label>Старт из сохранённых мест <select defaultValue=""
@@ -693,7 +693,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
           <option value="">Выберите место</option>{savedPlaces.map((place) => <option key={place.id} value={place.id}>{place.name}</option>)}
         </select></label>}<button className="btn btn-primary" disabled={busy} onClick={locateOrigin}>Определить старт по GNSS</button><button className="btn" onClick={() => void openArchive()}>Записи поездок</button><button className="btn" onClick={close}>Назад</button></>}
         {stage === 'destination' && <>
-          {androidDriving && <button className="btn" disabled={busy} onClick={useSavedRoute}>Использовать сохранённый маршрут</button>}
+          {nativeDriving && <button className="btn" disabled={busy} onClick={useSavedRoute}>Использовать сохранённый маршрут</button>}
           <form onSubmit={findAddress}>
             <label>Офлайн-адрес <input value={address} onChange={(event) => { setAddress(event.target.value); setAddresses([]); }} /></label>
             <button className="btn" disabled={busy || address.trim().length < 2}>Найти офлайн</button>
@@ -718,7 +718,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
           <button className="btn btn-primary" onClick={openHud}>HUD</button>
           <button className="btn" aria-expanded={showTools} onClick={() => setShowTools(!showTools)}>Меню поездки</button>
           {showTools && <>
-          {androidDriving && modeSelect}
+          {nativeDriving && modeSelect}
           <div>GPS { { disabled: 'выключен', waiting: 'ожидание', rejected: 'отклонён', relative: 'относительная помощь', trusted: 'подтверждён' }[estimate.gps] } · датчики {sensorStatus ? 'активны' : 'нет свежих данных'}</div>
           <div>Источник { { gnss: 'GNSS', hybrid: 'гибрид', inertial: 'инерция' }[estimate.source] }</div>
           <div>Расстояние · GPS {Math.round(estimate.distance.gps)} м · датчики {Math.round(estimate.distance.sensors)} м · итог {Math.round(estimate.distance.fused)} м</div>
@@ -736,7 +736,7 @@ export function AutonomousNavigation({ close, launch }: { close(): void; launch?
           </>}
         </>}
         {stage === 'paused' && <>
-          {androidDriving && modeSelect}
+          {nativeDriving && modeSelect}
           <button className="btn btn-primary" disabled={busy} onClick={() => void start()}>Продолжить с остановки</button>
           <button className="btn" disabled={busy} onClick={() => setStage('correct')}>Уточнить точку на остановке</button>
           <button className="btn" disabled={busy} onClick={() => void finish()}>Завершить поездку</button>
