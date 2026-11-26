@@ -196,6 +196,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
+            set -e
             node scripts/android-smoke.mjs apk/app-debug.apk
             if [ -f upgrade/updated.apk ]; then
               node scripts/android-signing-upgrade-check.mjs upgrade/baseline.apk upgrade/updated.apk

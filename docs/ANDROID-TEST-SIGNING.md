@@ -25,7 +25,7 @@ PR #59 и исходный PR #60 собирались через `assembleDebug
 
 ```sh
 umask 077
-adb exec-out run-as com.aicarexpert.app tar -cf - -C app_webview/Default IndexedDB 'Local Storage' > ace59-webview.tar
+adb exec-out "run-as com.aicarexpert.app tar -cf - -C app_webview/Default IndexedDB 'Local Storage'" > ace59-webview.tar
 tar -tf ace59-webview.tar
 sha256sum ace59-webview.tar
 ```

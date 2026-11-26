@@ -32,6 +32,10 @@ try {
     for (const [key, value] of Object.entries(items)) localStorage.setItem(key, JSON.stringify(value));
     const db = await new Promise((resolve, reject) => {
       const req = indexedDB.open('ace-offline-maps', 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore('regions', { keyPath: 'name' });
+        req.result.createObjectStore('resources');
+      };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
