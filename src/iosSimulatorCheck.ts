@@ -8,7 +8,7 @@ import { hudSettingsStore } from './lib/hud';
 import { navStore } from './lib/nav';
 import { validateOfflinePackage } from './lib/offlinePackageFormat';
 
-const smoke = window as Window & { __aceIOSRun?: (stage: string) => void; __aceIOSResult?: string };
+const smoke = window as Window & { __aceIOSRun?: (stage: string) => void; __aceIOSResult?: string; __aceIOSPhase?: string };
 const fixture = new URL('./ios-smoke-data/', location.href);
 const packageOrigin = 'https://ace-ios-fixture.invalid/';
 let started = false;
@@ -38,12 +38,14 @@ async function run(stage: string) {
     }
     return original(input, init);
   };
+  smoke.__aceIOSPhase = 'catalogue';
   await initializeOfflineMaps();
   if (stage === 'install') {
     const response = await original(new URL('manifest.json', fixture));
     const manifest = validateOfflinePackage(await response.json());
     if (!manifest.center) throw new Error('Fixture lacks its settlement center');
-    await downloadNavigationPackage('Павлоград', manifest.center, 25, packageOrigin + 'manifest.json', manifest, () => {});
+    await downloadNavigationPackage('Павлоград', manifest.center, 25, packageOrigin + 'manifest.json', manifest,
+      ({ done, total }) => { smoke.__aceIOSPhase = `install-${done}-of-${total}`; });
     savePlace({ ...manifest.center, name: 'iOS fixture', placeType: 'home', label: 'iOS fixture' });
     hudSettingsStore.set((s) => ({ ...s, style: 'game', mirror: true }));
   } else if (!placesStore.get().some((place) => place.label === 'iOS fixture') ||
@@ -65,6 +67,7 @@ async function run(stage: string) {
   const distances = [];
   let selected: Awaited<ReturnType<typeof fetchRoutes>>[number] | undefined;
   for (let attempt = 0; attempt < 3; attempt++) {
+    smoke.__aceIOSPhase = `route-${attempt + 1}`;
     const [route] = await fetchRoutes(from, to);
     if (route.coords.length < 3 || route.steps.length < 2 || !route.offlineGraph) throw new Error('Invalid offline route');
     distances.push(route.distance);

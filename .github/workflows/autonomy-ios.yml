@@ -103,13 +103,23 @@ jobs:
             xcrun simctl privacy "$phone" grant location com.aicarexpert.app
             container="$(xcrun simctl get_app_container "$phone" com.aicarexpert.app data)"
             result="$container/Documents/ace-ios-smoke.json"
-            rm -f "$result"
-            SIMCTL_CHILD_ACE_IOS_SMOKE="$stage" xcrun simctl launch "$phone" com.aicarexpert.app
-            for attempt in $(seq 1 120); do
+            progress="$container/Documents/ace-ios-smoke-progress.json"
+            rm -f "$result" "$progress"
+            xcrun simctl launch "$phone" com.aicarexpert.app --ace-smoke "$stage"
+            for attempt in $(seq 1 180); do
               [[ ! -s "$result" ]] || break
               sleep 1
             done
             xcrun simctl io "$phone" screenshot "ios-results/iphone-$stage.png"
+            if [[ ! -s "$result" ]]; then
+              if [[ -s "$progress" ]]; then
+                cp "$progress" "ios-results/$stage-progress.json"
+                cat "$progress"
+              fi
+              xcrun simctl spawn "$phone" log show --last 4m --predicate 'process == "App"' > "ios-results/$stage-app.log" || true
+              echo "Simulator smoke test did not finish" >&2
+              exit 1
+            fi
             cp "$result" "ios-results/$stage.json"
             cat "ios-results/$stage.json"
             jq -e '.ok == true and .externalRequests == 0 and (.distances | length) == 3' "ios-results/$stage.json"

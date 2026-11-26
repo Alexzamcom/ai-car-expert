@@ -4,6 +4,7 @@ import CoreMotion
 import CoreLocation
 import CryptoKit
 import AVFoundation
+import WebKit
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -62,24 +63,56 @@ class TripBridgeViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(NativeSpeech())
         webView?.scrollView.contentInsetAdjustmentBehavior = .never
 #if DEBUG && targetEnvironment(simulator)
-        if let stage = ProcessInfo.processInfo.environment["ACE_IOS_SMOKE"] {
-            probeSmoke(stage: stage, remaining: 300)
+        let arguments = CommandLine.arguments
+        let requested = arguments.firstIndex(of: "--ace-smoke").flatMap {
+            arguments.indices.contains($0 + 1) ? arguments[$0 + 1] : nil
+        }
+        if let stage = requested ?? ProcessInfo.processInfo.environment["ACE_IOS_SMOKE"] {
+            let errors = """
+                window.__aceIOSErrors = [];
+                window.addEventListener('error', e => window.__aceIOSErrors.push(e.message || String(e.target?.src || 'resource')));
+                window.addEventListener('unhandledrejection', e => window.__aceIOSErrors.push(String(e.reason)));
+                """
+            webView?.configuration.userContentController.addUserScript(
+                WKUserScript(source: errors, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            )
+            writeSmoke("{\"phase\":\"native-bridge-loaded\"}", name: "ace-ios-smoke-progress.json")
+            probeSmoke(stage: stage, remaining: 350)
         }
 #endif
     }
+
 #if DEBUG && targetEnvironment(simulator)
+    private func writeSmoke(_ text: String, name: String) {
+        guard let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try text.write(to: directory.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        } catch { NSLog("Failed to write simulator smoke result: %@", error.localizedDescription) }
+    }
+
     private func probeSmoke(stage: String, remaining: Int) {
         guard remaining > 0 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self = self else { return }
-            self.webView?.evaluateJavaScript(
-                "window.__aceIOSRun && window.__aceIOSRun('\(stage == "install" ? "install" : "restore")'); window.__aceIOSResult || ''"
-            ) { value, _ in
-                if let json = value as? String, !json.isEmpty {
-                    if let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                        try? json.write(to: directory.appendingPathComponent("ace-ios-smoke.json"), atomically: true, encoding: .utf8)
+            let script = """
+                window.__aceIOSRun && window.__aceIOSRun('\(stage == "install" ? "install" : "restore")');
+                JSON.stringify({result: window.__aceIOSResult || null, phase: window.__aceIOSPhase || 'web-bootstrap',
+                  document: document.readyState, href: location.href, app: !!document.querySelector('.app'),
+                  entry: typeof window.__aceIOSRun, errors: (window.__aceIOSErrors || []).slice(-8)})
+                """
+            self.webView?.evaluateJavaScript(script) { value, error in
+                if let json = value as? String, let data = json.data(using: .utf8),
+                   let state = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                    if let result = state["result"] as? String {
+                        self.writeSmoke(result, name: "ace-ios-smoke.json")
+                        return
                     }
-                } else { self.probeSmoke(stage: stage, remaining: remaining - 1) }
+                    self.writeSmoke(json, name: "ace-ios-smoke-progress.json")
+                } else if let error = error {
+                    NSLog("Simulator WebView probe: %@", error.localizedDescription)
+                }
+                self.probeSmoke(stage: stage, remaining: remaining - 1)
             }
         }
     }
