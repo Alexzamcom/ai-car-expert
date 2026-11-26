@@ -38,7 +38,7 @@ export default defineConfig(({ mode }) => {
   const native = ['android', 'ios', 'ios-simulator'].includes(mode);
   return ({
   base: './',
-  worker: { format: 'es' },
+  worker: { format: 'es', rollupOptions: { output: { inlineDynamicImports: true } } },
   define: {
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.1.0'),
   },

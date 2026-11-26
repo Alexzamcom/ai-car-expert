@@ -32,7 +32,7 @@ async function run(stage: string) {
     if (url.href.startsWith(packageOrigin) && stage === 'install') {
       return original(new URL(url.pathname.slice(1), fixture), init);
     }
-    if (url.protocol === 'http:' || url.protocol === 'https:') {
+    if (url.origin !== location.origin && (url.protocol === 'http:' || url.protocol === 'https:')) {
       if (/route\/v1|nominatim|photon|valhalla|geocod/i.test(url.href)) externalRequests++;
       return Promise.reject(new Error('External fetch disabled in iOS simulator check'));
     }
