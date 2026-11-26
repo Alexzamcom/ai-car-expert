@@ -1,0 +1,154 @@
+name: Android stable test APKs
+
+on:
+  pull_request:
+    paths:
+      - android/**
+      - src/**
+      - scripts/android-signing-upgrade-check.mjs
+      - .github/workflows/android-test-signing.yml
+  push:
+    branches: [codex/android-offline-recovery]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    if: >-
+      (github.event_name == 'pull_request' && github.head_ref == 'codex/android-offline-recovery' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      vars.ANDROID_TEST_STABLE_SIGNING != 'true') ||
+      (github.event_name != 'pull_request' && github.ref == 'refs/heads/codex/android-offline-recovery' &&
+      vars.ANDROID_TEST_STABLE_SIGNING == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Android SDK
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0"'
+      - run: npm ci
+      - run: npm test
+      - run: npm run android:sync
+      - name: Build two consecutive unsigned APKs
+        shell: bash
+        working-directory: android
+        run: |
+          set -euo pipefail
+          mkdir -p ../unsigned
+          debug_before="$(sha256sum "$HOME/.android/debug.keystore" 2>/dev/null || true)"
+          version=$((2 * GITHUB_RUN_NUMBER))
+          for name in baseline update; do
+            ./gradlew :app:assembleTestApk --no-daemon -PaceTestVersionCode="$version"
+            artifacts=(app/build/outputs/apk/testApk/*-unsigned.apk)
+            [[ "${#artifacts[@]}" == 1 && -f "${artifacts[0]}" ]]
+            tools="$ANDROID_HOME/build-tools/35.0.0"
+            if "$tools/apksigner" verify "${artifacts[0]}" >/dev/null 2>&1; then
+              echo "Expected an unsigned APK"; exit 1
+            fi
+            "$tools/aapt" dump badging "${artifacts[0]}" | grep -F "package: name='com.aicarexpert.app' versionCode='$version'"
+            "$tools/zipalign" -p -f 4 "${artifacts[0]}" "../unsigned/$name.apk"
+            version=$((version + 1))
+          done
+          debug_after="$(sha256sum "$HOME/.android/debug.keystore" 2>/dev/null || true)"
+          if [[ "$debug_before" != "$debug_after" ]]; then
+            echo "Gradle created or modified a debug keystore"; exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-android-test-apks
+          path: unsigned/
+          if-no-files-found: error
+          retention-days: 1
+
+  sign:
+    if: github.event_name != 'pull_request'
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: android-test-signing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-android-test-apks
+          path: unsigned
+      - name: Install Android signing tools
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0"'
+      - name: Sign and verify both APKs
+        shell: bash
+        env:
+          ACE_SIGNING_KEYSTORE: ${{ secrets.ANDROID_TEST_KEYSTORE_BASE64 }}
+          ACE_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_TEST_STORE_PASSWORD }}
+          ACE_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_TEST_KEY_PASSWORD }}
+          ACE_SIGNING_ALIAS: ${{ vars.ANDROID_TEST_KEY_ALIAS }}
+          ACE_SIGNING_SHA256: ${{ vars.ANDROID_TEST_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          : "${ACE_SIGNING_KEYSTORE:?Configure the keystore in the protected environment}"
+          : "${ACE_SIGNING_STORE_PASSWORD:?Missing keystore password}"
+          : "${ACE_SIGNING_KEY_PASSWORD:?Missing key password}"
+          : "${ACE_SIGNING_ALIAS:?Missing key alias}"
+          expected="${ACE_SIGNING_SHA256,,}"
+          [[ "$expected" =~ ^[[:xdigit:]]{64}$ ]] || { echo "Set the expected certificate SHA-256"; exit 1; }
+          umask 077
+          signing_dir="$(mktemp -d "$RUNNER_TEMP/android-signing.XXXXXX")"
+          trap 'rm -rf "$signing_dir"' EXIT
+          printf '%s' "$ACE_SIGNING_KEYSTORE" | base64 --decode > "$signing_dir/test.keystore"
+          unset ACE_SIGNING_KEYSTORE
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir signed
+          for name in baseline update; do
+            "$tools/apksigner" sign --ks "$signing_dir/test.keystore" --ks-key-alias "$ACE_SIGNING_ALIAS" \
+              --ks-pass env:ACE_SIGNING_STORE_PASSWORD --key-pass env:ACE_SIGNING_KEY_PASSWORD \
+              --v4-signing-enabled false --out "signed/$name.apk" "unsigned/$name.apk"
+            report="$("$tools/apksigner" verify --min-sdk-version 29 --print-certs "signed/$name.apk")"
+            actual="$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ { print $NF }' <<< "$report")"
+            [[ "$actual" == "$expected" ]] || { echo "Unexpected APK signing certificate"; exit 1; }
+          done
+          echo "APK signing certificate SHA-256 $actual" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        id: signed
+        with:
+          name: ai-car-expert-android-stable-test-apks
+          path: signed/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Download link
+        run: echo '[Download both permanently signed test APKs](${{ steps.signed.outputs.artifact-url }})' >> "$GITHUB_STEP_SUMMARY"
+
+  upgrade:
+    needs: sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-car-expert-android-stable-test-apks
+          path: signed
+      - run: npm install --no-save --package-lock=false playwright@1.49.1
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: node scripts/android-signing-upgrade-check.mjs signed/baseline.apk signed/update.apk

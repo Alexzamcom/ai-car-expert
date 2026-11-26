@@ -81,7 +81,7 @@ try {
   }
   assert.equal(restored.region?.id, 'upgrade');
   assert.deepEqual(restored.bytes, [1, 3, 9]);
-  console.log('PR #59 → current APK, same test signer: adb install -r preserved offline store, places and preferences.');
+  console.log('Baseline → update, same test signer: adb install -r preserved offline store, places and preferences.');
 } finally {
   await device.close();
   adb('uninstall', app);

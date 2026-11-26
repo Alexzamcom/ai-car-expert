@@ -1,35 +1,58 @@
-# Подпись тестовых APK Android
+# Постоянная подпись тестовых APK
 
-PR #59 и исходный PR #60 собирались через `assembleDebug` без постоянного keystore. Android Gradle Plugin использовал отладочный ключ временного раннера. Actions сохранил APK, а файл с закрытым ключом в артефакты не попал. Из установленного приложения и APK можно извлечь публичный сертификат. Закрытый ключ из них восстановить нельзя.
+PR #59 и первые сборки PR #60 использовали отладочный ключ временного раннера. В Actions сохранились APK и публичные сертификаты. Закрытый ключ PR #59 недоступен. При переходе на постоянный сертификат понадобится одна чистая установка. Скачайте нужную офлайн-карту заново после перехода.
 
-| Сборка | SHA-256 сертификата |
-| --- | --- |
-| [PR #59](https://github.com/Alexzamcom/ai-car-expert/actions/runs/45549983820) | `fecf2e96d5578f91f29adcd11e4a1b47d5a0209a555bd337662f7c3dac66bdcf` |
-| [Первоначальный PR #60](https://github.com/Alexzamcom/ai-car-expert/actions/runs/45711962869) | `4b65720e993a560b60cc694e2ca7d0c76945bfe944a32bf9162ee2115ff98d90` |
+## 1. Создать ключ и сделать резервную копию
 
-Для штатного обновления Android сверяет подпись APK с установленным приложением. Если у владельца есть копия keystore с сертификатом PR #59, можно использовать её в защищённом окружении ниже. Установка в таком случае проверяется через `adb install -r` на телефоне с предыдущей версией. Обе текущие сборки имеют `versionCode=1`.
+Владелец выполняет команды на своём доверенном компьютере в терминале Bash с JDK. Команды создают хранилище вне репозитория. Сгенерируйте длинный уникальный пароль в менеджере паролей и введите его в запросе `keytool`.
 
-## Постоянная подпись в GitHub Actions
-
-1. Создайте окружение **android-test-signing** в **Settings → Environments**. Разрешите только проверенные ветки, начните с `codex/android-offline-recovery`, включите обязательное одобрение владельцем, если тариф это поддерживает, и защитите саму ветку от недоверенных изменений. Запускайте подпись после проверки файла workflow.
-2. Если старого ключа нет, создайте долгоживущий тестовый ключ локально с `keytool -genkeypair -storetype PKCS12 -keyalg RSA -keysize 3072 -validity 10000 -alias ace-test -keystore ace-test.p12`. Храните зашифрованную резервную копию отдельно от репозитория. Для PKCS12 укажите одинаковый пароль хранилища и записи ключа.
-3. В **Environment secrets** добавьте `ANDROID_TEST_KEYSTORE_BASE64` (Base64 содержимого файла), `ANDROID_TEST_STORE_PASSWORD` и `ANDROID_TEST_KEY_PASSWORD`. В переменных этого окружения задайте `ANDROID_TEST_KEY_ALIAS` и `ANDROID_TEST_CERT_SHA256` (64 шестнадцатеричных символа SHA-256 сертификата, без двоеточий). Отпечаток можно получить локально командой `keytool -list -v -keystore ace-test.p12 -alias ace-test`.
-4. Для ручного запуска выберите `stable_signature` в **Android debug APK → Run workflow**. Если ручной запуск недоступен до попадания workflow в ветку по умолчанию, установите переменную репозитория `ANDROID_TEST_STABLE_SIGNING=true` и сделайте обычный push проверенного коммита в `codex/android-offline-recovery`. После одобрения окружения скачайте **ai-car-expert-android-stable-test-apk**. Этот артефакт предназначен для обновлений. Артефакт **ai-car-expert-android-debug-apk** предназначен для CI и использует временный ключ.
-5. Убедитесь, что опубликованный в Actions отпечаток совпадает с ожидаемым. Новый постоянный сертификат работает для последующих обновлений после первого перехода на него.
-
-## Перенос, если ключ PR #59 утрачен
-
-Сначала сохраните APK предыдущей версии и сделайте резервную копию на доверенном компьютере. Для тестовой сборки с флагом debuggable это возможно через Android Platform Tools, USB-отладку и `run-as`, без root. На Galaxy Note 9 сначала убедитесь, что `adb shell run-as com.aicarexpert.app id` выполняется. Если команда не работает, остановитесь и оставьте приложение установленным.
-
-После остановки приложения через `adb shell am force-stop com.aicarexpert.app` сохраните хранилище WebView:
-
-```sh
+```bash
 umask 077
-adb exec-out "run-as com.aicarexpert.app tar -cf - -C app_webview/Default IndexedDB 'Local Storage'" > ace59-webview.tar
-tar -tf ace59-webview.tar
-sha256sum ace59-webview.tar
+mkdir -p "$HOME/.ace-android-signing"
+keystore="$HOME/.ace-android-signing/ace-test.p12"
+keytool -genkeypair -storetype PKCS12 -keyalg RSA -keysize 3072 \
+  -validity 10000 -alias ace-test -keystore "$keystore" \
+  -dname "CN=AI Car Expert Android Test"
+keytool -list -v -keystore "$keystore" -alias ace-test
 ```
 
-Сохраните копию контрольной суммы отдельно. Убедитесь, что архив содержит файлы обеих баз. IndexedDB содержит офлайн-карты, а Local Storage содержит сохранённые места и настройки. Архив может содержать личные данные и должен оставаться на доверенном компьютере. Проверьте восстановление сначала на отдельном тестовом устройстве с той же версией WebView. Не продолжайте, если каталог на телефоне отличается или архив не читается.
+Сохраните пароль в менеджере паролей. Скопируйте PKCS12 в отдельное защищённое хранилище или на зашифрованный носитель. Проверьте резервную копию командой `keytool -list -v -keystore /путь/к/копии/ace-test.p12 -alias ace-test` и сравните SHA‑256 сертификата с оригиналом. Держите пароль отдельно от резервного файла. Не используйте один пароль для других ключей.
 
-Для восстановления нужен чистый экземпляр приложения. Инициализируйте WebView одним запуском и остановите приложение перед восстановлением. Проверьте, что новый экземпляр не содержит пользовательских данных. При необходимости выполните перенос только после подтверждения владельцем удаления старой установки. Восстанавливайте архив только после проверки его суммы, в приватный каталог приложения через `adb shell -T run-as com.aicarexpert.app tar -xf - -C app_webview/Default < ace59-webview.tar`. При восстановлении на чистой установке не смешивайте базы LevelDB: предварительно переместите созданные новым экземпляром каталоги `IndexedDB` и `Local Storage` в резервный каталог внутри его приватного каталога. Только затем откройте приложение и проверьте список карт, сохранённые места и настройки HUD. Оставьте резервную копию до проверки построения маршрута без сети.
+## 2. Настроить защиту GitHub
+
+1. В [Settings → Environments](https://github.com/Alexzamcom/ai-car-expert/settings/environments) создайте `android-test-signing`.
+2. В **Deployment branches and tags** выберите **Selected branches and tags** и добавьте точную ветку `codex/android-offline-recovery`. Добавьте обязательного проверяющего, если эта настройка доступна, и защитите саму ветку от недоверенных изменений. Проверяйте изменение workflow перед одобрением.
+3. В **Environment variables** задайте `ANDROID_TEST_KEY_ALIAS=ace-test` и `ANDROID_TEST_CERT_SHA256` с отпечатком из `keytool` в виде 64 HEX-символов без двоеточий.
+4. Добавьте **Environment secrets** `ANDROID_TEST_KEYSTORE_BASE64`, `ANDROID_TEST_STORE_PASSWORD` и `ANDROID_TEST_KEY_PASSWORD`. Пароли для указанного PKCS12 совпадают. С авторизованным GitHub CLI и правами владельца можно записать секреты прямо из терминала, без вывода ключа или пароля:
+
+```bash
+set -e -o pipefail
+repo=Alexzamcom/ai-car-expert
+keystore="$HOME/.ace-android-signing/ace-test.p12"
+base64 < "$keystore" | tr -d '\r\n' |
+  gh secret set ANDROID_TEST_KEYSTORE_BASE64 --repo "$repo" --env android-test-signing
+read -rs -p 'Пароль PKCS12: ' ace_test_password
+printf '\n'
+printf '%s' "$ace_test_password" |
+  gh secret set ANDROID_TEST_STORE_PASSWORD --repo "$repo" --env android-test-signing
+printf '%s' "$ace_test_password" |
+  gh secret set ANDROID_TEST_KEY_PASSWORD --repo "$repo" --env android-test-signing
+unset ace_test_password
+```
+
+5. После настройки защиты и секретов добавьте **переменную репозитория** `ANDROID_TEST_STABLE_SIGNING=true` в **Settings → Secrets and variables → Actions → Variables**. Ключ и пароли вводятся только в секреты окружения. SHA‑256 и псевдоним ключа являются публичными данными.
+
+## 3. Выпустить два тестовых APK
+
+Запустите **Android stable test APKs** для `codex/android-offline-recovery`. Если кнопка **Run workflow** недоступна, пока файл workflow есть только в Draft PR, отправьте пустой коммит в эту ветку из актуального чистого локального клона:
+
+```bash
+git switch codex/android-offline-recovery
+git pull --ff-only
+git commit --allow-empty -m "Build permanently signed Android test APKs"
+git push origin codex/android-offline-recovery
+```
+
+Одобрите развёртывание окружения, если настроено одобрение. Workflow компилирует два неподписанных APK с последовательными `versionCode`, подписывает оба одним ключом, сверяет ожидаемый сертификат и выполняет `adb install -r` на Android-эмуляторе. Проверка читает тестовые записи офлайн-хранилища, сохранённое место и настройки после повторного запуска. Секреты доступны только заданию подписи. При ошибке проверки ключа подписанный артефакт не публикуется.
+
+Скачайте артефакт **ai-car-expert-android-stable-test-apks** после проверки шага `upgrade`. Внутри находятся `baseline.apk` и `update.apk`. После однократной чистой установки `baseline.apk` на Note 9 скачайте регион и затем установите `update.apk` поверх него. Для обычного тестирования можно сразу чисто установить `update.apk`. Будущие сборки из этих запусков получают более высокий `versionCode` и используют тот же сертификат. Архив из PR-проверки **unsigned-android-test-apks** служит для проверки компиляции и не устанавливается на устройство.
