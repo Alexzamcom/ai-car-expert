@@ -20,3 +20,39 @@ export function recoveryNearManual(point: LatLon, anchor: (LatLon & { at: number
   const reachable = Math.min(100_000, 1500 + elapsed * 45);
   return haversine(point, anchor) <= reachable;
 }
+
+type RegionAnchor = { name: string; center: LatLon };
+const lastRoutingRegion = createStore({ name: '' }, 'last-routing-region');
+
+export function rememberRoutingRegion(name: string) {
+  lastRoutingRegion.set({ name });
+}
+
+export function plannerViewport<T extends RegionAnchor>(
+  mode: ReturnType<typeof positionMode.get>, trusted: LatLon | null, regions: T[],
+  last = lastRoutingRegion.get().name, now = Date.now(),
+) {
+  const recentManual = mode.point && now >= mode.point.at && now - mode.point.at <= 86_400_000;
+  if (mode.manual && recentManual) return { point: mode.point, source: 'manual' as const };
+  if (!mode.manual && !mode.rechecking && trusted) return { point: trusted, source: 'gnss' as const };
+  const region = regions.find((entry) => entry.name === last) ?? (regions.length === 1 ? regions[0] : undefined);
+  if (region) return { point: region.center, source: 'region' as const, region };
+  return { point: null, source: 'choose' as const };
+}
+
+export const recentPlannedRoutes = createStore<Array<{
+  from: Place; to: Place; route: Route; at: number;
+}>>([], 'recent-planned-routes');
+
+export function rememberPlannedRoute(from: Place, to: Place, route: Route) {
+  if (route.offlineGraph) rememberRoutingRegion(route.offlineGraph.region);
+  recentPlannedRoutes.set((previous) => [
+    { from, to, route, at: Date.now() },
+    ...previous.filter((item) => item.from.lat !== from.lat || item.from.lon !== from.lon ||
+      item.to.lat !== to.lat || item.to.lon !== to.lon || item.route.offlineGraph?.installedAt !== route.offlineGraph?.installedAt),
+  ].slice(0, 5));
+}
+
+export const activePlannedTrip = createStore<{
+  position: (LatLon & { heading: number }) | null;
+}>({ position: null }, 'active-planned-trip');

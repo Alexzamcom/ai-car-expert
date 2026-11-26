@@ -741,7 +741,7 @@ export function geoStatusText(g: GeoState, now = Date.now()): { text: string; to
 export async function searchPlaces(query: string, near?: LatLon, signal?: AbortSignal): Promise<Place[]> {
   if (!usesAndroidNativePosition()) return geoSearch(query, { near, lang: navLang(), signal });
   const local = await searchOfflineAddresses(query).catch(() => []);
-  signal?.throwIfAborted();
+  if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
   await initializeOfflineMaps().catch(() => {});
   if (local.length || !navigator.onLine || near && regionAt(near)?.graph?.length) return local;
   return geoSearch(query, { near, lang: navLang(), signal });

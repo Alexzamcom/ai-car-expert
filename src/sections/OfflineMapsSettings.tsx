@@ -1,3 +1,7 @@
+import { tripSensors } from '../lib/autonomy/native';
+import { routingDiagnostics } from '../lib/offlineRouter';
+import { positionMode } from '../lib/routePlanner';
+import { nativePosition } from '../lib/geo/nativePosition';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useStore } from '../lib/store';
 import { areaBounds, deleteOfflineRegion, discardRegionalDownload, downloadNavigationPackage, downloadOfflineRegion, getOfflinePackage, initializeOfflineMaps, offlineRegions, regionalDownloadState, regionalStorageBytes, type OfflineRegion } from '../lib/offlineMaps';
@@ -11,6 +15,8 @@ type Radius = typeof RADII[number];
 
 export function OfflineMapsSettings() {
   const regions = useStore(offlineRegions);
+  const [restarting, setRestarting] = useState(false);
+  const [reportResult, setReportResult] = useState('');
   const [query, setQuery] = useState('');
   const [choices, setChoices] = useState<Settlement[]>([]);
   const [selected, setSelected] = useState<Settlement>();
@@ -26,6 +32,36 @@ export function OfflineMapsSettings() {
     void initializeOfflineMaps().catch(() => setStatus('Локальное хранилище недоступно.'));
     return () => controller.current?.abort();
   }, []);
+
+  function restart() {
+    setRestarting(true);
+    controller.current?.abort();
+    window.dispatchEvent(new Event('ace:restart'));
+    const reload = () => window.location.reload();
+    const deadline = window.setTimeout(reload, 1200);
+    void Promise.allSettled([tripSensors.stop(), nativePosition.stop()]).then(() => {
+      clearTimeout(deadline);
+      reload();
+    });
+  }
+
+  async function copyReport() {
+    const system = await nativePosition.diagnostics().catch(() => undefined);
+    const json = JSON.stringify({
+      version: __APP_VERSION__, androidSdk: system?.sdk,
+      webView: navigator.userAgent.match(/Chrome\/([\d.]+)/)?.[1],
+      online: navigator.onLine, positionMode: positionMode.get().manual ? 'manual' : 'auto',
+      packages: regions.map((region) => ({
+        settlement: region.settlementId, radiusKm: region.radiusKm, version: region.dataDate,
+        installedAt: region.updated, graphTiles: region.graph?.length ?? 0,
+      })),
+      events: routingDiagnostics(),
+    }, null, 2);
+    try {
+      await nativePosition.copyDiagnostics({ json });
+      setReportResult('Отчёт скопирован');
+    } catch { setReportResult('Не удалось скопировать отчёт'); }
+  }
 
   async function run(action: (signal: AbortSignal) => Promise<void>) {
     const request = new AbortController();
@@ -107,6 +143,11 @@ export function OfflineMapsSettings() {
 
   return <section className="card" aria-label="Офлайн-карты">
     <h3 className="section-title">Офлайн-карты</h3>
+      <div className="route-planner-status">
+        <button type="button" className="btn" onClick={() => void copyReport()}>Скопировать диагностику офлайн-маршрутизации</button>
+        <button type="button" className="btn" disabled={restarting} onClick={restart}>Перезапустить приложение</button>
+        {reportResult && <span role="status">{reportResult}</span>}
+      </div>
     <form onSubmit={find}>
       <label className="field">Город или село <input className="input" value={query} maxLength={100} onChange={(event) => setQuery(event.target.value)} placeholder="Например, Павлоград" /></label>
       <button className="btn" disabled={active || query.trim().length < 2}>Найти населённый пункт</button>

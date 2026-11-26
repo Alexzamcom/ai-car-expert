@@ -23,6 +23,7 @@ export interface Route {
   steps: RouteStep[];
   /** Кто построил маршрут (показываем пользователю). */
   source?: string;
+  offlineGraph?: { region: string; version: string; installedAt: number };
 }
 
 /** Сервер маршрутов с API OSRM. Публичные серверы — без гарантий доступности (docs/NAVIGATION.md). */
@@ -112,7 +113,7 @@ export function routeUrl(router: Router, pts: LatLon[], alternatives: boolean): 
 export async function fetchRoutes(
   from: LatLon,
   to: LatLon,
-  opts: { signal?: AbortSignal; via?: LatLon; routers?: Router[]; timeoutMs?: number; localOnly?: boolean } = {},
+  opts: { signal?: AbortSignal; via?: LatLon; routers?: Router[]; timeoutMs?: number; localOnly?: boolean; onlineOnly?: boolean; confirmOnline?: boolean; onRouter?: (source: 'local' | 'online') => void; onOnlineRequest?: (count: number) => void } = {},
 ): Promise<Route[]> {
   const routers = opts.routers ?? PUBLIC_ROUTERS;
   const pts = [from, ...(opts.via ? [opts.via] : []), to];
@@ -120,23 +121,32 @@ export async function fetchRoutes(
   const offline = typeof navigator !== 'undefined' && !navigator.onLine;
   const local = async (only: boolean) => {
     const engine = await import('./offlineRouter');
-    if (!only && !await engine.routingRegion(pts)) return null;
-    try { return [await engine.localRoute(pts, opts.signal)]; }
+    try {
+      const region = await engine.routingRegion(pts, opts.signal);
+      if (!only && !region) return null;
+      opts.onRouter?.('local');
+      return [await engine.localRoute(pts, opts.signal, region ?? null)];
+    }
     catch (e) {
       if (isAbort(e, opts.signal)) throw e;
       throw new RouteError('offline', (e as Error).message);
     }
   };
   if (opts.localOnly || canUseLocal && offline) return (await local(true))!;
-  if (canUseLocal) {
+  if (canUseLocal && !opts.onlineOnly) {
     const routes = await local(false);
     if (routes) return routes;
+    if (opts.confirmOnline) throw new RouteError('offline', 'Нет покрытия дорожного графа для всех точек. Скачайте общий регион или выберите онлайн-маршрут.');
   }
   // Альтернативы OSRM строит только между двумя точками.
+  opts.onRouter?.('online');
   const alternatives = !opts.via;
   let lastErr: Error = new RouteError('unavailable', 'Сервис маршрутов недоступен');
+  let requestCount = 0;
   for (const r of routers) {
     try {
+      if (opts.signal?.aborted) throw new DOMException('Route cancelled', 'AbortError');
+      if (typeof navigator === 'undefined' || navigator.onLine) opts.onOnlineRequest?.(++requestCount);
       const json = await fetchJson<unknown>(routeUrl(r, pts, alternatives), { timeoutMs: opts.timeoutMs ?? 12000, signal: opts.signal, service: r.name });
       return parseOsrmAll(json, r.name);
     } catch (e) {

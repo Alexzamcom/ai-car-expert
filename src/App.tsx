@@ -1,4 +1,4 @@
-import { plannedRoute, positionMode, type PlannerLaunch } from './lib/routePlanner';
+import { activePlannedTrip, plannedRoute, plannerViewport, positionMode, type PlannerLaunch } from './lib/routePlanner';
 import { watchAndroidViewport } from './lib/androidViewport';
 import { nativePosition, usesAndroidNativePosition } from './lib/geo/nativePosition';
 import { lazy, Suspense, useEffect, useState } from 'react';
@@ -47,7 +47,7 @@ export function App() {
   const [restoredPlanner] = useState(() => {
     try {
       return androidDriving && Capacitor.isPluginAvailable('TripSensors') &&
-        localStorage.getItem('ace:planner-open') === '1';
+        (!!activePlannedTrip.get().position || localStorage.getItem('ace:planner-open') === '1' && !!plannedRoute.get().route);
     } catch { return false; }
   });
   const [autonomous, setAutonomous] = useState(restoredPlanner);
@@ -61,7 +61,7 @@ export function App() {
     const destination = launch.destination ?? (launch.rejectGps ? state.dest ?? undefined : undefined);
     if (launch.destination) {
       const positioning = positionMode.get();
-      const actual = positioning.manual ? positioning.point : trustedPlannerPosition();
+      const actual = positioning.manual ? plannerViewport(positioning, null, []).point : trustedPlannerPosition();
       plannedRoute.set({ from: actual ? { ...actual, name: 'Моё местоположение', address: '', id: 'position' } : null,
         to: launch.destination, route: null });
     }

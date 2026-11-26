@@ -7,7 +7,7 @@ android {
         applicationId "com.aicarexpert.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
+        versionCode providers.gradleProperty("aceTestVersionCode").map { it.toInteger() }.getOrElse(1)
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -17,6 +17,11 @@ android {
         }
     }
     buildTypes {
+        unsignedTest {
+            initWith debug
+            signingConfig = null
+            matchingFallbacks = ['debug']
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'

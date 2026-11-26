@@ -5,3 +5,9 @@ dist
 dist-artifact
 
 dist-android
+
+# Android signing material
+*.keystore
+*.jks
+*.p12
+*.pfx

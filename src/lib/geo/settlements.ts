@@ -52,7 +52,7 @@ export async function searchSettlements(query: string, signal?: AbortSignal) {
     fetchJson<{ settlements: Settlement[] }>(OFFLINE_CATALOG, { service: 'Каталог офлайн-карт', timeoutMs: 7000, signal }),
     fetchJson<{ features: Feature[] }>(`${PHOTON}/api/?${params}`, { service: 'Photon', timeoutMs: 8000, signal }),
   ]);
-  signal?.throwIfAborted();
+  if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
   if (catalog.status === 'rejected' && photon.status === 'rejected') throw new Error('Поиск населённых пунктов недоступен. Проверьте подключение.');
   return rankSettlements(query, catalog.status === 'fulfilled' && Array.isArray(catalog.value.settlements)
     ? catalog.value.settlements : [], photon.status === 'fulfilled' ? photon.value.features ?? [] : []);
