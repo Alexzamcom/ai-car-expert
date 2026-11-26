@@ -18,3 +18,5 @@ interface NativeLocation {
 
 export const nativePosition = registerPlugin<NativeLocation>('NativePosition');
 export const usesAndroidNativePosition = () => Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('NativePosition');
+
+export const usesNativePosition = () => Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('NativePosition');

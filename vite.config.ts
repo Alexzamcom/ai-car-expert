@@ -34,17 +34,19 @@ function serviceWorker(): Plugin {
   };
 }
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode }) => {
+  const native = ['android', 'ios', 'ios-simulator'].includes(mode);
+  return ({
   base: './',
   worker: { format: 'es' },
   define: {
     __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.1.0'),
   },
   // mode=artifact — однофайловая сборка без service worker (scripts/build-artifact.mjs).
-  plugins: mode === 'artifact' || mode === 'android' ? [react()] : [react(), serviceWorker()],
+  plugins: mode === 'artifact' || native ? [react()] : [react(), serviceWorker()],
   build: {
     target: 'safari16',
-    ...(mode === 'android' ? { outDir: 'dist-android' } : {}),
+    ...(native ? { outDir: 'dist-android' } : {}),
     chunkSizeWarningLimit: 1600,
     ...(mode === 'artifact'
       ? {}
@@ -63,4 +65,5 @@ export default defineConfig(({ mode }) => ({
         }
       : {}),
   },
-}));
+  });
+});

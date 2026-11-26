@@ -2,6 +2,7 @@ import { Capacitor } from '@capacitor/core';
 import { cumulative, stepOffsets, type Progress, type Route } from './routing';
 
 export const androidDriving = Capacitor.getPlatform() === 'android';
+export const nativeDriving = androidDriving || Capacitor.getPlatform() === 'ios';
 
 export const ANDROID_OVERVIEW = { lon: 0, lat: 0 };
 const offsets = new WeakMap<Route, { total: number; offsets: number[] }>();

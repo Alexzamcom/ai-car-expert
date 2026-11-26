@@ -1,15 +1,24 @@
-name: Experimental iOS Simulator
+name: iOS IPA and simulator
+
 on:
   pull_request:
-    paths: [ios/**, src/lib/autonomy/**, src/sections/AutonomousNavigation.tsx, .github/workflows/autonomy-ios.yml]
+    paths: [ios/**, src/**, capacitor.config.json, package.json, vite.config.ts, .github/workflows/autonomy-ios.yml]
+  push:
+    branches: [codex/ios-capacitor-navigation]
   workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: ios-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  simulator:
-    if: github.event_name == 'workflow_dispatch' || (github.head_ref == 'codex/gps-denied-navigation' && github.event.pull_request.head.repo.full_name == github.repository)
+  ipa:
+    if: github.event_name != 'pull_request' || (github.head_ref == 'codex/ios-capacitor-navigation' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,32 +27,106 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run ios:sync
-      - name: Compile the native simulator app
+      - name: Build an unsigned iPhone and iPad app
         run: |
+          set -euo pipefail
           xcodebuild -workspace ios/App/App.xcworkspace -scheme App \
-            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-            -configuration Debug -derivedDataPath "$RUNNER_TEMP/ace-ios" \
-            CODE_SIGNING_ALLOWED=NO build
-          ditto -c -k --keepParent "$RUNNER_TEMP/ace-ios/Build/Products/Debug-iphonesimulator/App.app" ios-simulator.zip
-      - name: Install and launch on iPhone Simulator
-        timeout-minutes: 6
-        run: |
-          device="$(xcrun simctl list devices available --json | python3 -c '
-          import json, sys
-          devices = json.load(sys.stdin)["devices"]
-          for runtime in sorted(devices, reverse=True):
-              iphone = next((d["udid"] for d in devices[runtime] if d["name"].startswith("iPhone")), None)
-              if iphone:
-                  print(iphone)
-                  break
-          ')"
-          test -n "$device"
-          xcrun simctl boot "$device"
-          xcrun simctl bootstatus "$device" -b
-          xcrun simctl install "$device" "$RUNNER_TEMP/ace-ios/Build/Products/Debug-iphonesimulator/App.app"
-          xcrun simctl launch "$device" com.aicarexpert.app
+            -sdk iphoneos -destination 'generic/platform=iOS' -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/ace-ios" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build | tee "$RUNNER_TEMP/ipa-build.log"
+          app="$RUNNER_TEMP/ace-ios/Build/Products/Release-iphoneos/App.app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")" = com.aicarexpert.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print MinimumOSVersion' "$app/Info.plist")" = 17.0
+          xcrun lipo -verify_arch arm64 "$app/App"
+          test -f "$app/public/index.html"
+          find "$app/public/assets" -name 'valhalla-*.wasm' | grep .
+          test ! -e "$app/public/sw.js"
+          test ! -e "$app/embedded.mobileprovision"
+          mkdir Payload
+          ditto "$app" Payload/App.app
+          ditto -c -k --keepParent Payload AI-Car-Expert-iOS-unsigned.ipa
+          unzip -tq AI-Car-Expert-iOS-unsigned.ipa
       - uses: actions/upload-artifact@v4
+        id: ipa
         with:
-          name: ai-car-expert-ios-simulator
-          path: ios-simulator.zip
+          name: ai-car-expert-ios-unsigned-ipa
+          path: AI-Car-Expert-iOS-unsigned.ipa
           if-no-files-found: error
+      - run: echo '[Download the unsigned IPA for Sideloadly](${{ steps.ipa.outputs.artifact-url }})' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ios-ipa-build-log
+          path: ${{ runner.temp }}/ipa-build.log
+          if-no-files-found: ignore
+
+  simulator:
+    if: github.event_name != 'pull_request' || (github.head_ref == 'codex/ios-capacitor-navigation' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build the simulator web bundle and prepare real map data
+        run: |
+          set -euo pipefail
+          npx vite build --mode ios-simulator
+          npx cap sync ios
+          git clone --depth=1 --branch offline-map-data --single-branch "https://github.com/$GITHUB_REPOSITORY.git" "$RUNNER_TEMP/ace-maps"
+          package="$(jq -r '.settlements[] | select(.name == "Павлоград") | .packages["25"]' "$RUNNER_TEMP/ace-maps/catalog.json")"
+          test -n "$package" && test "$package" != null
+          ditto "$RUNNER_TEMP/ace-maps/$(dirname "$package")" ios/App/App/public/ios-smoke-data
+      - name: Install, use Valhalla offline, reinstall and use the saved package
+        run: |
+          set -euo pipefail
+          phone="$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.name == "iPhone 16 Pro Max" or (.name | startswith("iPhone"))) | [.name, .udid]] | sort_by(.[0] != "iPhone 16 Pro Max") | .[0][1] // empty')"
+          test -n "$phone"
+          xcrun simctl boot "$phone"
+          xcrun simctl bootstatus "$phone" -b
+          xcrun simctl status_bar "$phone" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState unplugged --batteryLevel 100
+          xcrun simctl privacy "$phone" grant location com.aicarexpert.app || true
+          derived="$RUNNER_TEMP/ace-ios-sim"
+          app="$derived/Build/Products/Debug-iphonesimulator/App.app"
+          mkdir ios-results
+          for stage in install restore; do
+            version=1
+            if [[ "$stage" == restore ]]; then version=2; fi
+            xcodebuild -workspace ios/App/App.xcworkspace -scheme App -sdk iphonesimulator \
+              -destination "id=$phone" -configuration Debug -derivedDataPath "$derived" \
+              CURRENT_PROJECT_VERSION="$version" CODE_SIGNING_ALLOWED=NO build | tee "ios-results/build-$stage.log"
+            xcrun simctl install "$phone" "$app"
+            container="$(xcrun simctl get_app_container "$phone" com.aicarexpert.app data)"
+            result="$container/Documents/ace-ios-smoke.json"
+            rm -f "$result"
+            SIMCTL_CHILD_ACE_IOS_SMOKE="$stage" xcrun simctl launch "$phone" com.aicarexpert.app
+            for attempt in $(seq 1 120); do
+              [[ ! -s "$result" ]] || break
+              sleep 1
+            done
+            xcrun simctl io "$phone" screenshot "ios-results/iphone-$stage.png"
+            cp "$result" "ios-results/$stage.json"
+            cat "ios-results/$stage.json"
+            jq -e '.ok == true and .externalRequests == 0 and (.distances | length) == 3' "ios-results/$stage.json"
+            test -s "$container/Library/Application Support/OfflineMaps/regions.json"
+            xcrun simctl terminate "$phone" com.aicarexpert.app
+          done
+          tablet="$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.name | startswith("iPad"))][0].udid // empty')"
+          test -n "$tablet"
+          xcrun simctl shutdown "$phone"
+          xcrun simctl boot "$tablet"
+          xcrun simctl bootstatus "$tablet" -b
+          xcrun simctl install "$tablet" "$app"
+          xcrun simctl launch "$tablet" com.aicarexpert.app
+          sleep 3
+          xcrun simctl io "$tablet" screenshot ios-results/ipad-launch.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-car-expert-ios-simulator-results
+          path: ios-results/
+          if-no-files-found: ignore

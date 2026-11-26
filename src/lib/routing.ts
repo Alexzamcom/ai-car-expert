@@ -117,7 +117,7 @@ export async function fetchRoutes(
 ): Promise<Route[]> {
   const routers = opts.routers ?? PUBLIC_ROUTERS;
   const pts = [from, ...(opts.via ? [opts.via] : []), to];
-  const canUseLocal = Capacitor.getPlatform() === 'android';
+  const canUseLocal = Capacitor.isNativePlatform();
   const offline = typeof navigator !== 'undefined' && !navigator.onLine;
   const local = async (only: boolean) => {
     const engine = await import('./offlineRouter');

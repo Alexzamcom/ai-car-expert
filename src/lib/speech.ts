@@ -1,3 +1,5 @@
+import { Capacitor, registerPlugin } from '@capacitor/core';
+const iosSpeech = registerPlugin<{ say(options: { text: string; lang: string }): Promise<void> }>('NativeSpeech');
 /* Распознавание речи (Web Speech API) и озвучивание ответов. */
 
 interface RecognitionResultEvent {
@@ -104,6 +106,12 @@ export const lastSpokenText = () => lastSpoken;
 
 export function speak(text: string, lang: string, opts: { onEnd?: () => void } = {}) {
   if (text.trim()) lastSpoken = text;
+  if (Capacitor.getPlatform() === 'ios' && Capacitor.isPluginAvailable('NativeSpeech')) {
+    const clean = text.replace(/[*_#`>]/g, '').replace(/\n+/g, '. ').slice(0, 1200);
+    if (clean.trim()) void iosSpeech.say({ text: clean, lang }).finally(() => opts.onEnd?.()).catch(() => {});
+    else opts.onEnd?.();
+    return;
+  }
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
     opts.onEnd?.();
     return;

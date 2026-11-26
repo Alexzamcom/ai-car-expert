@@ -1,8 +1,8 @@
 import { activePlannedTrip, plannedRoute, plannerViewport, positionMode, type PlannerLaunch } from './lib/routePlanner';
 import { watchAndroidViewport } from './lib/androidViewport';
-import { nativePosition, usesAndroidNativePosition } from './lib/geo/nativePosition';
+import { nativePosition, usesNativePosition } from './lib/geo/nativePosition';
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { androidDriving } from './lib/androidDriving';
+import { nativeDriving } from './lib/androidDriving';
 import { Capacitor } from '@capacitor/core';
 import { StatusBar } from './components/StatusBar';
 import { Dock } from './components/Dock';
@@ -31,7 +31,7 @@ const AutonomousNavigation = lazy(() => import('./sections/AutonomousNavigation'
 
 export function App() {
   useEffect(() => {
-    if (!androidDriving) return;
+    if (!nativeDriving) return;
     const root = document.documentElement;
     const dispose = watchAndroidViewport(() => {
       const viewport = window.visualViewport;
@@ -46,7 +46,7 @@ export function App() {
   }, []);
   const [restoredPlanner] = useState(() => {
     try {
-      return androidDriving && Capacitor.isPluginAvailable('TripSensors') &&
+      return nativeDriving && Capacitor.isPluginAvailable('TripSensors') &&
         (!!activePlannedTrip.get().position || localStorage.getItem('ace:planner-open') === '1' && !!plannedRoute.get().route);
     } catch { return false; }
   });
@@ -55,7 +55,7 @@ export function App() {
   const [androidMenu, setAndroidMenu] = useState(false);
   const openAutonomy = Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('TripSensors')
     ? () => { setAndroidMenu(false); setAutonomous(true); } : undefined;
-  const openPlanner = androidDriving && openAutonomy ? (launch: PlannerLaunch = {}) => {
+  const openPlanner = nativeDriving && openAutonomy ? (launch: PlannerLaunch = {}) => {
     if (launch.rejectGps) changePositionMode(true);
     const state = navStore.get();
     const destination = launch.destination ?? (launch.rejectGps ? state.dest ?? undefined : undefined);
@@ -99,7 +99,7 @@ export function App() {
   useEffect(() => {
     const onTouch = () => retryWakeLockOnGesture();
     window.addEventListener('pointerdown', onTouch, { passive: true });
-    if (usesAndroidNativePosition()) startGeo();
+    if (usesNativePosition()) startGeo();
     else navigator.permissions
       ?.query({ name: 'geolocation' as PermissionName })
       .then((p) => p.state === 'granted' && startGeo())
@@ -115,7 +115,7 @@ export function App() {
       if (document.visibilityState !== 'visible') return;
       // После фона iOS может отдать старую точку: перезапускаем слежение за свежей.
       if (geoStore.get().status !== 'denied' && geoStore.get().status !== 'idle') restartGeo();
-      else if (usesAndroidNativePosition() && geoStore.get().status === 'denied') {
+      else if (usesNativePosition() && geoStore.get().status === 'denied') {
         void nativePosition.diagnostics().then((status) => {
           if (status.fine || status.coarse) startGeo();
         }).catch(() => {});
@@ -141,8 +141,8 @@ export function App() {
   }, []);
 
   return (
-    <div className={`app ${ui.minimal ? 'is-minimal' : ''} ${hud ? 'is-hud' : ''} ${autonomous ? 'is-autonomous' : ''} ${androidDriving ? 'android-drive' : ''} ${androidMenu ? 'android-menu-open' : ''}`}>
-      {!autonomous && !androidDriving && <StatusBar />}
+    <div className={`app ${ui.minimal ? 'is-minimal' : ''} ${hud ? 'is-hud' : ''} ${autonomous ? 'is-autonomous' : ''} ${nativeDriving ? 'android-drive' : ''} ${androidMenu ? 'android-menu-open' : ''}`}>
+      {!autonomous && !nativeDriving && <StatusBar />}
       <main className={`drive order-${layout.order} panel-${layout.panelMode}`}>
         {/* Карта не размонтируется: маршрут и ведение продолжают работать в любом разделе. */}
         <div className="drive-map">
@@ -150,10 +150,10 @@ export function App() {
             ? <Suspense fallback={null}><AutonomousNavigation launch={planner} close={() => { setAndroidGeoExperiment(false); setAutonomous(false); setPlanner(undefined); }} /></Suspense>
             : <Navigation onAutonomy={openAutonomy} onPlanner={openPlanner} androidMenu={androidMenu} onAndroidMenu={() => { if (androidMenu) closePage(); setAndroidMenu(!androidMenu); }} />}
         </div>
-        {!autonomous && (!androidDriving || androidMenu) && <Panel />}
+        {!autonomous && (!nativeDriving || androidMenu) && <Panel />}
         {!autonomous && layout.page && <PageSheet page={layout.page} />}
       </main>
-      {!autonomous && (!androidDriving || androidMenu) && <Dock />}
+      {!autonomous && (!nativeDriving || androidMenu) && <Dock />}
       <VoiceOverlay />
       <YouTubeMusicFallback />
       <PlaceEditor />

@@ -1,6 +1,7 @@
+import { mapWorkerUrl } from '../lib/mapWorker';
 import { plannerViewport, positionMode } from '../lib/routePlanner';
 import { mapLocationStore, MAP_LOCATION_STALE_MS } from '../lib/geo/mapLocation';
-import { usesAndroidNativePosition } from '../lib/geo/nativePosition';
+import { usesNativePosition } from '../lib/geo/nativePosition';
 import { recordLocationMarker, recordMapVisibility } from '../lib/geo/locationDiagnostics';
 import { watchAndroidViewport } from '../lib/androidViewport';
 /* Карта навигации на MapLibre GL: векторная карта, поворот по движению, наклон 3D, 3D-машинка.
@@ -22,7 +23,7 @@ import { mapDiag, diagModeStore, mapPositionStore, mapCameraStore } from '../lib
 import { displayStore, setRoadProvider } from '../lib/matching/display';
 import { EMPTY_OFFLINE_STYLE, initializeOfflineMaps, offlineRegions, regionAt, offlineStatus, offlineStyleFor, registerOfflineProtocol } from '../lib/offlineMaps';
 import { VehicleAnimation } from '../lib/vehicleAnimation';
-import { androidDriving, ANDROID_OVERVIEW } from '../lib/androidDriving';
+import { androidDriving, nativeDriving, ANDROID_OVERVIEW } from '../lib/androidDriving';
 import { courseBetween, headingDelta } from '../lib/autonomy/gnss';
 import { autonomyMap } from '../lib/autonomy/map';
 import type { RoadLine } from '../lib/matching/matcher';
@@ -100,24 +101,24 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       try {
         ml = await import('maplibre-gl');
         await import('maplibre-gl/dist/maplibre-gl.css');
-        workerUrl = (await import('maplibre-gl/dist/maplibre-gl-worker.mjs?url')).default;
+        workerUrl = await mapWorkerUrl();
       } catch {
         return fail('не загрузилась');
       }
       if (disposed || !el.current) return;
       ml.setWorkerUrl(workerUrl);
-      if (androidDriving) {
+      if (nativeDriving) {
         registerOfflineProtocol(ml.addProtocol);
         await initializeOfflineMaps().catch(() => {});
         if (disposed || !el.current) return;
       }
       const manual = positionMode.get();
-      const anchor = androidDriving && (p.autonomous || manual.manual || manual.rechecking)
+      const anchor = nativeDriving && (p.autonomous || manual.manual || manual.rechecking)
         ? plannerViewport(manual, trustedPlannerPosition(), offlineRegions.get()) : undefined;
       const last = anchor ? anchor.point : readLastPos();
-      const area = androidDriving && (!navigator.onLine || manual.manual) ? (last ? regionAt(last) : undefined) ?? (anchor ? anchor.region : offlineRegions.get()[0]) : undefined;
+      const area = nativeDriving && (!navigator.onLine || manual.manual) ? (last ? regionAt(last) : undefined) ?? (anchor ? anchor.region : offlineRegions.get()[0]) : undefined;
       const cachedViewport = last && (!area || regionAt(last)) ? last : undefined;
-      const start = cachedViewport ?? area?.center ?? (androidDriving ? ANDROID_OVERVIEW : DEFAULT_CENTER);
+      const start = cachedViewport ?? area?.center ?? (nativeDriving ? ANDROID_OVERVIEW : DEFAULT_CENTER);
       const styleUrl = DEFAULT_STYLE_URL;
       // Палитра: «Игровая 3D» — всегда светлая пастельная; обычная карта — день/ночь по теме.
       // «Игровая 3D» — тоже день/ночь по той же теме (авто по солнцу или вручную): светлая миниатюра или ночной город.
@@ -130,18 +131,18 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const lite = androidDriving || (navigator.hardwareConcurrency ?? 8) <= 4;
       const styleOf = (p: MapPalette) => ({ diff: false, transformStyle: paletteTransform(p, { lite }) });
       const LABEL: Record<MapPalette, string> = { day: 'день', night: 'ночная палитра', hud: 'HUD', game: 'игровая 3D', 'game-night': 'игровая 3D, ночь' };
-      const isGame = () => androidDriving || !!p.autonomous || settingsStore.get().mapLook === 'game';
+      const isGame = () => nativeDriving || !!p.autonomous || settingsStore.get().mapLook === 'game';
       let map: MlMap;
       try {
         map = new ml.Map({
           container: el.current,
-          style: androidDriving ? EMPTY_OFFLINE_STYLE : styleUrl,
+          style: nativeDriving ? EMPTY_OFFLINE_STYLE : styleUrl,
           center: [start.lon, start.lat],
-          zoom: cachedViewport ? 15 : area ? 13 : androidDriving ? 2 : 13,
+          zoom: cachedViewport ? 15 : area ? 13 : nativeDriving ? 2 : 13,
           // Авторы данных (OpenMapTiles, участники OpenStreetMap) указаны в самом стиле OpenFreeMap.
           attributionControl: { compact: true },
           maxPitch: 70,
-          trackResize: !androidDriving,
+          trackResize: !nativeDriving,
           fadeDuration: 150,
           canvasContextAttributes: { antialias: true },
         });
@@ -149,7 +150,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         // Нет WebGL или он отключён/исчерпан (на iOS — слишком много контекстов).
         return fail('WebGL недоступен');
       }
-      const ordinaryMap = () => androidDriving && !p.autonomous && usesAndroidNativePosition() && (!guiding.current || positionMode.get().manual);
+      const ordinaryMap = () => nativeDriving && !p.autonomous && usesNativePosition() && (!guiding.current || positionMode.get().manual);
       const dotEl = document.createElement('div');
       dotEl.className = 'ml-user-location';
       dotEl.setAttribute('aria-label', 'Местоположение на карте');
@@ -184,7 +185,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       cleanups.push(() => dot.remove(), mapLocationStore.subscribe(() => drawMapPosition.current()), positionMode.subscribe(() => drawMapPosition.current()));
       /* Диагностика жизненного цикла: создание/удаление, смена и загрузка стиля, ошибки, потеря WebGL, кадры. */
       mapDiag.create();
-      if (androidDriving && !p.autonomous) recordLocationMarker('waiting-for-display-position');
+      if (nativeDriving && !p.autonomous) recordLocationMarker('waiting-for-display-position');
       map.on('style.load', () => mapDiag.styleLoad());
       const canvas = map.getCanvas();
       const onLost = () => mapDiag.contextLost();
@@ -202,12 +203,12 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const fpsTimer = setInterval(() => {
         mapDiag.fps(frames);
         frames = 0;
-        if (androidDriving && diagModeStore.get().on) mapCameraStore.set(cameraSnapshot());
+        if (nativeDriving && diagModeStore.get().on) mapCameraStore.set(cameraSnapshot());
         if (!p.autonomous && diagModeStore.get().on && carNow && to) {
           mapPositionStore.set({ marker: { lat: carNow.lat, lon: carNow.lon }, target: to,
-            following: follow.current && touching === 0 && !hudUiStore.get().active, motion: androidDriving ? motionPeaks : undefined });
+            following: follow.current && touching === 0 && !hudUiStore.get().active, motion: nativeDriving ? motionPeaks : undefined });
         }
-        if (androidDriving && !p.autonomous) {
+        if (nativeDriving && !p.autonomous) {
           const point = ordinaryMap() ? positionMode.get().manual ? positionMode.get().point : mapLocationStore.get() : carNow;
           const origin = canvas.getBoundingClientRect();
           const projected = point && map.project([point.lon, point.lat]);
@@ -240,7 +241,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       });
       // Стиль карты не загрузился (нет связи с сервером карты и нет кеша) — резервная карта.
       let styleLoaded = false;
-      let local = androidDriving && (!navigator.onLine || manual.manual && !!area);
+      let local = nativeDriving && (!navigator.onLine || manual.manual && !!area);
       let selectedSource: unknown;
       let selectedPalette: MapPalette | undefined;
       const setBase = () => {
@@ -251,11 +252,11 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (source === selectedSource && look === selectedPalette) return;
         selectedSource = source;
         selectedPalette = look;
-        if (androidDriving) offlineStatus.set({ local, region: fallback?.region ?? null });
+        if (nativeDriving) offlineStatus.set({ local, region: fallback?.region ?? null });
         map.setStyle(source, styleOf(look));
       };
       const switchLocal = (value: boolean) => {
-        if (disposed || !androidDriving || value === local) return;
+        if (disposed || !nativeDriving || value === local) return;
         local = value;
         setBase();
       };
@@ -264,7 +265,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         mapDiag.error(String((e.error as Error | undefined)?.message ?? e.error ?? 'неизвестно'));
         // Ошибки отдельных тайлов, значков и шрифтов — не повод уходить с карты; важен только сам стиль.
         const url = (e.error as { url?: string } | undefined)?.url;
-        if (androidDriving) {
+        if (nativeDriving) {
           const error = e.error as { status?: number; message?: string } | undefined;
           if (!navigator.onLine || url?.includes('/styles/') || !error?.status && /network|fetch/i.test(error?.message ?? '')) switchLocal(true);
           return;
@@ -275,12 +276,12 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       });
       const styleTimer = setTimeout(() => {
         if (!styleLoaded) {
-          if (androidDriving) switchLocal(true);
+          if (nativeDriving) switchLocal(true);
           else fail('сервер карты не отвечает');
         }
       }, 25_000);
       cleanups.push(() => clearTimeout(styleTimer));
-      if (androidDriving) {
+      if (nativeDriving) {
         const offline = () => switchLocal(true);
         const online = () => switchLocal(false);
         window.addEventListener('offline', offline);
@@ -349,7 +350,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (palette() === appliedPalette) return;
         appliedPalette = palette();
         mapDiag.setStyle(`${why} → ${appliedPalette}`);
-        if (androidDriving) setBase();
+        if (nativeDriving) setBase();
         else map.setStyle(styleUrl, styleOf(appliedPalette));
         camera.current(true);
       };
@@ -443,11 +444,11 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       let carNow: { lon: number; lat: number; heading: number } | null = null;
       const androidBody = hexToRgb('#f7f8fa');
       const car3d = createCar3dLayer(
-        () => (carNow && !ordinaryMap() ? { ...carNow, color: androidDriving ? androidBody : hexToRgb(CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
+        () => (carNow && !ordinaryMap() ? { ...carNow, color: nativeDriving ? androidBody : hexToRgb(CAR_COLORS[settingsStore.get().carColor]?.[1] ?? '#f7f8fa') } : null),
         {
           gameSize: isGame,
-          lengthM: androidDriving ? ANDROID_CAR_LENGTH_M : undefined,
-          roofColor: androidDriving ? androidBody : undefined,
+          lengthM: nativeDriving ? ANDROID_CAR_LENGTH_M : undefined,
+          roofColor: nativeDriving ? androidBody : undefined,
           sizePx: () => Math.min(76, Math.max(50, Math.min(innerWidth, innerHeight) * 0.095)),
           // Фары и задние огни — только в ночной «Игровой 3D».
           night: () => appliedPalette === 'game-night',
@@ -456,8 +457,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       const carEl = document.createElement('div');
       carEl.className = 'ml-car';
       const flatMarker = new ml.Marker({ element: carEl, rotationAlignment: 'map', pitchAlignment: 'map' });
-      const use3d = () => (androidDriving || p.autonomous || settingsStore.get().carStyle !== 'flat') && !car3d.failed;
-      const paintFlat = () => (carEl.innerHTML = carSvg(androidDriving ? 'white' : settingsStore.get().carColor, 32));
+      const use3d = () => (nativeDriving || p.autonomous || settingsStore.get().carStyle !== 'flat') && !car3d.failed;
+      const paintFlat = () => (carEl.innerHTML = carSvg(nativeDriving ? 'white' : settingsStore.get().carColor, 32));
       paintFlat();
       const syncCar = () => {
         try {
@@ -491,8 +492,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       let motionDiag = { modelM: 0, centerM: 0, cameraDeg: 0, modelDeg: 0 };
       let motionPeaks = { ...motionDiag };
       const frame = (now: number) => {
-        const androidPose = androidDriving ? animation.frame(now) : null;
-        const pos = androidDriving ? androidPose : carPos(now);
+        const androidPose = nativeDriving ? animation.frame(now) : null;
+        const pos = nativeDriving ? androidPose : carPos(now);
         const dt = Math.min(350, Math.max(0, now - (cameraTime || now)));
         cameraTime = now;
         // Пока открыт HUD, основная карта скрыта — не тратим на неё кадры.
@@ -505,7 +506,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           }
           const next = { lon: pos.lon, lat: pos.lat, heading: ((headingShown % 360) + 360) % 360 };
           const changed = !carNow || next.lon !== carNow.lon || next.lat !== carNow.lat || Math.abs(next.heading - carNow.heading) > 0.01;
-          if (androidDriving) {
+          if (nativeDriving) {
             const previous = carNow;
             const center = map.getCenter();
             const yaw = map.getBearing();
@@ -538,19 +539,19 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
               }
             }
           }
-          if (androidDriving) motionPeaks = {
+          if (nativeDriving) motionPeaks = {
             modelM: Math.max(motionPeaks.modelM, motionDiag.modelM), modelDeg: Math.max(motionPeaks.modelDeg, motionDiag.modelDeg),
             centerM: Math.max(motionPeaks.centerM, motionDiag.centerM), cameraDeg: Math.max(motionPeaks.cameraDeg, motionDiag.cameraDeg),
           };
-          if (changed || !androidDriving) carNow = next;
+          if (changed || !nativeDriving) carNow = next;
           const flatOn = !!(flatMarker as unknown as { _map?: unknown })._map;
           if (use3d()) {
             if (flatOn) flatMarker.remove();
-            if (changed || !androidDriving) map.triggerRepaint();
+            if (changed || !nativeDriving) map.triggerRepaint();
           } else {
             flatMarker.setLngLat([pos.lon, pos.lat]).setRotation(headingShown);
             if (!flatOn) flatMarker.addTo(map);
-            if (androidDriving && !p.autonomous && changed) recordLocationMarker('flat-marker-on-map');
+            if (nativeDriving && !p.autonomous && changed) recordLocationMarker('flat-marker-on-map');
           }
         }
         raf = requestAnimationFrame(frame);
@@ -568,13 +569,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       box.addEventListener('touchend', onTouch, { passive: true });
       const clearTouch = () => { touching = 0; pointerHeld = false; };
       const holdPointer = () => { pointerHeld = true; };
-      if (androidDriving) {
+      if (nativeDriving) {
         box.addEventListener('pointerdown', holdPointer);
         window.addEventListener('pointerup', clearTouch);
         window.addEventListener('pointercancel', clearTouch);
       }
       const interrupt = () => {
-        if (androidDriving) follow.current = false;
+        if (nativeDriving) follow.current = false;
         onUserMove.current();
       };
       box.addEventListener('touchcancel', clearTouch, { passive: true });
@@ -590,14 +591,14 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         window.removeEventListener('pointerup', clearTouch);
         window.removeEventListener('pointercancel', clearTouch);
       });
-      if (androidDriving) map.on('movestart', (e) => { if (e.originalEvent && follow.current) interrupt(); });
+      if (nativeDriving) map.on('movestart', (e) => { if (e.originalEvent && follow.current) interrupt(); });
       for (const ev of ['dragstart', 'rotatestart', 'pitchstart'] as const) map.on(ev, (e) => {
         if ((e as { originalEvent?: Event }).originalEvent && follow.current) interrupt();
       });
       map.on('zoomstart', (e) => {
         if (!(e as { originalEvent?: Event }).originalEvent) return;
         userZoom = true;
-        if (androidDriving && follow.current) interrupt();
+        if (nativeDriving && follow.current) interrupt();
       });
 
       // Динамическая камера: подъём перед поворотом сглаживается во времени (без рывков при смене манёвра, перестроении, потере GPS).
@@ -611,20 +612,20 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         const speedKmh = experimental ? (experimental.position?.speed ?? 0) * 3.6 : geoStore.get().speedKmh;
         if (!guiding.current) {
           followTarget = null;
-          if (androidDriving) lift.reset();
+          if (nativeDriving) lift.reset();
           // «Игровая 3D»: и без маршрута — наклон, чтобы был виден объём города.
-          map.easeTo({ center: [to.lon, to.lat], zoom: Math.max(map.getZoom(), isGame() ? 16 : 15), bearing: isGame() ? map.getBearing() : 0, pitch: isGame() ? GAME_IDLE_PITCH : 0, ...(androidDriving ? { padding: { top: 0, bottom: 0, left: 0, right: 0 } } : {}), duration: immediate ? 500 : moveMs, easing: (x) => x });
+          map.easeTo({ center: [to.lon, to.lat], zoom: Math.max(map.getZoom(), isGame() ? 16 : 15), bearing: isGame() ? map.getBearing() : 0, pitch: isGame() ? GAME_IDLE_PITCH : 0, ...(nativeDriving ? { padding: { top: 0, bottom: 0, left: 0, right: 0 } } : {}), duration: immediate ? 500 : moveMs, easing: (x) => x });
           return;
         }
-        const course = androidDriving || p.autonomous || settingsStore.get().cameraMode === 'course';
+        const course = nativeDriving || p.autonomous || settingsStore.get().cameraMode === 'course';
         const n = experimental ?? navStore.get();
         const heading = headingTarget ?? map.getBearing();
         // Камера по движению: обычная (прежняя), игровая (вид сзади) или динамическая (подъём перед поворотом —
         // по расстоянию до манёвра из прогресса вдоль маршрута, не по ближайшей точке GPS).
-        camStyle = androidDriving || p.autonomous ? 'dynamic' : effectiveNavCamera(settingsStore.get().navCamera, isGame());
+        camStyle = nativeDriving || p.autonomous ? 'dynamic' : effectiveNavCamera(settingsStore.get().navCamera, isGame());
         const step = n.route && n.progress ? n.route.steps[n.progress.stepIndex] : null;
         const target = course && camStyle === 'dynamic' ? maneuverLift(step, n.progress?.toStepM, speedKmh) : 0;
-        if (androidDriving) {
+        if (nativeDriving) {
           followTarget = { speed: speedKmh, lift: target, height: size.height, landscape: size.width > size.height };
           return;
         }
@@ -643,7 +644,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         });
         const zoom = userZoom ? map.getZoom() : pose.zoom;
         const offset: [number, number] = course ? [0, size.height * pose.offset] : (lookAheadOffset(heading, size.width, size.height).map((v) => -v) as [number, number]);
-        map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? pose.pitch : isGame() ? GAME_IDLE_PITCH : 0, zoom, offset, duration: immediate ? 600 : androidDriving ? Math.max(450, moveMs) : moveMs, easing: (x) => x, essential: true });
+        map.easeTo({ center: [to.lon, to.lat], bearing: course ? heading : 0, pitch: course ? pose.pitch : isGame() ? GAME_IDLE_PITCH : 0, zoom, offset, duration: immediate ? 600 : nativeDriving ? Math.max(450, moveMs) : moveMs, easing: (x) => x, essential: true });
       };
       cleanups.push(
         settingsStore.subscribe(() => { applyFov(); camera.current(true); }),
@@ -651,7 +652,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         hudUiStore.subscribe(() => !hudUiStore.get().active && (map.resize(), camera.current(true))),
         // Круг точности — вокруг сырой точки GPS; машинка и камера — по отображаемой позиции (привязка к дороге).
         geoStore.subscribe(drawAcc),
-        ...(androidDriving ? [(p.autonomous ? autonomyMap : navStore).subscribe(() => camera.current())] : []),
+        ...(nativeDriving ? [(p.autonomous ? autonomyMap : navStore).subscribe(() => camera.current())] : []),
         (p.autonomous ? autonomyMap : displayStore).subscribe(() => {
           const g = p.autonomous ? autonomyMap.get().position : displayStore.get();
           if (!g) {
@@ -662,7 +663,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             return;
           }
           if (g.lat == null || g.lon == null) return;
-          if (!to && androidDriving && !p.autonomous) {
+          if (!to && nativeDriving && !p.autonomous) {
             if ((geoStore.get().accuracy ?? Infinity) > 50 && geoStore.get().nativeTrust !== 'network') {
               recordLocationMarker('display-position-not-accurate-enough');
               return;
@@ -670,7 +671,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             if (follow.current && !ordinaryMap()) map.jumpTo({ center: [g.lon, g.lat], zoom: 16 });
           }
           const now = performance.now();
-          if (androidDriving) {
+          if (nativeDriving) {
             const gps = geoStore.get();
             const nav = p.autonomous ? autonomyMap.get() : navStore.get();
             const { progress, route } = nav;
@@ -848,13 +849,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         if (preview) api.fitPoints(preview.coords, p.uiEl.current);
       }
       const resizeMap = () => {
-        if (androidDriving && hudUiStore.get().active) return;
+        if (nativeDriving && hudUiStore.get().active) return;
         map.resize();
         if (isGame() && guiding.current) camera.current(true);
       };
       const ro = new ResizeObserver(resizeMap);
       ro.observe(el.current);
-      if (androidDriving) cleanups.push(watchAndroidViewport(resizeMap));
+      if (nativeDriving) cleanups.push(watchAndroidViewport(resizeMap));
       cleanups.push(() => ro.disconnect());
 
       // Для автоматических проверок.
@@ -867,8 +868,8 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
           const visiblePoint = ordinaryMap() ? positionMode.get().manual ? positionMode.get().point : mapLocationStore.get() : carNow;
           const c = visiblePoint ? map.project([visiblePoint.lon, visiblePoint.lat]) : null;
           return {
-            motion: androidDriving ? motionDiag : undefined,
-            offline: androidDriving ? offlineStatus.get() : undefined,
+            motion: nativeDriving ? motionDiag : undefined,
+            offline: nativeDriving ? offlineStatus.get() : undefined,
             bearing: map.getBearing(),
             pitch: map.getPitch(),
             zoom: map.getZoom(),
@@ -876,7 +877,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
             car: c ? { x: c.x / r.width, y: c.y / r.height } : null,
             car3d: use3d() && !!map.getLayer('car-3d'),
             experimentalEstimate: p.autonomous ? autonomyMap.get().position : undefined,
-            carLengthM: androidDriving ? ANDROID_CAR_LENGTH_M : null,
+            carLengthM: nativeDriving ? ANDROID_CAR_LENGTH_M : null,
             carWidthShare: car3d.renderedBounds && r.width > 0 ? car3d.renderedBounds.width / r.width : null,
             carHeightShare: car3d.renderedBounds && r.height > 0 ? car3d.renderedBounds.height / r.height : null,
             display: (({ mode, lineId, shift, lat, lon, reason }) => ({ mode, lineId, shift, lat, lon, reason }))(displayStore.get()),
@@ -935,13 +936,13 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
       }
       const d = displayStore.get();
       const geo = geoStore.get();
-      const g = p.autonomous ? autonomyMap.get().position : androidDriving && (geo.accuracy ?? Infinity) > 50 && geo.nativeTrust !== 'network' ? null :
+      const g = p.autonomous ? autonomyMap.get().position : nativeDriving && (geo.accuracy ?? Infinity) > 50 && geo.nativeTrust !== 'network' ? null :
         d.lat != null ? d : geo;
       if (g && g.lat != null && g.lon != null) {
         to = { lat: g.lat, lon: g.lon };
         headingTarget = g.heading;
         headingShown = g.heading ?? 0;
-        if (androidDriving) animation.receive({ lat: g.lat, lon: g.lon, heading: g.heading, speedMps: null, reliable: true }, performance.now());
+        if (nativeDriving) animation.receive({ lat: g.lat, lon: g.lon, heading: g.heading, speedMps: null, reliable: true }, performance.now());
         if (!ordinaryMap() && (!p.autonomous || guiding.current || !autonomyMap.get().route)) {
           map.jumpTo({ center: [g.lon, g.lat] });
         }
@@ -952,7 +953,7 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
     return () => {
       disposed = true;
       drawMapPosition.current = () => {};
-      if (androidDriving && !p.autonomous) recordLocationMarker('map-not-ready');
+      if (nativeDriving && !p.autonomous) recordLocationMarker('map-not-ready');
       cleanups.forEach((f) => f());
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

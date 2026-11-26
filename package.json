@@ -13,7 +13,8 @@
     "test": "vitest run",
     "build:android": "tsc --noEmit && vite build --mode android",
     "android:sync": "npm run build:android && cap sync android",
-    "ios:sync": "npm run build:android && cap sync ios"
+    "build:ios": "tsc --noEmit && vite build --mode ios",
+    "ios:sync": "npm run build:ios && cap sync ios"
   },
   "dependencies": {
     "@adret-maps/valhalla-wasm": "3.9.0-alpha.2",

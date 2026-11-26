@@ -28,7 +28,7 @@ import {
 } from '../lib/hud';
 import { Icon } from '../components/Icon';
 import '../styles/hud.css';
-import { androidDriving, maneuverNotice } from '../lib/androidDriving';
+import { nativeDriving, maneuverNotice } from '../lib/androidDriving';
 import { Capacitor } from '@capacitor/core';
 import { autonomyMap } from '../lib/autonomy/map';
 import { tripSensors } from '../lib/autonomy/native';
@@ -143,16 +143,16 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
   const courseAligned = canAlignGameHud({ fresh: autonomous || Date.now() - (geo.updated ?? 0) < 3500,
     held: !autonomous && !!geo.held, accuracy: autonomous ? experiment.position?.uncertainty ?? Infinity : geo.accuracy ?? Infinity,
     offRoute: nav.progress?.offRouteM ?? Infinity, trusted: autonomous || geo.nativeTrust == null || geo.nativeTrust === 'confirmed' });
-  const cue = (androidDriving || game) && nav.status === 'guiding' ? maneuverNotice(nav.route, nav.progress,
+  const cue = (nativeDriving || game) && nav.status === 'guiding' ? maneuverNotice(nav.route, nav.progress,
     autonomous ? (experiment.position?.speed ?? 0) * 3.6 : geo.speedKmh, reliable && (nav.progress?.offRouteM ?? Infinity) <= 35) : null;
-  const step = androidDriving || game ? cue?.step : nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
+  const step = nativeDriving || game ? cue?.step : nav.route && nav.progress ? nav.route.steps[nav.progress.stepIndex] : null;
   const remainingS = nav.route && nav.progress ? nav.route.duration * (nav.progress.remainingM / Math.max(1, nav.route.distance)) : null;
   const position = experiment.position;
-  const approximateSpeed = !autonomous && androidDriving && geo.nativeTrust != null && geo.nativeTrust !== 'confirmed' &&
+  const approximateSpeed = !autonomous && nativeDriving && geo.nativeTrust != null && geo.nativeTrust !== 'confirmed' &&
     (geo.accuracy ?? Infinity) <= 100 && geo.speedKmh != null && Date.now() - (geo.updated ?? 0) < 1500;
   const speed = autonomous ? position && position.uncertainty <= 120 ? Math.round(position.speed * 3.6) : null :
     approximateSpeed ? Math.round(geo.speedKmh!) : reliableSpeed(geo);
-  const withSpeed = game || autonomous || androidDriving || hudShowsSpeed(s.mode, s);
+  const withSpeed = game || autonomous || nativeDriving || hudShowsSpeed(s.mode, s);
   const arrived = nav.status === 'arrived';
   const status = nav.rerouting ? 'Перестраиваю маршрут…' : nav.status === 'routing' ? 'Восстанавливаю маршрут…' : arrived ? 'Вы прибыли' : !nav.route ? 'Нет маршрута' : autonomous && !nav.progress ? 'Положение уточняется' : null;
 
@@ -160,7 +160,7 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
     <div className={`hud-maneuver ${cue?.urgent ? 'is-urgent' : ''}`}>
       <Icon name={stepIcon(step)} size="1em" stroke={2.6} />
       <div>
-        <div className="hud-dist">{(androidDriving || game) && cue ? (game && !courseAligned) || cue.distance == null ? 'Уточняем' : cue.distance < 10 ? 'Сейчас' : fmtDistance(cue.distance, lang) : fmtDistance(nav.progress.toStepM, lang)}</div>
+        <div className="hud-dist">{(nativeDriving || game) && cue ? (game && !courseAligned) || cue.distance == null ? 'Уточняем' : cue.distance < 10 ? 'Сейчас' : fmtDistance(cue.distance, lang) : fmtDistance(nav.progress.toStepM, lang)}</div>
         {(game || s.mode !== 'minimal') && <div className="hud-instr">{stepText(step, lang)}</div>}
       </div>
     </div>
@@ -195,7 +195,7 @@ function HudScreen({ autonomous }: { autonomous: boolean }) {
       data-mirror={s.mirror ? '1' : '0'}
       onClick={showControls}
     >
-      <div className={`hud-stage ${s.mirror ? 'is-mirrored' : ''}`} style={{ opacity: androidDriving && look.palette === 'day' ? s.brightness : look.brightness }} data-testid="hud-stage">
+      <div className={`hud-stage ${s.mirror ? 'is-mirrored' : ''}`} style={{ opacity: nativeDriving && look.palette === 'day' ? s.brightness : look.brightness }} data-testid="hud-stage">
         {game ? <GameHudRoad route={nav.route} remaining={nav.progress?.remainingM ?? null}
           step={cue?.index ?? null} aligned={courseAligned && nav.status === 'guiding' && !nav.rerouting} />
           : !autonomous && s.mode === 'map' ? (
@@ -310,7 +310,7 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
       const g = displayStore.get(); // отображаемая позиция (привязка к дороге)
       if (g.lat == null || g.lon == null) return;
       const fix = geoStore.get();
-      if (androidDriving && !to && (fix.held || (fix.accuracy ?? Infinity) > 50 || Date.now() - (fix.updated ?? 0) > 5000)) return;
+      if (nativeDriving && !to && (fix.held || (fix.accuracy ?? Infinity) > 50 || Date.now() - (fix.updated ?? 0) > 5000)) return;
       if (to && to.lat === g.lat && to.lon === g.lon && heading === g.heading) return;
       const now = performance.now();
       from = pos(now) ?? { lat: g.lat, lon: g.lon };
@@ -381,7 +381,7 @@ function HudRoute({ route, color }: { route: Route | null; color: string }) {
       <path ref={road} className="hud-road" fill="none" stroke={color} />
       <path ref={line} className="hud-line" fill="none" stroke={color} />
       <circle ref={turn} className="hud-turn" r="9" fill="#000" stroke={color} />
-      <g ref={carG} className="hud-car" visibility={androidDriving ? "hidden" : undefined}>
+      <g ref={carG} className="hud-car" visibility={nativeDriving ? "hidden" : undefined}>
         <path d="M0 -22 L15 16 L0 8 L-15 16 Z" fill={color} />
       </g>
     </svg>
