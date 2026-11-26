@@ -21,7 +21,7 @@ const open = async () => {
 try {
   adb('shell', 'pm', 'clear', app);
   assert.equal(adb('uninstall', app), 'Success');
-  assert.equal(adb('install', '-g', baseline), 'Success');
+  assert.match(adb('install', '-g', baseline), /(?:^|\n)Success$/);
   let page = await open();
   const snapshot = await page.evaluate(async () => {
     const items = {
@@ -50,7 +50,7 @@ try {
     return items;
   });
   adb('shell', 'am', 'force-stop', app);
-  assert.equal(adb('install', '-r', update), 'Success');
+  assert.match(adb('install', '-r', update), /(?:^|\n)Success$/);
   page = await open();
   const restored = await page.evaluate(async (keys) => {
     const data = Object.fromEntries(keys.map((key) => [key, JSON.parse(localStorage.getItem(key))]));

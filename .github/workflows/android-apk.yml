@@ -2,7 +2,7 @@ name: Android debug APK
 
 on:
   pull_request:
-    paths: [android/**, src/lib/autonomy/**, src/sections/AutonomousNavigation.tsx, .github/workflows/android-apk.yml]
+    paths: [scripts/android-signing-upgrade-check.mjs, android/**, src/lib/autonomy/**, src/sections/AutonomousNavigation.tsx, .github/workflows/android-apk.yml]
   workflow_dispatch:
     inputs:
       stable_signature:
