@@ -196,11 +196,8 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
-            set -e
             node scripts/android-smoke.mjs apk/app-debug.apk
-            if [ -f upgrade/updated.apk ]; then
-              node scripts/android-signing-upgrade-check.mjs upgrade/baseline.apk upgrade/updated.apk
-            fi
+            if [ -f upgrade/updated.apk ]; then node scripts/android-signing-upgrade-check.mjs upgrade/baseline.apk upgrade/updated.apk; fi
       - uses: actions/upload-artifact@v4
         if: github.head_ref == 'codex/android-navigation-ux' || (github.head_ref == 'codex/android-offline-smooth' || (github.head_ref == 'codex/android-hybrid-position' || (github.head_ref == 'codex/android-confirmed-route' || (github.head_ref == 'codex/android-navigation-scale' || (github.head_ref == 'codex/android-location-bootstrap' || (github.head_ref == 'codex/game-hud' || (github.head_ref == 'codex/android-road-test' || (github.head_ref == 'codex/android-location-report' || (github.head_ref == 'codex/android-position-visibility' || (github.head_ref == 'codex/android-offline-routing' || (github.head_ref == 'codex/android-offline-download' || (github.head_ref == 'codex/android-route-planner' || github.head_ref == 'codex/android-offline-recovery'))))))))))))
         with:
