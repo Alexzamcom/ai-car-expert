@@ -25,7 +25,7 @@ try {
   let page = await open();
   const snapshot = await page.evaluate(async () => {
     const items = {
-      'ace:places': [{ id: 'upgrade-home', name: 'Upgrade fixture', lat: 48.53, lon: 35.87, placeType: 'home', address: '', savedAt: 123 }],
+      'ace:places': [{ id: 'upgrade-home', name: 'Upgrade fixture', label: 'Upgrade fixture', lat: 48.53, lon: 35.87, placeType: 'home', address: '', savedAt: 123 }],
       'ace:hud': { style: 'game', mirror: true },
       'ace:settings': { speechLang: 'uk-UA' },
     };
@@ -41,7 +41,11 @@ try {
     });
     await new Promise((resolve, reject) => {
       const tx = db.transaction(['regions', 'resources'], 'readwrite');
-      tx.objectStore('regions').put({ name: 'Upgrade fixture', id: 'upgrade', bounds: [35, 48, 36, 49] });
+      tx.objectStore('regions').put({
+        name: 'Upgrade fixture', id: 'upgrade', center: { lat: 48.53, lon: 35.87 },
+        bounds: [35, 48, 36, 49], bytes: 3, updated: 123, graph: ['graph/test'],
+        style: { version: 8, sources: {}, layers: [] },
+      });
       tx.objectStore('resources').put(new Uint8Array([1, 3, 9]).buffer, 'upgrade/graph/test');
       tx.oncomplete = resolve;
       tx.onabort = () => reject(tx.error);
