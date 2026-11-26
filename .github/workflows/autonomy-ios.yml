@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: ios-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   ipa:
@@ -35,7 +35,7 @@ jobs:
           app="$RUNNER_TEMP/ace-ios/Build/Products/Release-iphoneos/App.app"
           test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")" = com.aicarexpert.app
           test "$(/usr/libexec/PlistBuddy -c 'Print MinimumOSVersion' "$app/Info.plist")" = 17.0
-          xcrun lipo -verify_arch arm64 "$app/App"
+          xcrun lipo -archs "$app/App" | grep -w arm64
           test -f "$app/public/index.html"
           find "$app/public/assets" -name 'valhalla-*.wasm' | grep .
           test ! -e "$app/public/sw.js"
