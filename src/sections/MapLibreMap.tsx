@@ -267,7 +267,10 @@ export function MapLibreMap(p: { apiRef: MutableRefObject<MapApi | null>; uiEl: 
         selectedSource = source;
         selectedPalette = look;
         if (nativeDriving) offlineStatus.set({ local, region: fallback?.region ?? null });
-        map.setStyle(source, styleOf(look));
+        // MapLibre defers transformStyle until its preceding style loads. If the
+        // network style failed, transform the available local object immediately.
+        if (typeof source === 'string') map.setStyle(source, styleOf(look));
+        else map.setStyle(paletteTransform(look, { lite })(undefined, source), { diff: false });
       };
       const switchLocal = (value: boolean) => {
         if (disposed || !nativeDriving || value === local) return;
