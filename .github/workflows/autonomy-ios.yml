@@ -86,7 +86,7 @@ jobs:
           test -n "$phone"
           xcrun simctl boot "$phone"
           xcrun simctl bootstatus "$phone" -b
-          xcrun simctl status_bar "$phone" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState unplugged --batteryLevel 100
+          xcrun simctl status_bar "$phone" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState discharging --batteryLevel 100
           derived="$RUNNER_TEMP/ace-ios-sim"
           app="$derived/Build/Products/Debug-iphonesimulator/App.app"
           mkdir ios-results

@@ -265,7 +265,7 @@ class TripSensors: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
 final class NativePosition: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelegate {
     let identifier = "NativePosition"
     let jsName = "NativePosition"
-    let pluginMethods = ["start", "stop", "refresh", "diagnostics", "acknowledge", "copyDiagnostics"].map {
+    let pluginMethods: [CAPPluginMethod] = ["start", "stop", "refresh", "diagnostics", "acknowledge", "copyDiagnostics"].compactMap {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private lazy var location: CLLocationManager = {
@@ -369,7 +369,7 @@ final class NativePosition: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
 final class OfflineFiles: CAPPlugin, CAPBridgedPlugin {
     let identifier = "OfflineFiles"
     let jsName = "OfflineFiles"
-    let pluginMethods = ["capacity", "regions", "publish", "remove", "erase", "writeBatch", "read", "digest", "checkpoint"].map {
+    let pluginMethods: [CAPPluginMethod] = ["capacity", "regions", "publish", "remove", "erase", "writeBatch", "read", "digest", "checkpoint"].compactMap {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let queue = DispatchQueue(label: "com.aicarexpert.offline-files", qos: .utility)
@@ -511,7 +511,7 @@ final class OfflineFiles: CAPPlugin, CAPBridgedPlugin {
 final class NativeSpeech: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDelegate {
     let identifier = "NativeSpeech"
     let jsName = "NativeSpeech"
-    let pluginMethods = [CAPPluginMethod(name: "say", returnType: CAPPluginReturnPromise)]
+    let pluginMethods: [CAPPluginMethod] = [CAPPluginMethod(name: "say", returnType: CAPPluginReturnPromise)]
     private let synth = AVSpeechSynthesizer()
     private var pending: [ObjectIdentifier: CAPPluginCall] = [:]
 
