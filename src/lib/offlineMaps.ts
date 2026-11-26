@@ -1,4 +1,4 @@
-import { encodeBytes, iosOffline, offlineFiles, readIosAsset } from './iosOfflineFiles';
+import { encodeBytes, iosOffline, offlineFiles, readIosAsset, writeIosAssets } from './iosOfflineFiles';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 import type { LayerSpecification, StyleSpecification } from 'maplibre-gl';
 import { createStore } from './store';
@@ -200,11 +200,13 @@ export async function downloadOfflineRegion(name: string, center: LatLon, radius
       const data = results.map((result) => { if (result.status === 'rejected') throw result.reason; return result.value; });
       bytes += data.reduce((sum, resource) => sum + resource.byteLength, 0);
       if (bytes > LIMIT_BYTES) throw new Error('Область превышает 50 МБ. Уменьшите радиус.');
-      await write('resources', (store) => batch.forEach((job, j) => store.put(data[j], `${id}/${job.key}`)));
+      if (iosOffline()) await writeIosAssets(id, batch.map((job, j) => [job.key, data[j]]), signal);
+      else await write('resources', (store) => batch.forEach((job, j) => store.put(data[j], `${id}/${job.key}`)));
       progress({ done: i + batch.length, total: jobs.length, bytes });
     }
     const region = { id, name, center, bounds, style, bytes, updated: Date.now() };
-    await write('regions', (store) => store.put(region));
+    if (iosOffline()) await offlineFiles.publish({ region, previous: old?.id });
+    else await write('regions', (store) => store.put(region));
     published = true;
     offlineRegions.set([region, ...offlineRegions.get().filter((r) => r.name !== name)]);
     if (old) await purge(old.id).catch(() => {});
@@ -259,21 +261,32 @@ async function fetchAsset(url: URL, bytes: number, signal?: AbortSignal) {
   }
 }
 
-type Checkpoint = { id: string; fingerprint: string; done: number; bytes: number };
+export type Checkpoint = { id: string; fingerprint: string; done: number; bytes: number };
 const checkpointKey = (url: string) => `checkpoint:${url}`;
+
+
+async function readCheckpoint(url: string) {
+  const key = checkpointKey(url);
+  return iosOffline() ? (await offlineFiles.checkpoint({ key })).entry : read<Checkpoint | undefined>('resources', key);
+}
+async function removeCheckpoint(url: string) {
+  const key = checkpointKey(url);
+  if (iosOffline()) await offlineFiles.checkpoint({ key, remove: true });
+  else await write('resources', (store) => store.delete(key));
+}
 
 export async function regionalDownloadState(url: string, pkg: OfflinePackage) {
   const fingerprint = await digest(new TextEncoder().encode(JSON.stringify(pkg)).buffer);
-  const checkpoint = await read<Checkpoint | undefined>('resources', checkpointKey(url));
+  const cached = await readCheckpoint(url);
+  // A crash after atomically publishing a region can leave its old checkpoint.
+  const checkpoint = cached && !offlineRegions.get().some(({ id }) => id === cached.id) ? cached : undefined;
   return { fingerprint, checkpoint, matching: checkpoint?.fingerprint === fingerprint ? checkpoint : undefined };
 }
 
 export async function discardRegionalDownload(url: string) {
-  const checkpoint = await read<Checkpoint | undefined>('resources', checkpointKey(url));
-  if (checkpoint) {
-    await purge(checkpoint.id);
-    await write('resources', (store) => store.delete(checkpointKey(url)));
-  }
+  const checkpoint = await readCheckpoint(url);
+  if (checkpoint && !offlineRegions.get().some(({ id }) => id === checkpoint.id)) await purge(checkpoint.id);
+  if (checkpoint) await removeCheckpoint(url);
 }
 
 export async function downloadNavigationPackage(name: string, center: LatLon, radiusKm: number, packageUrl: string, manifest: OfflinePackage,
@@ -339,9 +352,11 @@ export async function downloadNavigationPackage(name: string, center: LatLon, ra
         checkAbort(signal);
         bytes += body.byteLength;
         const checkpoint: Checkpoint = { id, fingerprint: state.fingerprint, done: index + 1, bytes };
-        if (iosOffline()) for (const [path, data] of entries) await offlineFiles.write({ id, path, data: encodeBytes(data) });
-        await write('resources', (store) => {
-          if (!iosOffline()) for (const [path, data] of entries) store.put(data, `${id}/${path}`);
+        if (iosOffline()) {
+          await writeIosAssets(id, entries, signal);
+          await offlineFiles.checkpoint({ key: checkpointKey(url.href), entry: checkpoint });
+        } else await write('resources', (store) => {
+          for (const [path, data] of entries) store.put(data, `${id}/${path}`);
           store.put(checkpoint, checkpointKey(url.href));
         });
         progress({ done: index + 1, total: pkg.chunks.length, bytes });
@@ -357,7 +372,7 @@ export async function downloadNavigationPackage(name: string, center: LatLon, ra
         }));
         checkAbort(signal);
         if (iosOffline()) {
-          for (const [index, { path }] of batch.entries()) await offlineFiles.write({ id, path, data: encodeBytes(data[index]) });
+          await writeIosAssets(id, batch.map(({ path }, index) => [path, data[index]]), signal);
         } else await write('resources', (store) => batch.forEach(({ path }, index) => store.put(data[index], `${id}/${path}`)));
         bytes += data.reduce((sum, item) => sum + item.byteLength, 0);
         progress({ done: i + batch.length, total: pkg.assets.length, bytes });
@@ -369,18 +384,18 @@ export async function downloadNavigationPackage(name: string, center: LatLon, ra
     if (iosOffline()) {
       await offlineFiles.publish({ region, previous: old?.id });
       published = true;
-      if (pkg.chunks) await write('resources', (store) => store.delete(checkpointKey(url.href))).catch(() => {});
+      if (pkg.chunks) await removeCheckpoint(url.href).catch(() => {});
     } else {
-    const database = await open();
-    await new Promise<void>((resolve, reject) => {
-      const publication = database.transaction(['regions', 'resources'], 'readwrite');
-      publication.oncomplete = () => resolve();
-      publication.onabort = () => reject(publication.error ?? new Error('Не удалось установить карту.'));
-      const records = publication.objectStore('regions');
-      if (old && old.name !== key) records.delete(old.name);
-      records.put(region);
-      if (pkg.chunks) publication.objectStore('resources').delete(checkpointKey(url.href));
-    });
+      const database = await open();
+      await new Promise<void>((resolve, reject) => {
+        const publication = database.transaction(['regions', 'resources'], 'readwrite');
+        publication.oncomplete = () => resolve();
+        publication.onabort = () => reject(publication.error ?? new Error('Не удалось установить карту.'));
+        const records = publication.objectStore('regions');
+        if (old && old.name !== key) records.delete(old.name);
+        records.put(region);
+        if (pkg.chunks) publication.objectStore('resources').delete(checkpointKey(url.href));
+      });
     }
     published = true;
     offlineRegions.set([region, ...offlineRegions.get().filter((item) => item.name !== key && item.id !== old?.id)]);

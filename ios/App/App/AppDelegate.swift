@@ -369,19 +369,22 @@ final class NativePosition: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
 final class OfflineFiles: CAPPlugin, CAPBridgedPlugin {
     let identifier = "OfflineFiles"
     let jsName = "OfflineFiles"
-    let pluginMethods = ["capacity", "regions", "publish", "remove", "erase", "write", "read", "digest"].map {
+    let pluginMethods = ["capacity", "regions", "publish", "remove", "erase", "writeBatch", "read", "digest", "checkpoint"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let queue = DispatchQueue(label: "com.aicarexpert.offline-files", qos: .utility)
     private let manager = FileManager.default
+    private var dataRoot: URL?
 
     private func root() throws -> URL {
+        if let root = dataRoot { return root }
         let base = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         var root = base.appendingPathComponent("OfflineMaps", isDirectory: true)
         try manager.createDirectory(at: root, withIntermediateDirectories: true)
         var attributes = URLResourceValues()
         attributes.isExcludedFromBackup = true
         try root.setResourceValues(attributes)
+        dataRoot = root
         return root
     }
 
@@ -390,8 +393,8 @@ final class OfflineFiles: CAPPlugin, CAPBridgedPlugin {
         return root.appendingPathComponent(id, isDirectory: true)
     }
 
-    private func resource(_ call: CAPPluginCall, root: URL) throws -> URL {
-        guard let id = call.getString("id"), let path = call.getString("path"), path.utf8.count <= 256 else { throw CocoaError(.fileReadInvalidFileName) }
+    private func resource(_ id: String, _ path: String, root: URL) throws -> URL {
+        guard path.utf8.count <= 256 else { throw CocoaError(.fileReadInvalidFileName) }
         let parts = path.components(separatedBy: "/")
         guard parts.allSatisfy({ $0 != "." && $0 != ".." && $0.range(of: "^[A-Za-z0-9_.-]+$", options: .regularExpression) != nil })
         else { throw CocoaError(.fileReadInvalidFileName) }
@@ -454,21 +457,45 @@ final class OfflineFiles: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    @objc func write(_ call: CAPPluginCall) {
+    @objc func writeBatch(_ call: CAPPluginCall) {
         work(call) { root in
-            let path = try self.resource(call, root: root)
-            guard let encoded = call.getString("data"), let data = Data(base64Encoded: encoded) else { throw CocoaError(.fileReadCorruptFile) }
-            try self.manager.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: path, options: .atomic)
+            guard let id = call.getString("id"), let entries = call.getArray("entries", JSObject.self),
+                  entries.count <= 16 else { throw CocoaError(.fileReadCorruptFile) }
+            for entry in entries {
+                guard let relative = entry["path"] as? String, let encoded = entry["data"] as? String,
+                      let data = Data(base64Encoded: encoded) else { throw CocoaError(.fileReadCorruptFile) }
+                let path = try self.resource(id, relative, root: root)
+                try self.manager.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: path, options: .atomic)
+            }
             return [:]
         }
     }
 
     @objc func read(_ call: CAPPluginCall) {
         work(call) { root in
-            let path = try self.resource(call, root: root)
+            guard let id = call.getString("id"), let relative = call.getString("path") else { throw CocoaError(.fileReadInvalidFileName) }
+            let path = try self.resource(id, relative, root: root)
             guard self.manager.fileExists(atPath: path.path) else { return [:] }
             return ["data": try Data(contentsOf: path).base64EncodedString()]
+        }
+    }
+
+    @objc func checkpoint(_ call: CAPPluginCall) {
+        work(call) { root in
+            guard let key = call.getString("key") else { throw CocoaError(.fileReadInvalidFileName) }
+            let name = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+            let file = root.appendingPathComponent("checkpoint-" + name + ".json")
+            if call.getBool("remove") == true {
+                if self.manager.fileExists(atPath: file.path) { try self.manager.removeItem(at: file) }
+                return [:]
+            }
+            if let entry = call.getObject("entry") {
+                try JSONSerialization.data(withJSONObject: entry).write(to: file, options: .atomic)
+                return [:]
+            }
+            guard self.manager.fileExists(atPath: file.path) else { return [:] }
+            return ["entry": try JSONSerialization.jsonObject(with: Data(contentsOf: file))]
         }
     }
 

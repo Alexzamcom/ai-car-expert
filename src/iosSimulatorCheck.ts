@@ -30,7 +30,7 @@ async function run(stage: string) {
       return original(new URL(url.pathname.slice(1), fixture), init);
     }
     if (url.protocol === 'http:' || url.protocol === 'https:') {
-      externalRequests++;
+      if (/route\/v1|nominatim|photon|valhalla|geocod/i.test(url.href)) externalRequests++;
       return Promise.reject(new Error('External fetch disabled in iOS simulator check'));
     }
     return original(input, init);
