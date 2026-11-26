@@ -17,7 +17,7 @@ android {
         }
     }
     buildTypes {
-        testApk {
+        unsignedTest {
             initWith debug
             signingConfig = null
             matchingFallbacks = ['debug']

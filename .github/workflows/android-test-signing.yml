@@ -48,8 +48,8 @@ jobs:
           debug_before="$(sha256sum "$HOME/.android/debug.keystore" 2>/dev/null || true)"
           version=$((2 * GITHUB_RUN_NUMBER))
           for name in baseline update; do
-            ./gradlew :app:assembleTestApk --no-daemon -PaceTestVersionCode="$version"
-            artifacts=(app/build/outputs/apk/testApk/*-unsigned.apk)
+            ./gradlew :app:assembleUnsignedTest --no-daemon -PaceTestVersionCode="$version"
+            artifacts=(app/build/outputs/apk/unsignedTest/*-unsigned.apk)
             [[ "${#artifacts[@]}" == 1 && -f "${artifacts[0]}" ]]
             tools="$ANDROID_HOME/build-tools/35.0.0"
             if "$tools/apksigner" verify "${artifacts[0]}" >/dev/null 2>&1; then
