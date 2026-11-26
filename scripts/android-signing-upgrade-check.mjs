@@ -8,7 +8,7 @@ const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8', timeout: 
 assert.match(adb('get-serialno'), /^emulator-\d+$/, 'This test clears the app on a disposable emulator only');
 const app = 'com.aicarexpert.app';
 const activity = app + '/.MainActivity';
-const [device] = await android.devices();
+let [device] = await android.devices();
 assert(device);
 const open = async () => {
   adb('shell', 'am', 'start', '-W', '-n', activity);
@@ -51,8 +51,12 @@ try {
     db.close();
     return items;
   });
+  await device.close();
   adb('shell', 'am', 'force-stop', app);
   assert.match(adb('install', '--no-streaming', '-r', update), /^Success\s*$/m);
+  console.log('adb install -r accepted the updated APK under the same test certificate.');
+  [device] = await android.devices();
+  assert(device);
   page = await open();
   const restored = await page.evaluate(async (keys) => {
     const data = Object.fromEntries(keys.map((key) => [key, JSON.parse(localStorage.getItem(key))]));
