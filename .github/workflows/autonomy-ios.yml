@@ -8,12 +8,11 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ios-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
-
 jobs:
   ipa:
+    concurrency:
+      group: ios-ipa-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     if: github.event_name != 'pull_request' || (github.head_ref == 'codex/ios-capacitor-navigation' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: macos-15
     timeout-minutes: 25
@@ -59,6 +58,9 @@ jobs:
           if-no-files-found: ignore
 
   simulator:
+    concurrency:
+      group: ios-simulator-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: false
     if: github.event_name != 'pull_request' || (github.head_ref == 'codex/ios-capacitor-navigation' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: macos-15
     timeout-minutes: 35
@@ -80,6 +82,7 @@ jobs:
           test -n "$package" && test "$package" != null
           ditto "$RUNNER_TEMP/ace-maps/$(dirname "$package")" ios/App/App/public/ios-smoke-data
       - name: Install, use Valhalla offline, reinstall and use the saved package
+        timeout-minutes: 15
         run: |
           set -euo pipefail
           phone="$(xcrun simctl list devices available --json | jq -r '[.devices[][] | select(.name == "iPhone 16 Pro Max" or (.name | startswith("iPhone"))) | [.name, .udid]] | sort_by(.[0] != "iPhone 16 Pro Max") | .[0][1] // empty')"
