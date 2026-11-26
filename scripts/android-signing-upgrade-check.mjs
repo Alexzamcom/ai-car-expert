@@ -19,8 +19,6 @@ const open = async () => {
 };
 
 try {
-  adb('shell', 'pm', 'clear', app);
-  assert.equal(adb('uninstall', app), 'Success');
   assert.match(adb('install', '-g', baseline), /(?:^|\n)Success$/);
   let page = await open();
   const snapshot = await page.evaluate(async () => {
@@ -82,4 +80,5 @@ try {
   console.log('PR #59 → current APK, same test signer: adb install -r preserved offline store, places and preferences.');
 } finally {
   await device.close();
+  adb('uninstall', app);
 }
