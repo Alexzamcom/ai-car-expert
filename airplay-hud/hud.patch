@@ -1,0 +1,202 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 8281bd8..a3b7bd5 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -29,14 +29,14 @@ android {
+     }
+ 
+     defaultConfig {
+-        applicationId = "io.github.jqssun.airplay"
++        applicationId = "com.aicarexpert.airplayhud"
+         minSdk = 24
+         targetSdk = 35
+-        versionCode = 24
+-        versionName = "0.0.24"
++        versionCode = providers.gradleProperty("aceHudVersion").orNull?.toInt() ?: 1
++        versionName = "0.1"
+ 
+         ndk {
+-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
++            abiFilters += listOf("arm64-v8a")
+         }
+ 
+         externalNativeBuild {
+diff --git a/app/src/main/kotlin/io/github/jqssun/airplay/Prefs.kt b/app/src/main/kotlin/io/github/jqssun/airplay/Prefs.kt
+index de8dd68..9bf9ce8 100644
+--- a/app/src/main/kotlin/io/github/jqssun/airplay/Prefs.kt
++++ b/app/src/main/kotlin/io/github/jqssun/airplay/Prefs.kt
+@@ -6,10 +6,10 @@ import android.media.MediaFormat
+ object Prefs {
+     const val NAME = "settings"
+ 
+-    const val SERVER_NAME = "server_name"; const val DEF_SERVER_NAME = "Android AirPlay"
++    const val SERVER_NAME = "server_name"; const val DEF_SERVER_NAME = "AI Car Expert HUD"
+     const val SERVER_PORT = "server_port"; const val DEF_SERVER_PORT = 7000
+     const val AUTO_START = "auto_start"; const val DEF_AUTO_START = true
+-    const val BOOT_AUTO_START = "boot_auto_start"; const val DEF_BOOT_AUTO_START = true
++    const val BOOT_AUTO_START = "boot_auto_start"; const val DEF_BOOT_AUTO_START = false
+     const val RUN_IN_BACKGROUND = "run_in_background"; const val DEF_RUN_IN_BACKGROUND = true
+     const val H265_ENABLED = "h265_enabled"; const val DEF_H265_ENABLED = true
+     const val ENFORCE_SDR = "enforce_sdr"; const val DEF_ENFORCE_SDR = true
+@@ -32,7 +32,7 @@ object Prefs {
+     const val RESOLUTION = "resolution"; const val DEF_RESOLUTION = "auto"
+     const val MAX_FPS = "max_fps"; const val DEF_MAX_FPS = 60
+     const val OVERSCANNED = "overscanned"; const val DEF_OVERSCANNED = false
+-    const val REQUIRE_PIN = "require_pin"; const val DEF_REQUIRE_PIN = false
++    const val REQUIRE_PIN = "require_pin"; const val DEF_REQUIRE_PIN = true
+     const val ALLOW_NEW_CONN = "allow_new_conn"; const val DEF_ALLOW_NEW_CONN = true
+     const val AUDIO_LATENCY_MS = "audio_latency_ms"; const val DEF_AUDIO_LATENCY_MS = -1
+     const val DEBUG_ENABLED = "debug_enabled"; const val DEF_DEBUG_ENABLED = false
+diff --git a/app/src/main/kotlin/io/github/jqssun/airplay/ui/MainScreen.kt b/app/src/main/kotlin/io/github/jqssun/airplay/ui/MainScreen.kt
+index 2f3dc79..f421513 100644
+--- a/app/src/main/kotlin/io/github/jqssun/airplay/ui/MainScreen.kt
++++ b/app/src/main/kotlin/io/github/jqssun/airplay/ui/MainScreen.kt
+@@ -106,18 +106,15 @@ fun MainScreen(
+         VideoSurfaceView(
+             onSurfaceAvailable = onSurfaceAvailable,
+             onSurfaceDestroyed = onSurfaceDestroyed,
+-            aspectRatio = aspect
++            aspectRatio = aspect,
++            mirrorForHud = fullscreen && !isInPip
+         )
+     }
+ 
+-    // fullscreen only once mirroring reports a size: connections rise before the kind is known
+-    var prevMirroringActive by remember { mutableStateOf(false) }
+-    LaunchedEffect(mirroringActive, audioOnly, videoPlaybackActive, pin) {
+-        val justStarted = !prevMirroringActive && mirroringActive
+-        prevMirroringActive = mirroringActive
+-        if (justStarted && !audioOnly && !videoPlaybackActive && autoFullscreen && pin == null) {
+-            fullscreen = true
+-        }
++    // Open the HUD once per stream, after the receiver's pairing PIN is dismissed.
++    val hudReady = mirroringActive && !audioOnly && !videoPlaybackActive && pin == null
++    LaunchedEffect(hudReady) {
++        if (hudReady && autoFullscreen) fullscreen = true
+     }
+ 
+     // manual fullscreen over the idle preview is deliberate; only undo on disconnect
+@@ -761,9 +758,10 @@ private fun FullscreenVideo(
+     val debugEnabled by viewModel.debugEnabled.collectAsState()
+     val debugInfo by viewModel.debugInfo.collectAsState()
+ 
+-    var controlsVisible by remember { mutableStateOf(true) }
++    var controlsVisible by remember { mutableStateOf(false) }
+     var tapTick by remember { mutableStateOf(0) }
+     LaunchedEffect(tapTick) {
++        if (tapTick == 0) return@LaunchedEffect
+         controlsVisible = true
+         delay(8000)
+         controlsVisible = false
+@@ -785,13 +783,13 @@ private fun FullscreenVideo(
+                 IconButton(onClick = onPip, modifier = Modifier.dpadFocus()) {
+                     Icon(
+                         painterResource(R.drawable.ic_pip), contentDescription = stringResource(R.string.cd_pip),
+-                        tint = Color.White.copy(alpha = 0.7f)
++                        tint = Color(0xFF3EE6FF)
+                     )
+                 }
+                 IconButton(onClick = onExitFullscreen, modifier = Modifier.dpadFocus()) {
+                     Icon(
+                         Icons.Default.FullscreenExit, contentDescription = stringResource(R.string.cd_exit_fullscreen),
+-                        tint = Color.White.copy(alpha = 0.7f)
++                        tint = Color(0xFF3EE6FF)
+                     )
+                 }
+             }
+diff --git a/app/src/main/kotlin/io/github/jqssun/airplay/ui/VideoSurfaceView.kt b/app/src/main/kotlin/io/github/jqssun/airplay/ui/VideoSurfaceView.kt
+index 056a105..ac07901 100644
+--- a/app/src/main/kotlin/io/github/jqssun/airplay/ui/VideoSurfaceView.kt
++++ b/app/src/main/kotlin/io/github/jqssun/airplay/ui/VideoSurfaceView.kt
+@@ -1,12 +1,16 @@
+ package io.github.jqssun.airplay.ui
+ 
++import android.graphics.SurfaceTexture
+ import android.view.Surface
+ import android.view.SurfaceHolder
+ import android.view.SurfaceView
++import android.view.TextureView
+ import androidx.compose.foundation.layout.aspectRatio
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberUpdatedState
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.viewinterop.AndroidView
+ 
+@@ -18,8 +22,18 @@ fun VideoSurfaceView(
+     aspectRatio: Float = 16f / 9f,
+     // false = caller sizes the surface (content-scale modes)
+     applyAspectRatio: Boolean = true,
+-    modifier: Modifier = Modifier
++    modifier: Modifier = Modifier,
++    mirrorForHud: Boolean = false
+ ) {
++    if (mirrorForHud) {
++        MirroredHudSurface(
++            onSurfaceAvailable,
++            onSurfaceDestroyed,
++            modifier.aspectRatio(aspectRatio, matchHeightConstraintsFirst = aspectRatio < 1f)
++        )
++        return
++    }
++
+     val callbacks = remember {
+         object : SurfaceHolder.Callback {
+             override fun surfaceCreated(holder: SurfaceHolder) {
+@@ -49,3 +63,42 @@ fun VideoSurfaceView(
+         }
+     )
+ }
++
++// TextureView participates in the view transform on API 29. The decoded frame stays
++// on a hardware surface. Only the projected content flips, not the Android controls.
++@Composable
++private fun MirroredHudSurface(
++    onSurfaceAvailable: (Surface) -> Unit,
++    onSurfaceDestroyed: (Surface) -> Unit,
++    modifier: Modifier
++) {
++    val attach by rememberUpdatedState(onSurfaceAvailable)
++    val detach by rememberUpdatedState(onSurfaceDestroyed)
++    AndroidView(
++        factory = { context ->
++            TextureView(context).apply {
++                scaleX = -1f
++                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
++                    private var output: Surface? = null
++
++                    override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
++                        output = Surface(texture).also { attach(it) }
++                    }
++
++                    override fun onSurfaceTextureSizeChanged(texture: SurfaceTexture, width: Int, height: Int) = Unit
++                    override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
++
++                    override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
++                        output?.let { surface ->
++                            detach(surface)
++                            surface.release()
++                        }
++                        output = null
++                        return true
++                    }
++                }
++            }
++        },
++        modifier = modifier
++    )
++}
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 215678d..80abe41 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -1,6 +1,6 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <string name="app_name">AirPlay Server</string>
++    <string name="app_name">AI Car Expert HUD</string>
+ 
+     <!-- Notification -->
+     <string name="notification_channel">AirPlay Service</string>
