@@ -116,7 +116,7 @@ window.aceHudFrame = async encoded => {
   const started = performance.now();
   try {
     const image = new Image();
-    image.src = 'data:image/jpeg;base64,' + encoded;
+    image.src = 'data:image/png;base64,' + encoded;
     await image.decode();
     const next = await analyze(image);
     if (!next || performance.now() - started > 3500) {

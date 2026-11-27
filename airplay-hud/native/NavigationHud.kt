@@ -3,6 +3,9 @@ package io.github.jqssun.airplay.ui
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.Color
 import android.net.Uri
 import android.webkit.WebResourceRequest
@@ -64,11 +67,25 @@ internal class NavigationHud(context: Context) : WebView(context) {
     fun postFrame(bitmap: Bitmap) {
         try {
             if (!ready || !isAttachedToWindow) return
-            val encoded = ByteArrayOutputStream().use { stream ->
-                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 90, stream)) return
-                Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+            val panels = Bitmap.createBitmap(512, 1112, Bitmap.Config.ARGB_8888)
+            try {
+                val canvas = Canvas(panels)
+                canvas.drawColor(Color.BLACK)
+                val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+                // Leave the map, system bar, and route history out of the OCR payload.
+                for (panel in listOf(Rect(12, 95, 492, 182), Rect(18, 984, 286, 1068))) {
+                    val source = Rect(panel.left, panel.top * bitmap.height / 1112,
+                        panel.right, panel.bottom * bitmap.height / 1112)
+                    canvas.drawBitmap(bitmap, source, panel, paint)
+                }
+                val encoded = ByteArrayOutputStream().use { stream ->
+                    if (!panels.compress(Bitmap.CompressFormat.PNG, 100, stream)) return
+                    Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP)
+                }
+                evaluateJavascript("window.aceHudFrame && window.aceHudFrame('$encoded')", null)
+            } finally {
+                panels.recycle()
             }
-            evaluateJavascript("window.aceHudFrame && window.aceHudFrame('$encoded')", null)
         } finally {
             bitmap.recycle()
         }
