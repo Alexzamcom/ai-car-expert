@@ -1,0 +1,121 @@
+name: Android AirPlay HUD APK
+
+on:
+  push:
+    branches: [codex/android-airplay-hud]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/codex/android-airplay-hud'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: jqssun/android-airplay-server
+          ref: 05b193662f7c33d6fe70b05a36895103a594922b
+          path: receiver
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install toolchain
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;35.0.0" "ndk;27.0.12077973" "cmake;3.22.1"
+      - name: Apply HUD changes
+        run: bash airplay-hud/prepare.sh receiver
+      - name: Archive corresponding receiver source
+        run: |
+          tar --exclude=.git --exclude=.gradle --exclude=.cxx --exclude=.kotlin --exclude=build \
+            -czf "$RUNNER_TEMP/AI-Car-Expert-AirPlay-HUD-source.tar.gz" receiver airplay-hud
+      - name: Build without a signing key
+        working-directory: receiver
+        run: |
+          set -euo pipefail
+          ./gradlew :app:assembleRelease --no-daemon -PaceHudVersion="$GITHUB_RUN_NUMBER"
+          apk=app/build/outputs/apk/release/app-release-unsigned.apk
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          test -s "$apk"
+          if "$tools/apksigner" verify "$apk" >/dev/null 2>&1; then
+            echo "Expected an unsigned release APK" >&2
+            exit 1
+          fi
+          "$tools/aapt" dump badging "$apk" > "$RUNNER_TEMP/ace-airplay-manifest.txt"
+          grep -F "package: name='com.aicarexpert.airplayhud' versionCode='$GITHUB_RUN_NUMBER'" "$RUNNER_TEMP/ace-airplay-manifest.txt"
+          grep -Fx "sdkVersion:'24'" "$RUNNER_TEMP/ace-airplay-manifest.txt"
+          grep -F "native-code: 'arm64-v8a'" "$RUNNER_TEMP/ace-airplay-manifest.txt"
+          if grep -E 'uses-permission.*android.permission.ACCESS_(COARSE|FINE|BACKGROUND)_LOCATION' "$RUNNER_TEMP/ace-airplay-manifest.txt"; then
+            echo "HUD must not require the Android device's location" >&2
+            exit 1
+          fi
+          "$tools/zipalign" -p -f 4 "$apk" "$RUNNER_TEMP/AI-Car-Expert-AirPlay-HUD-unsigned.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-car-expert-airplay-hud-source
+          path: ${{ runner.temp }}/AI-Car-Expert-AirPlay-HUD-source.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-car-expert-airplay-hud-unsigned
+          path: ${{ runner.temp }}/AI-Car-Expert-AirPlay-HUD-unsigned.apk
+          retention-days: 7
+          if-no-files-found: error
+
+  sign:
+    if: vars.ANDROID_TEST_STABLE_SIGNING == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: android-test-signing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ai-car-expert-airplay-hud-unsigned
+      - name: Install signing tools
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "build-tools;35.0.0"'
+      - name: Sign and verify the permanent certificate
+        env:
+          ACE_SIGNING_KEYSTORE: ${{ secrets.ANDROID_TEST_KEYSTORE_BASE64 }}
+          ACE_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_TEST_STORE_PASSWORD }}
+          ACE_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_TEST_KEY_PASSWORD }}
+          ACE_SIGNING_ALIAS: ${{ vars.ANDROID_TEST_KEY_ALIAS }}
+          ACE_SIGNING_SHA256: ${{ vars.ANDROID_TEST_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          : "${ACE_SIGNING_KEYSTORE:?Missing protected Android test key}"
+          : "${ACE_SIGNING_STORE_PASSWORD:?Missing keystore password}"
+          : "${ACE_SIGNING_KEY_PASSWORD:?Missing key password}"
+          : "${ACE_SIGNING_ALIAS:?Missing key alias}"
+          [[ "${ACE_SIGNING_SHA256,,}" =~ ^[[:xdigit:]]{64}$ ]]
+          umask 077
+          signing="$(mktemp -d "$RUNNER_TEMP/ace-hud-signing.XXXXXX")"
+          trap 'rm -rf "$signing"' EXIT
+          printf '%s' "$ACE_SIGNING_KEYSTORE" | base64 --decode > "$signing/test.keystore"
+          unset ACE_SIGNING_KEYSTORE
+          signer="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          "$signer" sign --ks "$signing/test.keystore" --ks-key-alias "$ACE_SIGNING_ALIAS" \
+            --ks-pass env:ACE_SIGNING_STORE_PASSWORD --key-pass env:ACE_SIGNING_KEY_PASSWORD \
+            --v4-signing-enabled false --out AI-Car-Expert-AirPlay-HUD.apk AI-Car-Expert-AirPlay-HUD-unsigned.apk
+          report="$("$signer" verify --min-sdk-version 29 --print-certs AI-Car-Expert-AirPlay-HUD.apk)"
+          actual="$(awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ { print $NF }' <<< "$report")"
+          [[ "$actual" == "${ACE_SIGNING_SHA256,,}" ]]
+          echo "Permanent certificate SHA-256 $actual" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        id: apk
+        with:
+          name: ai-car-expert-airplay-hud-android
+          path: AI-Car-Expert-AirPlay-HUD.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Download link
+        run: echo '[Download the signed HUD APK](${{ steps.apk.outputs.artifact-url }})' >> "$GITHUB_STEP_SUMMARY"
