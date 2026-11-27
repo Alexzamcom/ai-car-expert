@@ -1,0 +1,4 @@
+[hidden] { display: none !important; }
+html, body { margin: 0; background: transparent; }
+#arrow { flex: 0 0 auto; }
+#arrow.left { transform: scaleX(-1); }
